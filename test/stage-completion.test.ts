@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
-import { STAGES } from '../src/commands/create.js';
+import { STAGES, contractGapDetail } from '../src/commands/create.js';
 
 /** Return the isComplete function for the named stage (throws if not found). */
 function stageNamed(name: string) {
@@ -442,4 +442,49 @@ describe('schematic isComplete: legibility gate', () => {
       await cleanup();
     }
   }, 60000);
+});
+
+// ---------------------------------------------------------------------------
+// contractGapDetail: the retry guidance names the actual gap for the two doc
+// stages whose prompt a small model most often misreads (the bare UNVERIFIED
+// placeholder as an MPN; a budgets section under another heading).
+// ---------------------------------------------------------------------------
+describe('contractGapDetail', () => {
+  const config = { docs: DOCS } as Parameters<typeof contractGapDetail>[2];
+
+  it('names the missing Budgets heading for spec-seed', async () => {
+    await withTmpDir(async (root) => {
+      await mkdir(path.join(root, DOCS), { recursive: true });
+      await writeFile(path.join(root, DOCS, 'SPEC.md'), `# Spec\n\n## Top-level electrical constraints\n\n- 3.3 V rail\n`, 'utf8');
+      expect(await contractGapDetail('spec-seed', root, config)).toMatch(/no heading containing the word "Budgets"/);
+    });
+  });
+
+  it('names an empty Budgets section for spec-seed', async () => {
+    await withTmpDir(async (root) => {
+      await mkdir(path.join(root, DOCS), { recursive: true });
+      await writeFile(path.join(root, DOCS, 'SPEC.md'), `# Spec\n\n## Budgets\n\n<!-- none -->\n\n## Assumptions\n\n- x\n`, 'utf8');
+      expect(await contractGapDetail('spec-seed', root, config)).toMatch(/holds no content lines/);
+    });
+  });
+
+  it('names the all-UNVERIFIED MPN column for part-selection', async () => {
+    await withTmpDir(async (root) => {
+      await mkdir(path.join(root, DOCS), { recursive: true });
+      await writeFile(
+        path.join(root, DOCS, 'BOM.md'),
+        `# BOM\n\n| Refdes | Value | Footprint | MPN | Rationale |\n|---|---|---|---|---|\n| U1 | SHT4x | Sensor_Humidity:SHT4x | UNVERIFIED | verify suffix |\n| U2 | ESP32 | RF_Module:ESP32-C6-MINI-1 | UNVERIFIED | module |\n`,
+        'utf8',
+      );
+      const d = await contractGapDetail('part-selection', root, config);
+      expect(d).toMatch(/all 2 BOM row\(s\) carry the placeholder UNVERIFIED/);
+      expect(d).toMatch(/Rationale column/);
+    });
+  });
+
+  it('keeps the generic line for stages without a named gap', async () => {
+    await withTmpDir(async (root) => {
+      expect(await contractGapDetail('firmware', root, config)).toMatch(/no usable artifact was produced/);
+    });
+  });
 });

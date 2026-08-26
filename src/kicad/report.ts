@@ -15,7 +15,24 @@ export interface Violation {
 export interface CheckReport {
   ok: boolean;
   source: 'erc' | 'drc';
+  /** Error-severity findings: the ones that block. */
   violations: Violation[];
+  /**
+   * Warning-severity findings (e.g. `lib_footprint_mismatch` on any board
+   * KiCad did not author itself, silk-over-courtyard lints). Advisory: listed
+   * so a human can weigh them, never counted against `ok` — a gate that
+   * blocks on a warning teaches an agent to chase the unfixable.
+   */
+  warnings: Violation[];
+  /**
+   * DRC's `unconnected_items`: connections the ratsnest still owes. Kept apart
+   * from violations and not counted against `ok`: a first-draft layout leaves
+   * nets unrouted by design (SPEC: "leave the rest as ratsnest"), and routing
+   * is not a rule the draft can break, only work it has not done. The fab
+   * release gate and any caller that needs a fully routed board check this
+   * list explicitly.
+   */
+  unrouted: Violation[];
 }
 
 interface RawItem {
@@ -57,18 +74,25 @@ export function normalizeReport(raw: unknown, source: 'erc' | 'drc'): CheckRepor
     schematic_parity?: RawViolation[];
   };
   const violations: Violation[] = [];
+  const warnings: Violation[] = [];
+  const unrouted: Violation[] = [];
+  const put = (v: Violation) => (v.severity === 'error' ? violations : warnings).push(v);
   for (const sheet of r.sheets ?? []) {
-    for (const v of sheet.violations ?? []) violations.push(normViolation(v, sheet.path));
+    for (const v of sheet.violations ?? []) put(normViolation(v, sheet.path));
   }
-  for (const v of r.violations ?? []) violations.push(normViolation(v));
-  for (const v of r.unconnected_items ?? []) violations.push(normViolation(v));
-  for (const v of r.schematic_parity ?? []) violations.push(normViolation(v));
-  return { ok: violations.length === 0, source, violations };
+  for (const v of r.violations ?? []) put(normViolation(v));
+  for (const v of r.unconnected_items ?? []) unrouted.push(normViolation(v));
+  for (const v of r.schematic_parity ?? []) put(normViolation(v));
+  return { ok: violations.length === 0, source, violations, warnings, unrouted };
 }
 
 export function formatViolations(report: CheckReport): string {
-  if (report.ok) return `${report.source.toUpperCase()}: clean`;
-  const lines = [`${report.source.toUpperCase()}: ${report.violations.length} violation(s)`];
+  const extras =
+    (report.unrouted.length ? `; ${report.unrouted.length} unrouted connection(s) remain (ratsnest, not a violation)` : '') +
+    (report.warnings.length ? `; ${report.warnings.length} warning(s) (advisory, do not block)` : '');
+  const lines = report.ok
+    ? [`${report.source.toUpperCase()}: clean${extras}`]
+    : [`${report.source.toUpperCase()}: ${report.violations.length} violation(s)${extras}`];
   for (const v of report.violations) {
     const where = v.sheet ? ` [sheet ${v.sheet}]` : '';
     lines.push(`  ${v.severity} ${v.type}${where}: ${v.description}`);
@@ -76,6 +100,9 @@ export function formatViolations(report: CheckReport): string {
       const pos = i.x !== undefined ? ` @ (${i.x}, ${i.y})` : '';
       lines.push(`    - ${i.description}${pos}`);
     }
+  }
+  for (const v of report.warnings) {
+    lines.push(`  (advisory) ${v.type}: ${v.description}`);
   }
   return lines.join('\n');
 }

@@ -4,7 +4,8 @@ import { readFile, mkdir, writeFile, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { loadConfig, resolveCompatSettings } from '../config.js';
 import { bootstrapKicadProject, markCreateOrigin } from '../kicad/bootstrap.js';
-import { exportSvg, runErc } from '../kicad/cli.js';
+import { populateBoard, boardHasFootprints, layoutDocSeed, type PopulateResult } from '../kicad/board.js';
+import { exportSvg, runErc, runDrc } from '../kicad/cli.js';
 import { listSymbols } from '../kicad/sexp.js';
 import { checkLegibility } from '../kicad/legibility.js';
 import { draftSchematicToText, defaultIntentPath } from '../kicad/draft/draft.js';
@@ -136,7 +137,7 @@ export const STAGES: Stage[] = [
       return realLines.length > 0;
     },
     prompt: (brief) =>
-      `Stage 1 of the create pipeline: seed the requirements. From the product brief below, write docs/SPEC.md (what the device is, top-level constraints and budgets). Every budget you state must also be recorded with record_constraint. Anything the brief does not state: propose a sensible default and flag it ASSUMED. If an openspec/ workspace exists, also seed openspec/specs/ with per-capability requirements using Given/When/Then scenarios.\n\nBrief:\n${brief}`,
+      `Stage 1 of the create pipeline: seed the requirements. From the product brief below, write docs/SPEC.md (what the device is, top-level constraints and budgets). The budgets live under a heading that contains the word "Budgets" (the scaffold's "## Budgets"), one line item per budget; the stage is not complete until that section holds real content, so keep the heading and fill it rather than renaming it. Every budget you state must also be recorded with record_constraint. Anything the brief does not state: propose a sensible default and flag it ASSUMED. If an openspec/ workspace exists, also seed openspec/specs/ with per-capability requirements using Given/When/Then scenarios.\n\nBrief:\n${brief}`,
   },
   {
     name: 'architecture',
@@ -185,7 +186,7 @@ export const STAGES: Stage[] = [
       });
     },
     prompt: () =>
-      'Stage 3: part selection. Write docs/BOM.md with the fixed table format (| Refdes | Value | Footprint | MPN | Rationale |). The Value column holds the COMPONENT VALUE and nothing else — "4.7uF", "1M", "500mAh Li-Po", "STM32F103C8T6" — because stage 4 draws it on the sheet as that part\'s Value field, where a description ("1S Li-Po cell, 500 mAh, bare leads") collides with neighbouring symbols and fails the legibility gate. Put the prose in the Rationale column instead; that is the column for it, and nothing draws it. One row per refdes: a grouped row ("SW3-SW16", "C5-C8") is not a BOM row and the schematic stage cannot match it. Every MPN you introduce is flagged UNVERIFIED with a datasheet-verifiable justification. Check leakage/quiescent current of every part against the power budget. The design must be capturable with the KiCad symbol libraries installed on THIS machine: run search_symbols for every IC, module, connector and other active part before committing it to the BOM, and if a part has no installed symbol, pick one that has — stage 4 draws only from installed symbols, and a BOM row it cannot resolve makes the whole run unwinnable. Existence is not enough: confirm the chosen symbol with symbol_pins so the pin numbers you wire in stage 4 are real. Multi-unit symbols (gate packs, dual opamps) are fine — the engine places each unit separately under the one refdes, and net endpoints use plain package pin numbers. Run check_drift before finishing.',
+      'Stage 3: part selection. No schematic exists yet and none is needed: this stage INVENTS the design\'s parts and their refdes (U1, J1, R1, ...) from SPEC.md and SUBSYSTEMS.md, and the later stages build the schematic FROM this BOM. Missing schematic, refdes inventory, or configured board is the expected starting state, never a reason to refuse. Write docs/BOM.md with the fixed table format (| Refdes | Value | Footprint | MPN | Rationale |). The Value column holds the COMPONENT VALUE and nothing else — "4.7uF", "1M", "500mAh Li-Po", "STM32F103C8T6" — because stage 4 draws it on the sheet as that part\'s Value field, where a description ("1S Li-Po cell, 500 mAh, bare leads") collides with neighbouring symbols and fails the legibility gate. Put the prose in the Rationale column instead; that is the column for it, and nothing draws it. One row per refdes: a grouped row ("SW3-SW16", "C5-C8") is not a BOM row and the schematic stage cannot match it. The MPN column holds a real manufacturer part number ("SHT41-AD1B-R2", "RC0603FR-0710KL"): a part you have not checked against its datasheet keeps its MPN in that column and is flagged in the Rationale column ("UNVERIFIED: ..."). Never write the bare word UNVERIFIED as the MPN; that is the scaffold\'s "no part chosen yet" placeholder, and a BOM whose every row still carries it has selected no parts, so the stage is not complete. Check leakage/quiescent current of every part against the power budget. The design must be capturable with the KiCad symbol libraries installed on THIS machine: run search_symbols for every IC, module, connector and other active part before committing it to the BOM, and if a part has no installed symbol, pick one that has — stage 4 draws only from installed symbols, and a BOM row it cannot resolve makes the whole run unwinnable. Existence is not enough: confirm the chosen symbol with symbol_pins so the pin numbers you wire in stage 4 are real. Multi-unit symbols (gate packs, dual opamps) are fine — the engine places each unit separately under the one refdes, and net endpoints use plain package pin numbers. Run check_drift before finishing.',
   },
   {
     name: 'schematic',
@@ -239,7 +240,7 @@ export const STAGES: Stage[] = [
       return true;
     },
     prompt: () =>
-      'Stage 4: schematic. An empty KiCad project has already been scaffolded and wired into .copperhead/config.json. You author INTENT, never geometry: write the netlist-intent IR and call draft_schematic — the deterministic engine computes every coordinate, wire, label, power symbol, and group box, and the sheet it draws satisfies the drafting standard by construction (captioned group boxes per SUBSYSTEMS.md subsystem, left-to-right flow, rails up and grounds down, net labels between groups, filled title block). The IR (schematic.intent.json) is JSON: {"version": 1, "parts": [{"ref", "libId", "value", "footprint", "group"}], "nets": [{"name", "pins": ["REF.PIN", …], "kind"?}], "noConnect": ["REF.PIN", …], "hints"?: {"groupOrder"?, "paper"?, "date"?}}. Build it from BOM.md (same refdes and values — validation cross-checks and refuses mismatches) and SUBSYSTEMS.md (every non-power part names one subsystem heading as its group). Use exact canonical KiCad lib_ids (e.g. Device:R) and REAL pin numbers from the library: the pin dossier below (when present) already lists every BOM part\'s installed symbol and its real pins — work from it and from symbol_pins rather than reading .kicad_sym files, and validation lists a part\'s actual pins when you name one that does not exist. Declare every deliberately unused pin in noConnect; power rails are recognized from pin types automatically (override with "kind" only when the inference is wrong — the draft report lists every net\'s resolved class). Pass the full IR as intent_json to draft_schematic; the report embeds the legibility findings and the score for the fresh sheet. To repair ANY finding (ERC, legibility, validation), fix the IR and call draft_schematic again — edit_file is refused on the drafted sheet. Text-collision findings scale with TEXT LENGTH: a net label, part value, or SUBSYSTEMS heading that is shorter draws a smaller box, so renaming a colliding net (and updating PINOUT.md) or tightening a long heading is a real repair lever; paper size and declaration order are not (placement is grid-derived). When the draft is clean run run_erc and check_drift, update PINOUT.md to match the IR\'s pin assignments, and finish.',
+      'Stage 4: schematic. An empty KiCad project has already been scaffolded and wired into .copperhead/config.json. You author INTENT, never geometry: write the netlist-intent IR and call draft_schematic — the deterministic engine computes every coordinate, wire, label, power symbol, and group box, and the sheet it draws satisfies the drafting standard by construction (captioned group boxes per SUBSYSTEMS.md subsystem, left-to-right flow, rails up and grounds down, net labels between groups, filled title block). The IR (schematic.intent.json) is JSON: {"version": 1, "parts": [{"ref", "libId", "value", "footprint", "group"}], "nets": [{"name", "pins": ["REF.PIN", …], "kind"?}], "noConnect": ["REF.PIN", …], "hints"?: {"groupOrder"?, "paper"?, "date"?}}. Build it from BOM.md (same refdes and values — validation cross-checks and refuses mismatches) and SUBSYSTEMS.md (every non-power part names one subsystem heading as its group). Use exact canonical KiCad lib_ids (e.g. Device:R) and REAL pin numbers from the library: the pin dossier below (when present) already lists every BOM part\'s installed symbol and its real pins — work from it and from symbol_pins rather than reading .kicad_sym files, and validation lists a part\'s actual pins when you name one that does not exist. Declare every deliberately unused pin in noConnect; power rails are recognized from pin types automatically (override with "kind" only when the inference is wrong — the draft report lists every net\'s resolved class). Pass the full IR as intent_json to draft_schematic; the report embeds the legibility findings and the score for the fresh sheet. To repair ANY finding (ERC, legibility, validation), fix the IR and call draft_schematic again — edit_file is refused on the drafted sheet. Text-collision findings scale with TEXT LENGTH: a net label, part value, or SUBSYSTEMS heading that is shorter draws a smaller box, so renaming a colliding net (and updating PINOUT.md) or tightening a long heading is a real repair lever; declaration order is not (placement is grid-derived). Out-of-frame findings have a different lever: set hints.paper to the next larger standard sheet ("A3", then "A2") and re-draft — more paper is the correct fix for content that does not fit, never a cosmetic one. When the draft is clean run run_erc and check_drift, update PINOUT.md to match the IR\'s pin assignments, and finish.',
   },
   {
     name: 'layout-draft',
@@ -256,7 +257,7 @@ export const STAGES: Stage[] = [
       return docHasContent(root, path.join(docs, 'LAYOUT.md'), '## Draft quality');
     },
     prompt: () =>
-      'Stage 5: first-draft layout. Rule-driven placement written as real coordinates: connectors on edges, decoupling at IC pins, ESD at connectors, keepouts honored. Route power and short critical nets; leave the rest as ratsnest. Every routed net must pass run_drc. Then write the "## Draft quality" section in LAYOUT.md: exactly what is fine and what a human or specialist tool should redo. Non-optimal is acceptable; unlabeled non-optimal is not.',
+      'Stage 5: first-draft layout. The board already holds every schematic part: copperhead placed each footprint on a grid inside an outline sized to fit, all on F.Cu, pads carrying their nets, nothing routed (the "## Board as placed" block below lists what is on it and how each package was chosen). Your job is placement, not geometry: move parts by editing each footprint\'s `(at X Y)` line (a third number sets rotation) so connectors sit on board edges, decoupling sits at its IC pins, ESD sits at the connector, keepouts are honored, and the user-facing parts sit where the brief puts them; resize the Edge.Cuts rectangle to the board the brief asks for. Move a few related parts at a time and run run_drc after each batch; keep courtyards a millimetre apart and inside the outline. Never add, remove, or rewrite footprints, pads, or nets: the engine owns them. The listed grid placement passes DRC; if your rearrangement cannot be brought back to DRC-clean within a few batches, restore the moved parts to their listed coordinates (that state is always reachable and always clean), keep whatever improvements did hold, and say under Draft quality that placement is a grid a human should refine. A refusal is for a design that cannot exist, not for a layout that is merely unfinished: with the grid to fall back to, this stage always has a finishable state. Routing is optional in a first draft and unrouted connections are reported separately by run_drc, not as violations; any track you do add must leave run_drc clean, and every board edit must be followed by run_drc. Then write docs/LAYOUT.md (keep the "## Footprints" table copperhead wrote) with a "## Draft quality" section: exactly what is fine (outline, keepouts, DRC-clean placement) and what a human or specialist tool should redo (routing, any package chosen by default rather than by the schematic). Non-optimal is acceptable; unlabeled non-optimal is not.',
   },
   {
     name: 'outputs',
@@ -327,8 +328,37 @@ async function emitJlcpcbAfterOutputs(stageName: string, opts: CreateOptions): P
  * name the finding counts by kind — the resume then starts on the actual work
  * instead of rediscovering it.
  */
-async function contractGapDetail(stageName: string, root: string, config: CopperheadConfig): Promise<string> {
+export async function contractGapDetail(stageName: string, root: string, config: CopperheadConfig): Promise<string> {
   const generic = 'the run finished but the stage completion contract is not met — no usable artifact was produced';
+  // The two doc stages whose contract is a fixed shape the prompt can only
+  // describe: a small model reads "flagged UNVERIFIED" as "write UNVERIFIED in
+  // the MPN column" and "budgets" as any heading it likes, then finishes with
+  // every gate green. Told only "no usable artifact", its retry rewrites the
+  // same file; told the actual gap, it can fix it.
+  if (stageName === 'spec-seed') {
+    const p = path.join(root, config.docs, 'SPEC.md');
+    if (!existsSync(p)) return `${generic} (docs/SPEC.md does not exist)`;
+    const text = await readFile(p, 'utf8');
+    if (!/^#{1,6}\s.*\bBudgets?\b/im.test(text)) {
+      return 'the spec-seed contract is not met: docs/SPEC.md has no heading containing the word "Budgets"; keep the scaffold\'s "## Budgets" section and list the budgets under it';
+    }
+    return 'the spec-seed contract is not met: the "Budgets" section of docs/SPEC.md holds no content lines (only comments, blank lines, or subheadings); list every budget as a line item under it';
+  }
+  if (stageName === 'part-selection') {
+    const p = path.join(root, config.docs, 'BOM.md');
+    if (!existsSync(p)) return `${generic} (docs/BOM.md does not exist)`;
+    const text = await readFile(p, 'utf8');
+    const rows = text.split('\n').filter((l) => l.startsWith('|') && !l.includes('---') && !l.toLowerCase().includes('refdes'));
+    if (!rows.length) return 'the part-selection contract is not met: docs/BOM.md has no table rows (| Refdes | Value | Footprint | MPN | Rationale |)';
+    return `the part-selection contract is not met: all ${rows.length} BOM row(s) carry the placeholder UNVERIFIED in the MPN column, so no part has been selected; put the real manufacturer part number in the MPN column and flag it "UNVERIFIED: ..." in the Rationale column instead`;
+  }
+  if (stageName === 'layout-draft') {
+    const boardPath = config.board ? path.join(root, config.board) : null;
+    if (!boardPath || !existsSync(boardPath) || !(await readFile(boardPath, 'utf8')).includes('(footprint')) {
+      return 'the layout-draft contract is not met: the board holds no footprint';
+    }
+    return 'the layout-draft contract is not met: docs/LAYOUT.md has no "## Draft quality" section; write it (what is fine, what a human or specialist tool should redo)';
+  }
   if (stageName !== 'schematic' || !config.schematic) return generic;
   const p = path.join(root, config.schematic);
   if (!existsSync(p)) return generic;
@@ -349,6 +379,75 @@ async function contractGapDetail(stageName: string, root: string, config: Copper
     // fall through: an unreadable schematic already fails earlier contract steps
   }
   return generic;
+}
+
+/**
+ * Before the layout-draft stage, put the schematic's parts on the board. The
+ * stage's contract is a board with a footprint plus the Draft quality note, and
+ * the agent cannot author a footprint (write_file refuses KiCad files and the
+ * geometry lives in libraries it cannot read), so every attempt on a bare
+ * outline ended in a refusal. Runs before every attempt, like the schematic
+ * scaffold: a rolled-back retry starts from the committed (empty) board again.
+ * Idempotent on a board that already has footprints. Best-effort: a failure
+ * is logged and the stage runs against whatever is there, which is no worse
+ * than before this step existed. Returns the prompt block describing the
+ * board, or '' when nothing was placed.
+ */
+async function ensureBoardPopulated(opts: CreateOptions, config: CopperheadConfig): Promise<string> {
+  if (!config.board || !config.schematic) return '';
+  const boardPath = path.join(opts.repoRoot, config.board);
+  if (!existsSync(boardPath) || !existsSync(path.join(opts.repoRoot, config.schematic))) return '';
+  let result: PopulateResult;
+  try {
+    if (await boardHasFootprints(boardPath)) return '';
+    result = await populateBoard(opts.repoRoot, config.schematic, config.board);
+  } catch (e) {
+    opts.log(stageLine('layout-draft', `could not place the schematic's footprints on the board (${(e as Error).message}); the stage runs against the bare board`, 'warn'));
+    return '';
+  }
+  const how = (p: PopulateResult['placed'][number]) =>
+    p.how === 'schematic' ? 'from the schematic' : p.how === 'symbol-default' ? 'symbol default' : p.how === 'symbol-filter' ? 'symbol footprint filter' : 'generic default';
+  opts.log(
+    stageLine(
+      'layout-draft',
+      `placed ${result.placed.length} footprint(s) on ${config.board} from the schematic (${result.outline.width} x ${result.outline.height} mm outline, ${result.nets} nets, unrouted)` +
+        (result.unplaced.length ? `; ${result.unplaced.length} part(s) without an installed footprint: ${result.unplaced.map((u) => u.ref).join(', ')}` : ''),
+      result.unplaced.length ? 'warn' : 'ok',
+    ),
+  );
+  const layoutDoc = path.join(opts.repoRoot, config.docs, 'LAYOUT.md');
+  if (!existsSync(layoutDoc)) {
+    try {
+      await writeFile(layoutDoc, layoutDocSeed(result, config.board), 'utf8');
+    } catch {
+      // the doc is a courtesy; the stage writes it anyway
+    }
+  }
+  // The grid is DRC-clean by construction (courtyards separated, everything
+  // inside the outline); saying so, verified, changes what the model does with
+  // it: a known-good starting state is something it can fall back to instead
+  // of refusing when its own rearrangement digs into violations.
+  let drcLine = '';
+  try {
+    const drc = await runDrc(boardPath);
+    drcLine = drc.ok
+      ? `This placement passes DRC as-is (${drc.unrouted.length} unrouted connection(s), which is expected and not a violation).`
+      : `As placed, DRC reports ${drc.violations.length} violation(s); run run_drc for the list before moving anything.`;
+    opts.log(stageLine('layout-draft', drc.ok ? 'the placed board passes DRC (unrouted only)' : `the placed board has ${drc.violations.length} DRC violation(s)`, drc.ok ? 'ok' : 'warn'));
+  } catch {
+    // DRC here is a courtesy; the stage runs it anyway
+  }
+  const lines = [
+    '',
+    '',
+    '## Board as placed (machine-generated, edit placements only)',
+    `Outline: ${result.outline.width} x ${result.outline.height} mm rectangle on Edge.Cuts starting at (100, 100). ${drcLine} Footprints (refdes: footprint, chosen how, at X Y):`,
+    ...result.placed.map((p) => `- ${p.ref}: ${p.footprint} (${how(p)}) at ${p.x.toFixed(2)} ${p.y.toFixed(2)}`),
+    ...(result.unplaced.length
+      ? ['Not on the board (no installed footprint; say so under Draft quality):', ...result.unplaced.map((u) => `- ${u.ref} (${u.value}): ${u.reason}`)]
+      : []),
+  ];
+  return lines.join('\n');
 }
 
 /** Stages whose output is a KiCad file worth rendering to an image (5.4). */
@@ -476,6 +575,26 @@ async function diagnose(input: {
   /** Compatible-endpoint settings, so a `compat` run can diagnose itself. */
   compat?: CompatSettings | undefined;
 }): Promise<StageDiagnosis> {
+  // A rate-limited diagnosis is not a verdict. The supervisor shares the
+  // stage's model, so a long stage routinely lands here with the provider's
+  // per-minute window already spent; mapping that 429 to "abort" ends a
+  // pipeline whose next attempt was about to be approved (seen live on
+  // gpt-5.4-mini in eastus). Wait out the window and ask again; every other
+  // error still fails safe to abort below.
+  for (let wait = 30_000; ; wait *= 2) {
+    const out = await diagnoseOnce(input);
+    // Two prefixes name a diagnosis that never happened: recovery.ts's own
+    // catch ("diagnosis call failed") and the one below ("diagnosis
+    // unavailable"). Only those reasons are eligible — an actual verdict that
+    // merely mentions a rate limit must not be retried into a different one.
+    const rateLimited =
+      out.verdict === 'abort' && /^diagnosis (unavailable|call failed):.*(429|rate.?limit)/is.test(out.reason);
+    if (!rateLimited || wait > 120_000) return out;
+    await new Promise((r) => setTimeout(r, wait));
+  }
+}
+
+async function diagnoseOnce(input: Parameters<typeof diagnose>[0]): Promise<StageDiagnosis> {
   let provider: Provider | undefined;
   try {
     provider = await makeProvider(input.model, false, input.compat);
@@ -840,6 +959,10 @@ export async function runCreate(opts: CreateOptions): Promise<{ ok: boolean; com
           opts.log(stageLine('schematic', 're-scaffolded empty KiCad project after rollback, wired into config'));
         }
       }
+      let boardBlock = '';
+      if (stage.name === 'layout-draft') {
+        boardBlock = await ensureBoardPopulated(opts, await loadConfig(opts.repoRoot));
+      }
       opts.log(
         stageLine(
           stage.name,
@@ -876,8 +999,8 @@ export async function runCreate(opts: CreateOptions): Promise<{ ok: boolean; com
         model: opts.model,
         request: `create pipeline stage: ${stage.name}`,
         stagePrompt: guidance
-          ? `${basePrompt}${dossierBlock}\n\n## Recovery guidance (a previous attempt did not complete this stage — do this differently)\n${guidance}`
-          : `${basePrompt}${dossierBlock}`,
+          ? `${basePrompt}${dossierBlock}${boardBlock}\n\n## Recovery guidance (a previous attempt did not complete this stage — do this differently)\n${guidance}`
+          : `${basePrompt}${dossierBlock}${boardBlock}`,
         interactive: opts.interactive ?? false,
         allowDirty: true, // stages build on each other's uncommitted state within the pipeline
         ...(stageTurns !== undefined ? { maxTurns: stageTurns } : {}),
