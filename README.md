@@ -1,17 +1,17 @@
 <p align="center">
-  <a href="https://copperhead.sh"><img src="https://raw.githubusercontent.com/chouhanindustries/copperhead/main/docs/branding/lockup-transparent.png" alt="copperhead" width="440"></a>
+  <a href="https://copperhead.sh"><img src="https://raw.githubusercontent.com/copperheadhq/copperhead/main/docs/branding/lockup-transparent.png" alt="copperhead" width="440"></a>
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/copperhead"><img src="https://img.shields.io/npm/v/copperhead?color=b87333" alt="npm"></a>
-  <a href="https://github.com/chouhanindustries/copperhead/actions/workflows/ci.yml"><img src="https://github.com/chouhanindustries/copperhead/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/copperheadhq/copperhead/actions/workflows/ci.yml"><img src="https://github.com/copperheadhq/copperhead/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/npm/l/copperhead?color=15181c" alt="license"></a>
 </p>
 
 **Cursor for circuit boards.** An AI agent that designs, documents, and validates real PCBs from a prompt, working directly on existing KiCad repositories.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/chouhanindustries/copperhead/main/assets/copperhead.gif" alt="copperhead agent shell demo" width="720">
+  <img src="https://raw.githubusercontent.com/copperheadhq/copperhead/main/assets/copperhead.gif" alt="copperhead agent shell demo" width="720">
 </p>
 
 > **Status: early.** Phase 1 is implemented and the CLI runs. The [technical specification](openspec/specs/SPEC.md) is the source of truth; expect the surface to move before 1.0.
@@ -32,7 +32,7 @@ It reads and edits real `.kicad_sch` / `.kicad_pcb` files (s-expression text), m
 > [!TIP]
 > **Most users should not install copperhead by hand.** If you are working inside an AI coding assistant (like Claude Code, Cursor, or Codex), you can install and configure copperhead automatically for your repository by pasting this single line:
 > ```text
-> Install copperhead for this repo using https://raw.githubusercontent.com/chouhanindustries/copperhead/main/agent-install-prompt.md
+> Install copperhead for this repo using https://raw.githubusercontent.com/copperheadhq/copperhead/main/agent-install-prompt.md
 > ```
 
 If you prefer to install manually:
@@ -56,7 +56,7 @@ The script is conservative by design: it never runs `sudo` and never edits shell
 ### Requirements
 
 - Node.js ≥ 20
-- [KiCad](https://www.kicad.org/) ≥ 8 with `kicad-cli` on PATH
+- [KiCad](https://www.kicad.org/) ≥ 8 with `kicad-cli` on PATH (on Windows and macOS, copperhead also searches standard installation directories automatically; override with `COPPERHEAD_KICAD_CLI`)
 - One model backend: a locally installed, ChatGPT-authenticated [Codex CLI](https://learn.chatgpt.com/docs/codex/cli), a logged-in [Cursor Agent CLI](#saved-login-cursor-agent) (`agent login`), logged-in Claude Code (see [Saved login](#saved-login-claude-code)), or `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` in the environment. `check` never calls an LLM.
 
 ## Quick start
