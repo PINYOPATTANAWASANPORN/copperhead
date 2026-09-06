@@ -16,6 +16,9 @@ import type { Outcome, LayoutStatus } from '../ir/status.js';
 import type { Diagnostic } from '../verify/diagnostic.js';
 import { importBoard } from '../ir/kicad/import.js';
 import { applyCandidate } from '../ir/kicad/export.js';
+import { renderSvg } from '../ir/svg.js';
+import { verifyDesign } from '../verify/index.js';
+import { extractFills } from '../ir/kicad/zones.js';
 import { deriveBlocks } from '../intent/blocks.js';
 import { loadConstraints } from '../intent/load.js';
 import { readCache, applicable, toStageInputs } from '../intent/references.js';
@@ -286,6 +289,15 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
       }
       if (applied) verdict = await recordEvidence(opts.repoRoot, opts.config.docs, target, evidence);
       else await writeFile(path.join(opts.runDir, 'evidence.json'), JSON.stringify(evidence, null, 2), 'utf8');
+    }
+    // the result, drawn: board.svg beside the working board, findings marked
+    try {
+      const text = await readFile(work, 'utf8');
+      const d = importBoard({ boardText: text, boardPath: work }).design;
+      const v = verifyDesign({ design: d, fills: extractFills(text), constraints: loaded.registry });
+      await writeFile(path.join(opts.runDir, 'board.svg'), renderSvg(d, { diagnostics: v.diagnostics, legend: false, scale: 12 }), 'utf8');
+    } catch {
+      // a render failure never fails the run
     }
     const detail = [...o.detail, ...cycles.map((c) => `cycle ${c.n}${c.action ? ` ${c.action.type}` : ''}: ${c.status}, ${c.errors} error(s), ${c.owed} owed, ${c.seconds.toFixed(1)} s`)];
     const outcome: Outcome<Diagnostic> = { ...o, detail };

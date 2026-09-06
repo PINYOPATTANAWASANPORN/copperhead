@@ -6,7 +6,7 @@
  * adopted-versus-built layers, per-board raw metrics, failure counts,
  * overhead, and the reproduction command.
  */
-import { readFile, writeFile, mkdir, cp } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, cp, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -111,6 +111,8 @@ export interface BoardRecord {
   /** golden cases: the status `pcb verify` owes the seeded fault (informational; routing rips the copper up unless preserved). */
   expectedVerifyStatus?: string;
   runDir: string;
+  /** Repo-relative directory of the selected candidate (candidate.svg, candidate.kicad_pcb live there). */
+  selectedDir?: string;
 }
 
 export interface BenchReport {
@@ -248,7 +250,8 @@ export async function runSuite(opts: BenchOptions): Promise<{ report: BenchRepor
         const invalidOverValid = selected && !selected.eligible && eligible.length ? 1 : 0;
         const errors = res.invocations.filter((i) => i.error).map((i) => `${i.engineId}: ${i.error!.kind}: ${i.error!.message}`);
         for (const i of res.invocations) if (!i.error && i.result && (i.result.status === 'failed' || i.result.status === 'unsupported')) errors.push(`${i.engineId}: ${i.result.status}${i.result.diagnostics[0] ? `: ${i.result.diagnostics[0].message}` : ' (no copper, no explanation from the engine)'}`);
-        const rec: BoardRecord = { id: entry.id, board: path.relative(opts.repoRoot, boardPath), seed, status: res.outcome.status, summary: res.outcome.summary, selected: res.ranking.selected ?? null, wallSeconds, engineSeconds, overheadSeconds: Math.max(0, wallSeconds - engineWall), candidates, ineligible: res.ineligible, errors, selectionRegret, invalidOverValid, runDir: path.relative(opts.repoRoot, runDir) };
+        const selCand = res.ranking.selected ? res.candidates.find((c) => c.engineId === res.ranking.selected) : undefined;
+        const rec: BoardRecord = { id: entry.id, board: path.relative(opts.repoRoot, boardPath), seed, status: res.outcome.status, summary: res.outcome.summary, selected: res.ranking.selected ?? null, wallSeconds, engineSeconds, overheadSeconds: Math.max(0, wallSeconds - engineWall), candidates, ineligible: res.ineligible, errors, selectionRegret, invalidOverValid, runDir: path.relative(opts.repoRoot, runDir), ...(selCand ? { selectedDir: path.relative(opts.repoRoot, selCand.workDir) } : {}) };
         const expectedPath = path.join(path.dirname(boardPath), 'expected.json');
         if (suite.corpus === 'golden' && existsSync(expectedPath)) {
           const expected = JSON.parse(await readFile(expectedPath, 'utf8')) as { status?: string };
@@ -310,6 +313,15 @@ export async function runSuite(opts: BenchOptions): Promise<{ report: BenchRepor
 
 export async function writeReport(dir: string, report: BenchReport): Promise<void> {
   await mkdir(dir, { recursive: true });
+  // older records: find the selected candidate's directory by its engine id
+  const repoRoot = path.resolve(dir, '..', '..', '..', '..');
+  for (const b of report.boards) {
+    if (b.selectedDir || !b.selected || !b.runDir || report.kind === 'layout' || report.kind === 'verify') continue;
+    const cdir = path.join(repoRoot, b.runDir, 'candidates');
+    if (!existsSync(cdir)) continue;
+    const hit = (await readdir(cdir)).find((d) => d.startsWith(`${b.selected}-`));
+    if (hit) b.selectedDir = path.join(b.runDir, 'candidates', hit);
+  }
   await writeFile(path.join(dir, 'report.json'), JSON.stringify(report, null, 2), 'utf8');
   await writeFile(path.join(dir, 'report.html'), renderHtml(report), 'utf8');
   await writeFile(path.join(dir, 'summary.csv'), summaryCsv(report), 'utf8');

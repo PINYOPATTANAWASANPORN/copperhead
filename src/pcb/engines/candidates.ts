@@ -9,6 +9,7 @@ import path from 'node:path';
 import type { PcbDesign, ZoneFill } from '../ir/types.js';
 import { importBoard } from '../ir/kicad/import.js';
 import { applyCandidate, type Candidate } from '../ir/kicad/export.js';
+import { renderSvg } from '../ir/svg.js';
 import type { Constraint } from '../../memory/constraints.js';
 import { refillZones, extractFills } from '../ir/kicad/zones.js';
 import { verifyDesign, type VerifyResult } from '../verify/index.js';
@@ -66,5 +67,7 @@ export async function materialize(inv: Invocation<RoutingResult | PlacementResul
   const verify = verifyDesign({ design, fills, ...(drc ? { drc } : {}), profile: opts.profile, ...(opts.kicadVersion ? { kicadVersion: opts.kicadVersion } : {}), ...(opts.constraints ? { constraints: opts.constraints } : {}) });
   await writeFile(path.join(inv.workDir, 'candidate.json'), JSON.stringify(design), 'utf8');
   await writeFile(path.join(inv.workDir, 'diagnostics.json'), JSON.stringify(verify.diagnostics, null, 2), 'utf8');
+  // a picture beside every candidate: the board with the harness's findings marked, no legend (the diagnostics file is the legend)
+  await writeFile(path.join(inv.workDir, 'candidate.svg'), renderSvg(design, { diagnostics: verify.diagnostics, legend: false, scale: 12 }), 'utf8');
   return { engineId: inv.engineId, workDir: inv.workDir, pcbPath, design, fills, drc, verify, refused: out.refused };
 }

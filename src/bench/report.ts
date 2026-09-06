@@ -51,7 +51,7 @@ body{font:14px/1.45 system-ui,sans-serif;margin:24px;color:#222;background:#fafa
 table{border-collapse:collapse;width:100%;background:#fff}th,td{border:1px solid #ddd;padding:6px 8px;vertical-align:top;text-align:left}th{background:#f0f0f0;font-weight:600}
 td.num{text-align:right;white-space:nowrap}td.status{min-width:220px}td.board{min-width:120px}.muted{color:#777;font-size:12px}ul{margin:0;padding-left:16px;font-size:12px}.ok{color:#1a7f37}.bad{color:#b42318}
 .s-PASS td:first-child{border-left:4px solid #1a7f37}.s-PARTIAL td:first-child{border-left:4px solid #b26b00}.s-REFUSE td:first-child,.s-ENGINE_ERROR td:first-child,.s-INVALID_OUTPUT td:first-child{border-left:4px solid #b42318}
-.kv{display:grid;grid-template-columns:max-content 1fr;gap:2px 16px}.kv div:nth-child(odd){color:#555}code{background:#eee;padding:1px 4px;border-radius:3px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:2px 16px}.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}.gallery figure{margin:0;background:#fff;border:1px solid #ddd;border-radius:6px;padding:6px}.gallery img{width:100%;height:160px;object-fit:contain;background:#f6f4ee}.gallery figcaption{font-size:12px;padding-top:4px}.kv div:nth-child(odd){color:#555}code{background:#eee;padding:1px 4px;border-radius:3px}
 </style>
 <h1>copperbench · ${esc(r.suite)} · ${esc(r.kind ?? 'routing')} · track ${esc(r.track)}</h1>
 <div class="muted">${esc(r.startedAt)} → ${esc(r.finishedAt)} · benchmark version ${esc(r.benchmarkVersion)}</div>
@@ -78,6 +78,8 @@ ${s.hpwlVsRoutability ? `<div>HPWL vs probe completion</div><div>Pearson r ${s.h
 <div>seeds / budget</div><div>${esc(r.seeds.join(', '))} / ${r.budgetSeconds} s per board</div>
 <div>reproduce</div><div><code>${esc(r.reproduce)}</code></div>
 </div>
+<h2>Gallery</h2>
+<div class="gallery">${r.boards.map((b) => { const rel = (p: string) => '../'.repeat(3) + p; const img = r.kind === 'layout' && b.runDir ? rel(`${b.runDir}/board.svg`) : b.selectedDir ? rel(`${b.selectedDir}/candidate.svg`) : ''; return img ? `<figure><a href="${esc(img)}"><img src="${esc(img)}" alt="${esc(b.id)}" loading="lazy"></a><figcaption><b>${esc(b.id)}</b> · ${esc(b.status)}${b.selected ? ` · ${esc(b.selected)}` : ''}</figcaption></figure>` : `<figure><figcaption><b>${esc(b.id)}</b> · ${esc(b.status)} · no candidate</figcaption></figure>`; }).join('')}</div>
 <h2>Boards</h2>
 <table><thead><tr><th>board</th><th>status</th><th>selected</th>${METRICS.map((k) => `<th>${esc(k)}</th>`).join('')}<th>wall / engine / overhead s</th><th>candidates</th></tr></thead>
 <tbody>${r.boards.map((b) => boardRow(b, METRICS)).join('\n')}</tbody></table>
