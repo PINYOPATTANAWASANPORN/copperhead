@@ -15,6 +15,8 @@ export interface SvgOptions {
   scale?: number;
   title?: string;
   showCourtyards?: boolean;
+  /** Draw the legend and title block under the board (default true); off for thumbnails. */
+  legend?: boolean;
 }
 
 const COLORS: Record<string, string> = { 'F.Cu': '#c83434', 'B.Cu': '#3455c8' };
@@ -30,11 +32,12 @@ export function renderSvg(design: PcbDesign, opts: SvgOptions = {}): string {
   const b = bbox(design.board.outline);
   const pad = 2e6;
   const shown = (opts.diagnostics ?? []).filter((d) => d.severity !== 'info');
-  const legendLines = (opts.title ? 1 : 0) + shown.length;
+  const legend = opts.legend !== false;
+  const legendLines = legend ? (opts.title ? 1 : 0) + shown.length : 0;
   const legendH = legendLines ? (legendLines + 0.5) * 1.3e6 : 0;
   const minX = b.minX - pad;
   const minY = b.minY - pad;
-  const w = Math.max(b.maxX - b.minX + 2 * pad, 60e6);
+  const w = legend ? Math.max(b.maxX - b.minX + 2 * pad, 60e6) : b.maxX - b.minX + 2 * pad + 4e6;
   const h = b.maxY - b.minY + 2 * pad + legendH;
   const out: string[] = [];
   out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round((w / 1e6) * scale)}" height="${Math.round((h / 1e6) * scale)}" viewBox="${mm(minX)} ${mm(minY)} ${mm(w)} ${mm(h)}" font-family="sans-serif">`);
@@ -79,11 +82,11 @@ export function renderSvg(design: PcbDesign, opts: SvgOptions = {}): string {
     }
   });
   let ly = b.maxY + pad + 0.4e6;
-  if (opts.title) {
+  if (legend && opts.title) {
     out.push(`<text x="${mm(minX + 1e6)}" y="${mm(ly + 1e6)}" font-size="1.1" fill="#222" font-weight="bold">${escapeXml(opts.title)}</text>`);
     ly += 1.3e6;
   }
-  shown.forEach((d, i) => {
+  if (legend) shown.forEach((d, i) => {
     const color = d.severity === 'error' ? '#c00' : '#b37400';
     const refs = d.entityReferences.length ? ` [${d.entityReferences.slice(0, 6).join(', ')}]` : '';
     out.push(`<text x="${mm(minX + 1e6)}" y="${mm(ly + 1e6)}" font-size="1.0" fill="${color}">${escapeXml(`${i + 1}. ${d.severity} ${d.code}${refs}${d.region ? '' : ' (no region)'}`)}</text>`);
