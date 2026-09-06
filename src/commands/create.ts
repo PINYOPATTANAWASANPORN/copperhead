@@ -488,6 +488,28 @@ async function ensureBoardPopulated(opts: CreateOptions, config: CopperheadConfi
   } catch {
     // DRC here is a courtesy; the stage runs it anyway
   }
+  // ADR 0009 / spec §11.4: the closed loop runs on the freshly populated board before the model's
+  // first turn; the model then reviews and moves parts, and copperhead routes again when it finishes
+  let laidOut: string[] = [];
+  try {
+    const { layoutBoard } = await import('../pcb/agent/orchestrate.js');
+    const runDir = path.join(opts.repoRoot, '.copperhead', 'runs', new Date().toISOString().replace(/[:.]/g, '-'), 'layout');
+    const res = await layoutBoard({ repoRoot: opts.repoRoot, config, boardPath, runDir, apply: true, provider: null, log: (l) => opts.log(stageLine('layout-draft', l)) });
+    const e = res.evidence;
+    opts.log(stageLine('layout-draft', `laid out through the harness: ${res.outcome.status} (${res.cycles.length} cycle(s)${e?.selected ? `, ${e.selected}` : ''}${e ? `, ${e.owed.length} owed` : ''})${res.applied ? `; written to ${config.board}` : '; board unchanged'}`, res.outcome.status === 'PASS' ? 'ok' : res.outcome.status === 'PARTIAL' ? 'warn' : 'err'));
+    laidOut = [
+      '',
+      '## Board as laid out (machine-generated)',
+      `copperhead placed and routed this board through its layout harness before your turn: ${res.outcome.status}: ${res.outcome.summary}.` +
+        (e ? ` Engines: ${e.engines.map((x) => `${x.id} ${x.version}`).join(', ') || 'none'}; ${e.owed.length} connection(s) owed; ${e.diagnostics.length} error(s); evidence in ${e.runDir}.` : '') +
+        ' The copper is engine-owned: move parts by their (at …) lines where the brief or the findings call for it and copperhead routes again when you finish; do not edit segments, vias, or zones.',
+      ...(e && e.owed.length ? [`Owed: ${e.owed.slice(0, 12).join(', ')}${e.owed.length > 12 ? ', …' : ''}`] : []),
+      ...(e && e.diagnostics.length ? ['Findings:', ...e.diagnostics.slice(0, 12).map((d) => `- ${d.severity} ${d.code}${d.entityReferences.length ? ` [${d.entityReferences.slice(0, 4).join(', ')}]` : ''}: ${d.message}`)] : []),
+      ...(res.holds.length ? ['Holds (a human decision is needed):', ...res.holds.map((h) => `- ${h}`)] : []),
+    ];
+  } catch (e) {
+    opts.log(stageLine('layout-draft', `layout harness did not run (${(e as Error).message}); the stage runs on the grid placement`, 'warn'));
+  }
   const lines = [
     '',
     '',
@@ -497,6 +519,7 @@ async function ensureBoardPopulated(opts: CreateOptions, config: CopperheadConfi
     ...(result.unplaced.length
       ? ['Not on the board (no installed footprint; say so under Draft quality):', ...result.unplaced.map((u) => `- ${u.ref} (${u.value}): ${u.reason}`)]
       : []),
+    ...laidOut,
   ];
   return lines.join('\n');
 }

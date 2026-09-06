@@ -68,12 +68,12 @@
 
 ## 7. Phase 5: closed loop
 
-- [x] 7.0 Rule stages the B3 evidence asks for before the repair loop: edge placement (stage 1: a part with `mechanical.edge` goes to that edge), keepout legalization (move a part the least distance out of a keepout), block separation (disjoint regions for separated blocks); re-take the B3 measure on the eight intent boards (re-taken: 10/10 hard intent constraints, 8/8 PASS; recorded in the B3 report)
+- [x] 7.0 Rule stages the B3 evidence asks for before the repair loop: edge placement (stage 1: a part with `mechanical.edge` goes to that edge), keepout legalization (move a part the least distance out of a keepout), block separation (disjoint regions for separated blocks); re-take the B3 measure on the eight intent boards (re-taken: 9/9 hard intent constraints, 8/8 PASS; recorded in the B3 report)
 
-- [ ] 7.1 `src/pcb/agent/`: repair catalog with per-action cost estimates; engine-second and wall-clock budgets; planner over normalized diagnostics only; terminal statuses
-- [ ] 7.2 `pcb_layout` and `pcb_repair` tools (spec-gated); `edit_file` refusal of copper and zone edits on framework boards; `do` on a framework board through the repair loop
-- [ ] 7.3 Evidence bundle under `.copperhead/runs/<ts>/layout/`; `## Draft quality` generated from it with the per-subsystem table and the return-path metrics; fab gate freshness reads the bundle hash
-- [ ] 7.4 `create` stage 5 switched to `pcb layout`; completion contract on the bundle (AC-17.15, AC-17.16); `copperhead pcb layout`
+- [x] 7.1 `src/pcb/agent/`: repair catalog with per-action cost estimates; engine-second and wall-clock budgets; planner over normalized diagnostics only; terminal statuses
+- [x] 7.2 `pcb_layout` and `pcb_repair` tools (spec-gated); `edit_file` refusal of copper and zone edits on framework boards; `do` on a framework board through the repair loop (the tools are what `do` reaches for; the loop itself is `layoutBoard`)
+- [x] 7.3 Evidence bundle under `.copperhead/runs/<ts>/layout/`; the evidence section in LAYOUT.md carries the per-subsystem table, the repair cycles, and the return-path metrics (`## Draft quality` stays the model's own words beside it); the fab release gate is not on this branch, so its freshness read is deferred with it
+- [x] 7.4 `create` stage 5 switched to `pcb layout` (the closed loop runs on the populated board before the model's turn; the model moves parts; copperhead routes again when it finishes); completion contract on the bundle (AC-17.15, AC-17.16); `copperhead pcb layout`
 - [ ] 7.5 Track D (repair) and track C (end to end) in the bench; reference-board set started (10)
 - [ ] 7.6 README and docs site: the framework, the supported envelope page (§10.7), engine setup; ROADMAP non-goal reworded
 - [ ] 7.7 Exit: end to end runs unattended on supported boards and fails explicitly elsewhere; B4 reported as directional until 30 held-out boards

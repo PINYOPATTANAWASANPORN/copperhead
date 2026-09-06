@@ -29,6 +29,10 @@ export interface LayoutEvidence {
   owed: string[];
   /** Error-severity diagnostics on the selected candidate (or the refusal), code and references. */
   diagnostics: { code: string; severity: string; entityReferences: string[]; message: string }[];
+  /** Per-subsystem table (spec §10), when functional blocks were derived for the run. */
+  blocks?: { id: string; anchor: string | null; members: string[]; spreadMm: number | null; budgetMm: number | null; unsatisfied: string[]; owed: number }[];
+  /** Repair cycles of the closed loop that produced this board. */
+  cycles?: { n: number; action: string | null; status: string; errors: number; owed: number }[];
 }
 
 /** Statuses under which the layout-draft stage may complete: routed, partly routed, or no engine to route with (said so). */
@@ -67,6 +71,12 @@ function renderSection(e: LayoutEvidence): string {
     `- Evidence bundle: \`${e.runDir}\` (snapshot ${e.snapshotHash.slice(0, 12)}, board ${e.boardHash.slice(0, 12)})`,
   ];
   if (e.owed.length) lines.push(`- Owed: ${e.owed.slice(0, 20).join(', ')}${e.owed.length > 20 ? ', …' : ''}`);
+  if (e.blocks?.length) {
+    lines.push('', '| block | anchor | parts | spread / budget | unsatisfied | owed |', '| --- | --- | --- | --- | --- | --- |');
+    for (const b of e.blocks) lines.push(`| ${b.id} | ${b.anchor ?? '—'} | ${b.members.length} | ${b.spreadMm !== null && b.budgetMm !== null ? `${b.spreadMm.toFixed(1)} / ${b.budgetMm.toFixed(1)} mm` : '—'} | ${b.unsatisfied.length ? b.unsatisfied.join(', ') : 'none'} | ${b.owed} |`);
+    lines.push('');
+  }
+  if (e.cycles?.length) lines.push(`- Repair cycles: ${e.cycles.map((c) => `${c.n}${c.action ? ` ${c.action}` : ''} → ${c.status} (${c.errors} error(s), ${c.owed} owed)`).join('; ')}`);
   if (e.diagnostics.length) {
     lines.push('- Findings:');
     for (const d of e.diagnostics.slice(0, 20)) lines.push(`  - ${d.severity} ${d.code}${d.entityReferences.length ? ` [${d.entityReferences.slice(0, 4).join(', ')}]` : ''}: ${d.message}`);

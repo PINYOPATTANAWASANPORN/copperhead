@@ -243,6 +243,24 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
       const routingWithOutcome: RouteRun = { ...finalRouting, outcome: o };
       evidence = await evidenceFromRun(opts.repoRoot, target, routingWithOutcome);
       evidence.runDir = path.relative(opts.repoRoot, opts.runDir);
+      evidence.cycles = cycles.map((c) => ({ n: c.n, action: c.action?.type ?? null, status: c.status, errors: c.errors, owed: c.owed }));
+      // per-subsystem table from the blocks and the selected candidate's findings
+      const sel = finalRouting.ranking.selected ? finalRouting.candidates.find((c) => c.engineId === finalRouting.ranking.selected) : undefined;
+      if (sel && blocks.length) {
+        const d = sel.design;
+        const refOf = (id: string) => d.components.find((c) => c.id === id)?.reference ?? id;
+        const padOwner = new Map<string, string>();
+        for (const c of d.components) for (const pd of c.pads) padOwner.set(pd.id, c.id);
+        evidence.blocks = blocks.filter((b) => b.id !== 'unassigned' || b.members.length).map((b) => {
+          const members = new Set(b.members);
+          const memberRefs = b.members.map(refOf);
+          const anchor = b.anchor ? d.components.find((c) => c.id === b.anchor) : undefined;
+          const spread = anchor ? Math.max(0, ...b.members.map((id) => { const c = d.components.find((x) => x.id === id); return c ? Math.hypot(c.at.x - anchor.at.x, c.at.y - anchor.at.y) : 0; })) : null;
+          const unsatisfied = [...new Set(sel.verify.diagnostics.filter((x) => x.severity === 'error' && x.code.startsWith('intent.') && x.entityReferences.some((r) => memberRefs.includes(r))).map((x) => x.code))];
+          const owed = sel.verify.diagnostics.filter((x) => x.code === 'conn.unrouted' && x.entityIds.some((id) => members.has(padOwner.get(id) ?? ''))).length;
+          return { id: b.id, anchor: b.anchor ? refOf(b.anchor) : null, members: memberRefs, spreadMm: spread === null ? null : spread / 1e6, budgetMm: b.spreadBudgetNm ? b.spreadBudgetNm / 1e6 : null, unsatisfied, owed };
+        });
+      }
       if (applied) verdict = await recordEvidence(opts.repoRoot, opts.config.docs, target, evidence);
       else await writeFile(path.join(opts.runDir, 'evidence.json'), JSON.stringify(evidence, null, 2), 'utf8');
     }
