@@ -13,6 +13,8 @@ import path from 'node:path';
 import { execa } from 'execa';
 import { routeBoard, defaultRegistry } from '../pcb/engines/route.js';
 import { placeBoard, defaultPlacerRegistry } from '../pcb/engines/place.js';
+import { layoutBoard } from '../pcb/agent/orchestrate.js';
+import { loadConfig } from '../config.js';
 import { importBoard } from '../pcb/ir/kicad/import.js';
 import { verifyDesign } from '../pcb/verify/index.js';
 import { loadConstraints } from '../pcb/intent/load.js';
@@ -39,7 +41,7 @@ export interface SuiteFile {
   /** pcbench: board records from bench/corpora. */
   boards?: { id: string; file?: string; license?: string; footprints?: number }[];
   /** routing (default) or placement: which harness path the suite drives. */
-  kind?: 'routing' | 'placement' | 'verify';
+  kind?: 'routing' | 'placement' | 'verify' | 'layout';
   routers?: string[];
   placers?: string[];
   /** placement: router used by the routability probe (default router-freerouting). */
@@ -47,16 +49,22 @@ export interface SuiteFile {
   mode?: ExecutionMode;
   seeds?: number[];
   budgetSeconds?: number;
+  /** layout suites: run placement (default true); false keeps the given placement. */
+  place?: boolean;
 }
 
 export interface BenchOptions {
   repoRoot: string;
   suitePath: string;
   outDir?: string;
-  kind?: 'routing' | 'placement' | 'verify';
+  kind?: 'routing' | 'placement' | 'verify' | 'layout';
   routers?: string[];
   placers?: string[];
   probeRouter?: string;
+  /** layout: repair cycles after the first pass (default 3). */
+  maxRepairCycles?: number;
+  /** layout: run placement before routing (default true); false keeps the placement as given (track D). */
+  place?: boolean;
   mode?: ExecutionMode;
   seeds?: number[];
   budgetSeconds?: number;
@@ -96,6 +104,8 @@ export interface BoardRecord {
   selectionRegret: number;
   /** 1 when an ineligible candidate was selected while an eligible one existed. */
   invalidOverValid: number;
+  /** layout kind: the closed loop's cycles. */
+  cycles?: { n: number; action: string | null; status: string; errors: number; owed: number; seconds: number }[];
   /** verify kind: the harness's own verdict on the board as given. */
   verify?: { gates: { preflight: boolean; placement: boolean; routing: boolean }; errors: string[]; intentHardApplicable: number; intentHardViolations: number; expectedStatus?: string; matched?: boolean };
   /** golden cases: the status `pcb verify` owes the seeded fault (informational; routing rips the copper up unless preserved). */
@@ -105,7 +115,7 @@ export interface BoardRecord {
 
 export interface BenchReport {
   benchmarkVersion: string;
-  kind: 'routing' | 'placement' | 'verify';
+  kind: 'routing' | 'placement' | 'verify' | 'layout';
   suite: string;
   corpus: string;
   corpusCommit?: string;
@@ -135,6 +145,8 @@ export interface BenchReport {
     hpwlVsRoutability?: { candidates: number; r: number | null; meanCompletion: number };
     /** verify (tracks E and F): hard intent constraints passed over applicable, and expected-status agreement. */
     intent?: { hardApplicable: number; hardPassed: number; passRate: number; expectedMatched: number; expectedTotal: number };
+    /** layout (tracks C and D): boards that needed repair cycles, and how many those cycles fixed. */
+    repair?: { needed: number; fixed: number; meanCycles: number; holds: number };
   };
 }
 
@@ -180,6 +192,7 @@ export async function runSuite(opts: BenchOptions): Promise<{ report: BenchRepor
   const kind = opts.kind ?? suite.kind ?? 'routing';
   const registry = kind === 'placement' ? defaultPlacerRegistry(opts.repoRoot) : defaultRegistry(opts.repoRoot);
   if (kind === 'verify') return runVerifySuite(opts, suite, kind);
+  if (kind === 'layout') return runLayoutSuite(opts, suite, kind);
   const routers = opts.routers ?? suite.routers ?? defaultRegistry(opts.repoRoot).list('router').map((e) => e.manifest.id);
   const placers = opts.placers ?? suite.placers ?? registry.list('placer').map((e) => e.manifest.id);
   const engineIds = kind === 'placement' ? placers : routers;
@@ -393,6 +406,73 @@ async function runVerifySuite(opts: BenchOptions, suite: SuiteFile, kind: 'verif
     reproduce: `copperbench run ${path.relative(opts.repoRoot, opts.suitePath)} --kind verify --track ${track}${opts.boards ? ` --boards ${opts.boards.join(',')}` : ''}`,
     boards,
     summary: { boards: boards.length, runs: boards.length, byStatus, cleanPassRate: boards.length ? boards.filter((b) => b.status === 'PASS').length / boards.length : 0, meanCompletion: 0, selectionRegretTotal: 0, invalidOverValidCount: 0, meanOverheadSeconds: boards.length ? boards.reduce((a, b) => a + b.overheadSeconds, 0) / boards.length : 0, meanEngineSeconds: 0, seedVariance: {}, intent: { hardApplicable, hardPassed, passRate: hardApplicable ? hardPassed / hardApplicable : 1, expectedMatched, expectedTotal } },
+  };
+  await writeReport(dir, report);
+  return { report, dir };
+}
+
+/** Tracks C (end to end) and D (repair): the closed loop per board, no model; cycles and their effect recorded. */
+async function runLayoutSuite(opts: BenchOptions, suite: SuiteFile, kind: 'layout'): Promise<{ report: BenchReport; dir: string }> {
+  const log = opts.log ?? (() => {});
+  const startedAt = new Date().toISOString();
+  const dir = opts.outDir ?? path.join(opts.repoRoot, 'bench', 'var', 'runs', `${startedAt.replace(/[:.]/g, '-')}-${suite.suite}`);
+  await mkdir(dir, { recursive: true });
+  const track = opts.track ?? suite.tracks[0] ?? 'c';
+  const budgetSeconds = opts.budgetSeconds ?? suite.budgetSeconds ?? 600;
+  const routers = opts.routers ?? suite.routers;
+  const placers = opts.placers ?? suite.placers;
+  const entries = suite.corpus === 'golden' ? (suite.cases ?? []).map((id) => ({ id, file: undefined as string | undefined })) : (suite.boards ?? []).map((b) => ({ id: b.id, file: b.file }));
+  const wanted = opts.boards ? entries.filter((e) => opts.boards!.includes(e.id)) : entries;
+  const pkg = JSON.parse(await readFile(path.join(opts.repoRoot, 'package.json'), 'utf8')) as { version: string };
+  let kicad = 'unknown';
+  if (!opts.noKicad) {
+    try {
+      kicad = await kicadCliVersion();
+    } catch {
+      kicad = 'unknown';
+    }
+  }
+  const baseConfig = await loadConfig(opts.repoRoot);
+  const config = { ...baseConfig, pcb: { ...(baseConfig.pcb ?? {}), ...(routers ? { routers } : {}), ...(placers ? { placers } : {}), budgetSeconds, allowHarnessEngines: opts.allowHarnessEngines ?? false, ...(opts.maxParallel ? { maxParallelEngines: opts.maxParallel } : {}) } };
+  const boards: BoardRecord[] = [];
+  let needed = 0, fixed = 0, cyclesTotal = 0, holds = 0;
+  const registry = defaultRegistry(opts.repoRoot);
+  for (const entry of wanted) {
+    const t0 = Date.now();
+    try {
+      const boardPath = await resolveBoard(opts, suite, entry.id, entry.file, dir);
+      const runDir = path.join(dir, 'runs', `${entry.id}-s0`);
+      log(`${entry.id}: layout (${kind})`);
+      const res = await layoutBoard({ repoRoot: opts.repoRoot, config, boardPath, runDir, budgetSeconds, place: opts.place ?? suite.place ?? true, ...(opts.maxRepairCycles !== undefined ? { maxRepairCycles: opts.maxRepairCycles } : {}), apply: false, provider: null, policy: { network: 'none', allowHarnessEngines: opts.allowHarnessEngines ?? false, denyLicenses: [] }, ...(opts.probeRouter ? { probeRouter: opts.probeRouter } : {}), log: (l) => log(`  ${l}`) });
+      const wallSeconds = (Date.now() - t0) / 1000;
+      const first = res.cycles[0];
+      const last = res.cycles[res.cycles.length - 1];
+      if (first && first.status !== 'PASS') {
+        needed++;
+        if (last && last.status === 'PASS') fixed++;
+      }
+      cyclesTotal += Math.max(0, res.cycles.length - 1);
+      if (res.outcome.status === 'HOLD') holds++;
+      const sel = res.routing?.ranking.selected ? res.routing.candidates.find((c) => c.engineId === res.routing!.ranking.selected) : undefined;
+      const metrics = sel ? Object.fromEntries(Object.entries(sel.verify.metrics).filter((kv): kv is [string, number] => typeof kv[1] === 'number')) : {};
+      const engineSeconds = [...(res.placement?.invocations ?? []), ...(res.routing?.invocations ?? [])].reduce((a, i) => a + (i.result?.runtime.wallSeconds ?? 0), 0);
+      boards.push({ id: entry.id, board: path.relative(opts.repoRoot, boardPath), seed: 0, status: res.outcome.status, summary: res.outcome.summary, selected: res.routing?.ranking.selected ?? res.placement?.ranking.selected ?? null, wallSeconds, engineSeconds, overheadSeconds: Math.max(0, wallSeconds - engineSeconds), candidates: sel ? [{ id: sel.engineId, rank: 1, eligible: true, gateFailures: [], score: 0, metrics }] : [], ineligible: [], errors: res.holds, selectionRegret: 0, invalidOverValid: 0, runDir: path.relative(opts.repoRoot, runDir), cycles: res.cycles.map((c) => ({ n: c.n, action: c.action?.type ?? null, status: c.status, errors: c.errors, owed: c.owed, seconds: c.seconds })) });
+      log(`  ${res.outcome.status} after ${res.cycles.length} cycle(s)${res.cycles.length > 1 ? `: ${res.cycles.slice(1).map((c) => `${c.action?.type} -> ${c.status}`).join(', ')}` : ''}`);
+    } catch (err) {
+      log(`${entry.id}: ENGINE_ERROR: ${(err as Error).message}`);
+      boards.push({ id: entry.id, board: '', seed: 0, status: 'ENGINE_ERROR', summary: (err as Error).message, selected: null, wallSeconds: (Date.now() - t0) / 1000, engineSeconds: 0, overheadSeconds: 0, candidates: [], ineligible: [], errors: [(err as Error).message], selectionRegret: 0, invalidOverValid: 0, runDir: '' });
+    }
+  }
+  const byStatus: Record<string, number> = {};
+  for (const b of boards) byStatus[b.status] = (byStatus[b.status] ?? 0) + 1;
+  const engines = [...registry.list('router'), ...defaultPlacerRegistry(opts.repoRoot).list('placer')].filter((e) => (routers ?? []).includes(e.manifest.id) || (placers ?? []).includes(e.manifest.id) || (!routers && !placers)).map((e) => ({ id: e.manifest.id, version: e.manifest.version, license: e.manifest.license, adopted: e.manifest.harnessOnly ? ('harness-only' as const) : ('wrapped' as const), executionMode: e.manifest.executionMode, determinism: e.manifest.determinism }));
+  const report: BenchReport = {
+    benchmarkVersion: BENCHMARK_VERSION, kind, suite: suite.suite, corpus: suite.corpus, ...(suite.commit ? { corpusCommit: suite.commit } : {}), track, startedAt, finishedAt: new Date().toISOString(),
+    harness: { copperhead: pkg.version, commit: await gitCommit(opts.repoRoot), kicad, node: process.version, platform: `${os.platform()} ${os.arch()}` },
+    engines, scoring: 'default-low-speed-2-layer + default-placement-2-layer', mode: 'layout', seeds: [0], budgetSeconds,
+    reproduce: `copperbench run ${path.relative(opts.repoRoot, opts.suitePath)} --kind layout --track ${track}${routers ? ` --routers ${routers.join(',')}` : ''}${placers ? ` --placers ${placers.join(',')}` : ''} --budget-seconds ${budgetSeconds}${opts.allowHarnessEngines ? ' --allow-harness-engines' : ''}${opts.boards ? ` --boards ${opts.boards.join(',')}` : ''}`,
+    boards,
+    summary: { boards: boards.length, runs: boards.length, byStatus, cleanPassRate: boards.length ? boards.filter((b) => b.status === 'PASS').length / boards.length : 0, meanCompletion: boards.length ? boards.reduce((a, b) => a + (b.candidates[0]?.metrics.completion_rate ?? 0), 0) / boards.length : 0, selectionRegretTotal: 0, invalidOverValidCount: 0, meanOverheadSeconds: boards.length ? boards.reduce((a, b) => a + b.overheadSeconds, 0) / boards.length : 0, meanEngineSeconds: boards.length ? boards.reduce((a, b) => a + b.engineSeconds, 0) / boards.length : 0, seedVariance: {}, repair: { needed, fixed, meanCycles: boards.length ? cyclesTotal / boards.length : 0, holds } },
   };
   await writeReport(dir, report);
   return { report, dir };

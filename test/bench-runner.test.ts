@@ -146,3 +146,24 @@ describe('placement suites', () => {
     }
   }, 600_000);
 });
+
+describe('layout suites (tracks C and D)', () => {
+  it('runs the closed loop per board and records the cycles and the repair summary', async () => {
+    if (!(await haveKicad())) return;
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-benchlayout-'));
+    try {
+      const { report } = await runSuite({ repoRoot: ROOT, suitePath: path.join(ROOT, 'bench/suites/layout-microboards.json'), kind: 'layout', routers: ['router-reference'], placers: ['placer-reference'], probeRouter: 'router-reference', boards: ['completion', 'overlap'], budgetSeconds: 120, maxRepairCycles: 1, allowHarnessEngines: true, outDir: path.join(dir, 'run') });
+      expect(report.kind).toBe('layout');
+      const completion = report.boards.find((b) => b.id === 'completion')!;
+      expect(completion.status).toBe('PASS');
+      expect(completion.cycles!.length).toBe(1);
+      const overlap = report.boards.find((b) => b.id === 'overlap')!;
+      expect(['PASS', 'PARTIAL']).toContain(overlap.status); // the reference placer clears the seeded overlap
+      expect(report.summary.repair).toBeDefined();
+      expect(report.reproduce).toMatch(/--kind layout/);
+      expect(renderHtml(report)).toContain('repair');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 600_000);
+});
