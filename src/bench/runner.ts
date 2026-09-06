@@ -71,7 +71,7 @@ export interface BoardRecord {
   selected: string | null;
   wallSeconds: number;
   engineSeconds: number;
-  /** Harness time around the engines: import, snapshot, materialize, verify, rank. */
+  /** Harness time around the engines (wall beyond the slowest engine when they run concurrently): import, snapshot, materialize, verify, rank. */
   overheadSeconds: number;
   candidates: CandidateRecord[];
   ineligible: { engineId: string; reasons: string[] }[];
@@ -192,6 +192,8 @@ export async function runSuite(opts: BenchOptions): Promise<{ report: BenchRepor
         const res = await routeBoard({ repoRoot: opts.repoRoot, boardPath, runDir, routers, mode, seed, limits: { engineSeconds: budgetSeconds, wallSeconds: budgetSeconds }, scoring: scoringId, policy, registry, ...(opts.maxParallel ? { maxParallel: opts.maxParallel } : {}), ...(opts.noKicad ? { noKicad: true } : {}), log: (l) => log(`  ${l}`) });
         const wallSeconds = (Date.now() - t0) / 1000;
         const engineSeconds = res.invocations.reduce((a, i) => a + (i.result?.runtime.wallSeconds ?? 0), 0);
+        // engines in race/ensemble run concurrently, so the harness overhead is the wall beyond the slowest engine
+        const engineWall = mode === 'race' || mode === 'ensemble' ? Math.max(0, ...res.invocations.map((i) => i.result?.runtime.wallSeconds ?? 0)) : engineSeconds;
         const candidates: CandidateRecord[] = res.ranking.candidates.map((c) => ({ id: c.id, rank: c.rank, eligible: c.eligible, gateFailures: [...c.gateFailures, ...c.profileGateFailures], score: c.score ?? Number.POSITIVE_INFINITY, metrics: c.metrics as Record<string, number> }));
         const eligible = candidates.filter((c) => c.eligible);
         const selected = candidates.find((c) => c.id === res.ranking.selected);
@@ -199,7 +201,7 @@ export async function runSuite(opts: BenchOptions): Promise<{ report: BenchRepor
         const selectionRegret = selected && selected.eligible ? Math.max(0, selected.score - oracle) : 0;
         const invalidOverValid = selected && !selected.eligible && eligible.length ? 1 : 0;
         const errors = res.invocations.filter((i) => i.error).map((i) => `${i.engineId}: ${i.error!.kind}: ${i.error!.message}`);
-        const rec: BoardRecord = { id: entry.id, board: path.relative(opts.repoRoot, boardPath), seed, status: res.outcome.status, summary: res.outcome.summary, selected: res.ranking.selected ?? null, wallSeconds, engineSeconds, overheadSeconds: Math.max(0, wallSeconds - engineSeconds), candidates, ineligible: res.ineligible, errors, selectionRegret, invalidOverValid, runDir: path.relative(opts.repoRoot, runDir) };
+        const rec: BoardRecord = { id: entry.id, board: path.relative(opts.repoRoot, boardPath), seed, status: res.outcome.status, summary: res.outcome.summary, selected: res.ranking.selected ?? null, wallSeconds, engineSeconds, overheadSeconds: Math.max(0, wallSeconds - engineWall), candidates, ineligible: res.ineligible, errors, selectionRegret, invalidOverValid, runDir: path.relative(opts.repoRoot, runDir) };
         const expectedPath = path.join(path.dirname(boardPath), 'expected.json');
         if (suite.corpus === 'golden' && existsSync(expectedPath)) {
           const expected = JSON.parse(await readFile(expectedPath, 'utf8')) as { status?: string };
