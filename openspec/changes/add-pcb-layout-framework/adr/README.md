@@ -12,5 +12,6 @@ One file per decision RFC 11 leaves to the implementation (its Appendix C.2 and 
 | [0006](0006-critical-drc-and-profile.md) | Critical DRC is membership in the profile's list; `jlcpcb-2layer` vendored from kicad-tools | §10.5, Appendix C.2 items 5 and 6 |
 | [0007](0007-bench-home.md) | The benchmark lives in this repository under `bench/` | Appendix C.2 item 10 |
 | [0008](0008-engine-roster.md) | The v1 engine roster and each wrapper's invocation, from live runs | §8.2, §9.2 |
+| [0009](0009-phase-2-checkpoint.md) | Phase 2 checkpoint: ship the routing harness in `create`/`check` first, then Phase 3 | §13.5, §14.2, Appendix B |
 
-Status values: Proposed, Accepted, Superseded. All eight were accepted by the change owner on 2026-09-06.
+Status values: Proposed, Accepted, Superseded. 0001 to 0008 were accepted by the change owner on 2026-09-06; 0009 is proposed and awaits the owner's decision at the Phase 2 checkpoint.

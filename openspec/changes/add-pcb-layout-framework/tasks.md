@@ -36,7 +36,7 @@
 
 ## 4. Checkpoint
 
-- [ ] 4.1 Publish the B1 evidence and decide, in a recorded ADR, whether Phase 3 proceeds now or the routing harness alone ships in `create` stage 5 (populate, DRC, wrapped routing with evidence, model moves parts); reconcile with the validation plan
+- [ ] 4.1 Publish the B1 evidence and decide, in a recorded ADR, whether Phase 3 proceeds now or the routing harness alone ships in `create` stage 5 (populate, DRC, wrapped routing with evidence, model moves parts); reconcile with the validation plan — B1 published (`bench/reports/B1-2026-09-06.md`); ADR 0009 proposes routing-first then Phase 3, awaiting the owner's decision
 
 ## 5. Phase 3: placement harness
 
