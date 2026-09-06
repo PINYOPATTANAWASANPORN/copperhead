@@ -6,7 +6,7 @@
  */
 import type { PcbDesign } from './types.js';
 import type { Polygon } from './geometry.js';
-import { bbox } from './geometry.js';
+import { bbox, bboxOf } from './geometry.js';
 import type { Diagnostic } from '../verify/diagnostic.js';
 
 export interface SvgOptions {
@@ -29,15 +29,18 @@ function pathOf(poly: Polygon): string {
 
 export function renderSvg(design: PcbDesign, opts: SvgOptions = {}): string {
   const scale = opts.scale ?? 14;
-  const b = bbox(design.board.outline);
-  const pad = 2e6;
+  const legendMode = opts.legend !== false;
+  // the view hugs everything: the outline plus any copper or courtyard that strayed outside it
+  const extents = [design.board.outline, ...design.components.flatMap((c) => [c.footprint.courtyard, ...c.pads.map((p) => p.copper)]).filter((p): p is Polygon => !!p)];
+  const b = bboxOf(extents);
+  const pad = legendMode ? 2e6 : 1.2e6;
   const shown = (opts.diagnostics ?? []).filter((d) => d.severity !== 'info');
-  const legend = opts.legend !== false;
+  const legend = legendMode;
   const legendLines = legend ? (opts.title ? 1 : 0) + shown.length : 0;
   const legendH = legendLines ? (legendLines + 0.5) * 1.3e6 : 0;
   const minX = b.minX - pad;
   const minY = b.minY - pad;
-  const w = legend ? Math.max(b.maxX - b.minX + 2 * pad, 60e6) : b.maxX - b.minX + 2 * pad + 4e6;
+  const w = legend ? Math.max(b.maxX - b.minX + 2 * pad, 60e6) : b.maxX - b.minX + 2 * pad;
   const h = b.maxY - b.minY + 2 * pad + legendH;
   const out: string[] = [];
   out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round((w / 1e6) * scale)}" height="${Math.round((h / 1e6) * scale)}" viewBox="${mm(minX)} ${mm(minY)} ${mm(w)} ${mm(h)}" font-family="sans-serif">`);
