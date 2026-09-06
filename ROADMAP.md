@@ -16,6 +16,7 @@ Implementable items are planned as OpenSpec changes (proposal, design, delta spe
 | Phase 2 item 3 (part research) | [add-part-research-tools](openspec/changes/add-part-research-tools/) (previously proposed) |
 | Phase 2 item 4 (SPICE gate) | [add-spice-verification-gate](openspec/changes/add-spice-verification-gate/) |
 | Phase 3 items 1-2 (MCP wrapper + skill) | [add-mcp-server](openspec/changes/add-mcp-server/) |
+| PCB generation ([RFC 11](https://github.com/copperheadhq/copperhead-rfcs/blob/main/rfc/rfc11.md)): intent, engine harness, verification, bench | [add-pcb-layout-framework](openspec/changes/add-pcb-layout-framework/) |
 
 Phase 3 item 3 (launch) and Phase 4 are process and content work, tracked here rather than as changes.
 
@@ -73,7 +74,7 @@ Ranked by fit with the two invariants. Items 1 and 2 extend the LLM-free `check`
 
 ## Non-goals (unchanged)
 
-- **No autorouter.** Layout intent and draft placement, yes; competing with dedicated routers, no.
+- **No in-house autorouter or placer.** Layout intent, verification, scoring, and the evidence harness, yes; engines are wrapped behind the plugin contract of [RFC 11](https://github.com/copperheadhq/copperhead-rfcs/blob/main/rfc/rfc11.md), never built to compete with them.
 - **No GUI application.** Repo-native is the differentiation. KiCad remains the editor.
 - **No custom fine-tuned model.** Frontier models through documented prompts, both providers at parity. The prompts are public; a model fork is a maintenance trap and an opacity risk.
 - **Not the engineer of record.** A human signs off. The tool's job is to make that sign-off trustworthy.

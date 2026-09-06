@@ -1,0 +1,74 @@
+# add-pcb-layout-framework: Tasks
+
+> Ordering follows RFC 11 Appendix B. Phase 0 precedes every wrapper (§3.8: an ADR per layer before code). The checkpoint after Phase 2 is a real stop: publish the B1 report and decide whether Phase 3 proceeds now. Each phase's exit criterion is the last task of its group.
+
+## 1. Phase 0: teardowns, ADRs, fixtures
+
+- [x] 1.1 Teardown PCBWorld: corpus format, splits, metric implementations, license and redistribution terms; ADR recording what is adopted verbatim and how the subset is referenced (§4.2, Appendix C.2 item 7)
+- [x] 1.2 Teardown kicad-tools: parsers, DRC, fab profiles, placers, A* router; per-module wrap-vs-vendor ADR (Appendix C.2 item 8); pin the upstream commit
+- [x] 1.3 ADRs for the remaining Appendix C.2 defaults: KiCad 10 pinned, TypeScript geometry with the polygon kernel chosen, JSON Schema contracts, critical-DRC definition, `jlcpcb-2layer` profile, bench in-repo for now; each ADR names the §4.1 neighbour evaluated
+- [x] 1.4 License review for FreeRouting packaging (out of process, user-installed jar) and pyplacer; record in the ADR
+- [x] 1.5 Ten golden microboards with seeded violations (overlap, bounds, fixed connector, decoupling, keepout, open, short, clearance, completion, congestion) under `bench/golden/`, each with its expected diagnostic codes; closes #14's zoo for layout
+- [x] 1.6 Exit: golden cases run through `kicad-cli pcb drc` in CI; every ADR accepted
+
+## 2. Phase 1: IR, KiCad adapter, verification
+
+- [ ] 2.1 `src/pcb/ir/`: `PcbDesign`, `BoardDefinition`, `ComponentInstance`, `PadDefinition`, `NetDefinition`, `PlacementState`, `RoutingState`, `CopperZone`; integer-nanometre geometry module behind the chosen kernel; canonical serialization and content hash; schema version and migration hook; `status.ts` with the eight statuses
+- [ ] 2.2 KiCad import: board-side read-only reader in `src/kicad/sexp.ts` (footprints, pads, nets, outline, copper, zones, netclasses, `.kicad_dru`), closing #8; stable ids from KiCad UUIDs; `referenceMap`
+- [ ] 2.3 KiCad export: apply a candidate to an immutable copy by text surgery (footprint `(at …)`, appended copper with UUIDv5 ids, zones untouched); zone refill through the pinned tool; shared number and uuid helpers moved to `emit.ts`
+- [ ] 2.4 `BoardSnapshot` and the isolated run directory; a test proving an engine wrapper writing to its input cannot touch the source (AC-17.2); stale-hash rejection
+- [ ] 2.5 `src/pcb/verify/`: geometry checker, connectivity checker, KiCad DRC adapter over `report.ts`, normalized `Diagnostic`, `checker_disagreement` events; kicad-tools DRC and kicad-happy adapters as `process`-mode checkers
+- [ ] 2.6 Fabrication profile `jlcpcb-2layer` vendored as JSON with the critical-DRC family list; pre-flight input checks (§10.6) returning `REFUSE`
+- [ ] 2.7 Tests: round trip on the reference boards and the KiCad demo projects retains geometry and connectivity (AC-17.1); every golden seeded violation detected with its stable code (AC-17.6); canonical hash stability
+- [ ] 2.8 Exit: round-trip fixtures pass; seeded violations detected; import-direction test in place (D1)
+
+## 3. Phase 2: routing harness
+
+- [ ] 3.1 `src/pcb/engines/`: `RouterPlugin`, `PlacerPlugin`, `CheckerPlugin` contracts and manifests; JSON Schema generation; registry and discovery; manifest validation (AC-17.3)
+- [ ] 3.2 Runner: `single`, `race`, `staged`, `ensemble`; capability negotiation returning `UNSUPPORTED` (AC-17.4); license and network policy; out-of-process isolation with provenance on every invocation; engine-second accounting
+- [ ] 3.3 `router-freerouting`: DSN emission and SES import re-landed from PR #253's bridge behind the contract (KiCad's exporter as the dialect, resolution-unit SES coordinates, board copper layer names carried through); jar and JRE discovery; named failures including `java-too-old`
+- [ ] 3.4 `router-kicad-tools-astar` wrapper; `router-reference` grid router marked `harnessOnly`
+- [ ] 3.5 `src/pcb/verify/scoring.ts`: PCBWorld's eight routing metrics verbatim plus the §11.2 additions; the two-layer return-path checker and metrics (pour fragments and largest share, bottom-layer signal length, pour crossings, stitching); lexicographic gates and Pareto frontier; `default-low-speed-2-layer` profile weighting return-path metrics ahead of wirelength
+- [ ] 3.5a Default staged routing plan (§9.5): power and ground first at physics-compiler or user widths with pours preserved, critical nets next, bulk by race; layer-preference constraints mapped to Freerouting's layer settings
+- [ ] 3.6 `bench/`: runner over golden microboards (grow to 40) and the 20-board PCBWorld qualification subset; JSON and HTML reports with the §13.4 record; `copperhead-bench run|compare|report`
+- [ ] 3.7 `copperhead pcb import|route|verify|score`; `check` module-graph guard extended to `src/pcb/engines/` and `src/pcb/agent/` (AC-17.5)
+- [ ] 3.8 Exit: B0 report (byte-stable harness, AC-17.12) and B1 report (selection regret zero, invalid-over-valid zero, overhead measured) published under `bench/reports/`
+
+## 4. Checkpoint
+
+- [ ] 4.1 Publish the B1 evidence and decide, in a recorded ADR, whether Phase 3 proceeds now or the routing harness alone ships in `create` stage 5 (populate, DRC, wrapped routing with evidence, model moves parts); reconcile with the validation plan
+
+## 5. Phase 3: placement harness
+
+- [ ] 5.1 `placer-fixed`, `placer-pyplacer`, `placer-kicad-tools-physics`, `placer-kicad-tools-evolutionary` wrappers; `placer-reference` marked `harnessOnly`; `board.ts`'s shelf pack retired into it
+- [ ] 5.2 `placer-layout-reuse`: anchor transforms over approved module placements
+- [ ] 5.2b Reference layout retrieval, local sources: `ReferenceSource` interface, the `design` source over KiCad demos, PCBench, reference boards, and `pcb.referenceDesigns` (import, cut to block, role mapping), the `teardown` source over RFC 1 outputs, similarity scoring, the `.copperhead/layout-refs/` cache and index, the license policy with `HOLD` and approval, application as attachment and group constraints consumed by `placer-layout-reuse`
+- [ ] 5.2a Deterministic block derivation from SUBSYSTEMS.md and the schematic intent's `group` field (anchor, signal-flow region, spread budget); `placer-anchors` and `placer-attach` rule stages; the default staged placement plan (§8.5) with stages 1 to 3 locked before the wrapped placer runs
+- [ ] 5.3 Placement verification: hard placement gates (§10.4); routability probe through the fixed reference routing configuration; placement metrics (§11.1)
+- [ ] 5.4 30 placement cases in the bench; `copperhead pcb place`; HPWL-vs-completion evidence
+- [ ] 5.5 Exit: B2 report and the §8.3 decision recorded
+
+## 6. Phase 4: intent
+
+- [ ] 6.1 Layout constraint classes in `src/memory/constraints.ts` and `record_constraint` (additive fields); registry documentation in the generated `.copperhead/README.md`
+- [ ] 6.2 ECAD ingestion on import (`source: ecad_rules`, re-derived every import, `HOLD` on contradiction)
+- [ ] 6.3 Intent language (§7.3) parser; intent compiler with block and role identification through the fact base, provenance, approval, and `HOLD`; refdes-to-id resolution
+- [ ] 6.4 Physics compiler: IPC-2152-compatible current-width where data exists, advisory otherwise; impedance `HOLD` without stackup; stackup class accepted but pinned to one two-layer profile
+- [ ] 6.4a Reference layout retrieval, network sources: the `datasheet` source (rule extraction from the cached datasheet, figure reading by one model call with capped confidence) and online design search through the part-research `web_search` client with shallow clones under `var/refs/`; `pcb_find_references` tool and `--refresh-references` / `--approve-reference` on `pcb layout`; transcript network log
+- [ ] 6.5 Intent checker for fixed, edge, orientation, attachment, group (spread against budget, region containment), region, separation, keepout; `pcb_infer_intent` tool; `copperhead pcb infer-intent`; layout track in `check` (AC-17.14)
+- [ ] 6.6 Track E (intent) and track F (refusal) in the bench with the curated microboard categories of §13.3
+- [ ] 6.7 Exit: B3 report (≥90% of applicable hard intent constraints pass; no geometry-invalid candidate marked complete)
+
+## 7. Phase 5: closed loop
+
+- [ ] 7.1 `src/pcb/agent/`: repair catalog with per-action cost estimates; engine-second and wall-clock budgets; planner over normalized diagnostics only; terminal statuses
+- [ ] 7.2 `pcb_layout` and `pcb_repair` tools (spec-gated); `edit_file` refusal of copper and zone edits on framework boards; `do` on a framework board through the repair loop
+- [ ] 7.3 Evidence bundle under `.copperhead/runs/<ts>/layout/`; `## Draft quality` generated from it with the per-subsystem table and the return-path metrics; fab gate freshness reads the bundle hash
+- [ ] 7.4 `create` stage 5 switched to `pcb layout`; completion contract on the bundle (AC-17.15, AC-17.16); `copperhead pcb layout`
+- [ ] 7.5 Track D (repair) and track C (end to end) in the bench; reference-board set started (10)
+- [ ] 7.6 README and docs site: the framework, the supported envelope page (§10.7), engine setup; ROADMAP non-goal reworded
+- [ ] 7.7 Exit: end to end runs unattended on supported boards and fails explicitly elsewhere; B4 reported as directional until 30 held-out boards
+
+## 8. Archive
+
+- [ ] 8.1 On archive, merge the AC-17.x criteria and rewrite SPEC.md §3.8 "First-draft layout" around the evidence bundle (via /opsx:archive); mark RFC 11 Implemented

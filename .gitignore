@@ -12,3 +12,7 @@ demo-runs/
 manual-tests/runs/
 *.tgz
 .npmrc
+
+# benchmark corpora and runs (bench/corpora/*.sh fetch them)
+bench/var/
+bench/golden/*/*.kicad_prl
