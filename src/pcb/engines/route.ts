@@ -16,6 +16,7 @@ import { loadProfile } from '../verify/profiles/index.js';
 import { loadScoringProfile } from '../verify/profiles/scoring/index.js';
 import { routingMetrics } from '../verify/metrics.js';
 import { rank, type Ranking } from '../verify/scoring.js';
+import { verifyDesign } from '../verify/index.js';
 import type { Diagnostic } from '../verify/diagnostic.js';
 import { EngineRegistry, DEFAULT_POLICY, type EnginePolicy } from './registry.js';
 import { runRouting, type ExecutionMode, type Invocation } from './runner.js';
@@ -98,6 +99,17 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
   const registry = opts.registry ?? defaultRegistry(opts.repoRoot);
   const wanted = opts.routers ?? registry.list('router').map((e) => e.manifest.id);
   const engines = wanted.map((id) => registry.get(id)).filter((e): e is NonNullable<typeof e> => !!e);
+  const unknown = wanted.filter((id) => !registry.get(id)).map((engineId) => ({ engineId, reasons: [`not registered (known: ${registry.list('router').map((e) => e.manifest.id).join(', ')})`] }));
+  // gate before any engine runs: a board that fails pre-flight or placement is refused, not routed (RFC 11 §10.4)
+  const pre = verifyDesign({ design, profile });
+  if (!pre.gates.preflight.passed || !pre.gates.placement.passed) {
+    const failures = [...pre.gates.preflight.failures, ...pre.gates.placement.failures];
+    const outcome: Outcome<Diagnostic> = { status: 'REFUSE', summary: `${pre.gates.preflight.passed ? 'placement' : 'pre-flight'} gate failed before routing: ${[...new Set(failures.map((d) => d.code))].join(', ')}`, detail: failures.map((d) => `${d.code}${d.entityReferences.length ? ` [${d.entityReferences.slice(0, 4).join(', ')}]` : ''}: ${d.message}`), diagnostics: pre.diagnostics.filter((d) => d.severity !== 'info') };
+    const ranking: Ranking = rank([], scoring);
+    await writeFile(path.join(run.root, 'ranking.json'), JSON.stringify(ranking, null, 2), 'utf8');
+    await writeFile(path.join(run.root, 'outcome.json'), JSON.stringify({ ...outcome, diagnostics: outcome.diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message, entityReferences: d.entityReferences })) }, null, 2), 'utf8');
+    return { outcome, runDir: run.root, ranking, invocations: [], candidates: [], ineligible: unknown };
+  }
   const budget = new Budget(snapshot.limits.engineSeconds, snapshot.limits.wallSeconds);
   const mode = opts.mode ?? 'single';
   const layers = opts.layerPreferences?.length ? Object.fromEntries(opts.layerPreferences.map((p) => [p.layerId, p.mode === 'off' ? { active: false } : p.mode === 'any' ? { active: true } : { active: true, preferredDirection: p.mode }])) : undefined;
@@ -133,9 +145,9 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
   }
   const ranking = rank(scored, scoring);
   await writeFile(path.join(run.root, 'ranking.json'), JSON.stringify(ranking, null, 2), 'utf8');
-  const outcome = outcomeOf(res.invocations, candidates, ranking, res.ineligible);
+  const outcome = outcomeOf(res.invocations, candidates, ranking, [...unknown, ...res.ineligible]);
   await writeFile(path.join(run.root, 'outcome.json'), JSON.stringify({ ...outcome, diagnostics: outcome.diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message, entityReferences: d.entityReferences })) }, null, 2), 'utf8');
-  return { outcome, runDir: run.root, ranking, invocations: res.invocations, candidates, ineligible: res.ineligible, ...(plan ? { plan } : {}) };
+  return { outcome, runDir: run.root, ranking, invocations: res.invocations, candidates, ineligible: [...unknown, ...res.ineligible], ...(plan ? { plan } : {}) };
 }
 
 function outcomeOf(invocations: Invocation<RoutingResult>[], candidates: MaterializedCandidate[], ranking: Ranking, ineligible: { engineId: string; reasons: string[] }[]): Outcome<Diagnostic> {

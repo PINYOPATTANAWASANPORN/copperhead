@@ -403,6 +403,38 @@ pcbGroup
     }
   });
 pcbGroup
+  .command('render')
+  .description('render one board file to SVG (with the verify diagnostics marked unless --plain)')
+  .argument('[board]', 'board file (default: the configured board)')
+  .option('--out <path>', 'output .svg (default: beside the board)')
+  .option('--plain', 'no diagnostics, no legend (thumbnail mode)', false)
+  .option('--scale <n>', 'pixels per millimetre', '14')
+  .action(async (board: string | undefined, opts: { out?: string; plain: boolean; scale: string }) => {
+    const repo = repoOf(program.opts());
+    try {
+      const { boardPath } = await pcbBoard(repo, board);
+      const path = await import('node:path');
+      const { readFile, writeFile } = await import('node:fs/promises');
+      const { existsSync } = await import('node:fs');
+      const { importBoard } = await import('./pcb/ir/kicad/import.js');
+      const { extractFills } = await import('./pcb/ir/kicad/zones.js');
+      const { verifyDesign } = await import('./pcb/verify/index.js');
+      const { renderSvg } = await import('./pcb/ir/svg.js');
+      const proPath = boardPath.replace(/\.kicad_pcb$/, '.kicad_pro');
+      const projectText = existsSync(proPath) ? await readFile(proPath, 'utf8') : undefined;
+      const text = await readFile(boardPath, 'utf8');
+      const { design } = importBoard({ boardText: text, boardPath, ...(projectText ? { projectText } : {}) });
+      const diagnostics = opts.plain ? [] : verifyDesign({ design, fills: extractFills(text) }).diagnostics;
+      const out = opts.out ? path.resolve(repo, opts.out) : boardPath.replace(/\.kicad_pcb$/, '.svg');
+      await writeFile(out, renderSvg(design, { diagnostics, scale: Number(opts.scale), legend: !opts.plain }), 'utf8');
+      if (Boolean(program.opts().json)) console.log(JSON.stringify({ out, diagnostics: diagnostics.filter((d) => d.severity !== 'info').length }));
+      else console.log(out);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+pcbGroup
   .command('score')
   .description('re-rank the candidates of a run directory')
   .argument('<run-dir>', 'a run directory written by pcb route')

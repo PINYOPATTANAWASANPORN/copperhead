@@ -120,6 +120,8 @@ copperhead doctor                    # env preflight: node, kicad-cli, git, open
 copperhead sync [--dry-run]          # verify the whole design state, resolve drift
 copperhead create --brief brief.md   # brief → full output package
 copperhead export bom --supplier jlcpcb   # supplier-ready ordering file from docs/BOM.md
+copperhead pcb route --mode staged   # layout harness: wrapped routers, independent verification, ranked candidates (RFC 11)
+copperhead pcb verify | render       # harness checkers on one board; SVG with the diagnostics marked
 ```
 
 Global flags: `--repo <path>` (default: cwd) and `--json` for machine-readable output. `--model` is available on `do`, `sync`, `create`, and `doctor`; `--interactive` only on `do` and `create`; `do` also takes `--dry-run`, `--max-turns`, and `--allow-dirty`.

@@ -19,6 +19,11 @@ Written by `copperhead init`. Every key is optional; the defaults below apply wh
   "maxRepairCycles": 5,
   "budgets": {
     "sleep_current_uA": 25
+  },
+  "pcb": {
+    "routers": ["router-freerouting", "router-kicad-tools"],
+    "mode": "ensemble",
+    "budgetSeconds": 600
   }
 }
 ```
@@ -34,6 +39,25 @@ Written by `copperhead init`. Every key is optional; the defaults below apply wh
 | `budgets` | `{}` | Free-form hard constraints, surfaced verbatim into every run's system prompt. |
 | `baseURL` | unset | Base URL of an OpenAI-compatible endpoint. Read **only** by the `compat` model route. |
 | `apiKeyEnv` | `OPENAI_API_KEY` | Name of the environment variable holding that endpoint's key. The name, never the key itself. |
+
+| `pcb` | `{}` | Layout harness settings for `copperhead pcb` (below). |
+
+### `pcb`
+
+Every key is optional.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `profile` | `jlcpcb-2layer` | Fabrication profile: rules, critical DRC list, allowed rotations. |
+| `scoring` | `default-low-speed-2-layer` | Scoring profile used to rank candidates. |
+| `routers` | every built-in router | Engine ids in preference order. |
+| `mode` | `single` | `single`, `race`, `ensemble`, or `staged`. |
+| `budgetSeconds` | `600` | Engine-second and wall-clock budget per `route`. |
+| `maxParallelEngines` | `2` | Engines in flight at once in `race`/`ensemble`. |
+| `freeroutingJar` | auto | Path to `freerouting-*.jar`; otherwise `COPPERHEAD_FREEROUTING_JAR`, `bench/var/tools/`, then KiCad's plugin directories. |
+| `java` | auto | JRE used for Freerouting; otherwise `COPPERHEAD_JAVA`, `bench/var/tools/jre25`, `JAVA_HOME`, then `PATH`. |
+| `freerouting.passes` | `20` | Autorouter passes. |
+| `allowRemoteEngines` | `false` | Whether engines that need the network are eligible. Never on the `check` path. |
 
 There is also a `generatedHashes` key, maintained by copperhead. It records content hashes of the generated docs so `init` can tell an untouched file from a hand-edited one. Do not edit it by hand.
 

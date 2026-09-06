@@ -583,7 +583,7 @@ export type RepairActionType =
 
 Exit codes per 2. `--json` prints `outcome.json` merged with `{ runDir, ranking }`. `import`, `verify`, `score`, `place`, and `route` are LLM-free and network-free; `place` and `route` refuse any engine with `networkRequirement: required`.
 
-`copperhead-bench` is a second bin in `package.json` (`bench/cli.ts`): `run --track <e|d|f|a|b|c> --suite <name> [--engines …] [--seeds …]`, `compare <a> <b>`, `report <dir>`.
+`copperhead-bench` is a second bin in `package.json` (`src/bench/cli.ts`, built to `dist/bench/cli.js`): `run --track <e|d|f|a|b|c> --suite <name> [--engines …] [--seeds …]`, `compare <a> <b>`, `report <dir>`.
 
 ### 11.2 Config (`.copperhead/config.json`, `pcb` block)
 
@@ -634,6 +634,7 @@ bench/
   corpora/pcbench.sh        clones PCBench (MIT) into var/corpora/pcbench at a pinned commit
   corpora/pcbworld.md       protocol notes; nothing cloned (license, 12.3)
   reports/B0-<date>.md …    committed milestone reports
+src/bench/                  runner.ts, report.ts, compare.ts, cli.ts (the bench code lives under src/ so tsc builds the second bin; bench/ holds only data)
 ```
 
 `expected.json`: `{ "diagnostics": [{ "code": "conn.short", "entityReferences": ["GND", "+3V3"] }, …], "status": "REFUSE"|…, "metricsWithin": { "via_count": [0, 4] } }`. The B0 test asserts the exact code set and that no unexpected error appears.
@@ -650,7 +651,7 @@ Ten boards, each hand-authored in KiCad 10 and committed with its project file, 
 
 ### 12.4 Runner and reports
 
-`bench/runner.ts` executes a suite over the engines and seeds requested, through the same `orchestrate`/`runner` code paths as the CLI (never a bench-only path), writing `bench/var/runs/<ts>/` with per-board `outcome.json`, `metrics.json`, and a `summary.csv`; `report.ts` renders JSON and a self-contained HTML page with the RFC §13.4 record (versions, licenses, adopted-versus-built, reproduction command); `compare.ts` diffs two runs of the same benchmark version and refuses otherwise. Milestone reports B0 to B4 are `report.ts` output committed under `bench/reports/` with the claim they support.
+`src/bench/runner.ts` executes a suite over the engines and seeds requested, through the same `orchestrate`/`runner` code paths as the CLI (never a bench-only path), writing `bench/var/runs/<ts>/` with per-board `outcome.json`, `metrics.json`, and a `summary.csv`; `report.ts` renders JSON and a self-contained HTML page with the RFC §13.4 record (versions, licenses, adopted-versus-built, reproduction command); `compare.ts` diffs two runs of the same benchmark version and refuses otherwise. Milestone reports B0 to B4 are `report.ts` output committed under `bench/reports/` with the claim they support.
 
 ## 13. Tests
 

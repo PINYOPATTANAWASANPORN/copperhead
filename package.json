@@ -30,7 +30,8 @@
     "node": ">=20"
   },
   "bin": {
-    "copperhead": "dist/cli.js"
+    "copperhead": "dist/cli.js",
+    "copperhead-bench": "dist/bench/cli.js"
   },
   "files": [
     "dist",
@@ -45,7 +46,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run postbuild",
-    "postbuild": "node -e \"require('fs').chmodSync('dist/cli.js', 0o755)\"",
+    "postbuild": "node -e \"for (const f of ['dist/cli.js','dist/bench/cli.js']) require('fs').chmodSync(f, 0o755)\"",
     "prepublishOnly": "npm run typecheck && npm run build",
     "dev": "tsx src/cli.ts",
     "demo:simple": "bash scripts/demo-simple.sh",
@@ -59,7 +60,8 @@
     "docs:preview": "npm --prefix docs run preview",
     "refboards": "bash scripts/draft-reference-boards.sh",
     "realdesigns": "tsx scripts/draft-real-designs.ts",
-    "schemas": "node scripts/pcb-schemas.mjs"
+    "schemas": "node scripts/pcb-schemas.mjs",
+    "bench": "tsx src/bench/cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.113.0",

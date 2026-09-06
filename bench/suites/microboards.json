@@ -1,0 +1,11 @@
+{
+  "suite": "microboards",
+  "corpus": "golden",
+  "tracks": ["e", "a", "b"],
+  "criteria": "hand-authored KiCad 10 microboards under bench/golden, one seeded fault each (bench/golden/README.md)",
+  "cases": ["completion", "congestion", "clearance", "open", "short", "overlap", "outside-board", "fixed-connector", "decoupling-far", "keepout"],
+  "routers": ["router-freerouting", "router-kicad-tools"],
+  "mode": "ensemble",
+  "seeds": [0],
+  "budgetSeconds": 180
+}

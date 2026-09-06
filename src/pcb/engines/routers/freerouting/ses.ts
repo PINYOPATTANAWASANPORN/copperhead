@@ -30,9 +30,12 @@ export interface SesResult {
   vias: Via[];
   /** Nets the session routed (by name). */
   nets: string[];
+  /** Wires narrower than `minWidthNm` that were widened to it (Freerouting's neck-down at small pads), by net name. */
+  widened: { count: number; nets: string[] };
 }
 
-export function parseSes(text: string, ctx: { copperLayers: string[]; netIdByName: Map<string, string>; rules: DesignRules; namespace: string }): SesResult {
+export function parseSes(text: string, ctx: { copperLayers: string[]; netIdByName: Map<string, string>; rules: DesignRules; namespace: string; minWidthNm?: number }): SesResult {
+  const widened = { count: 0, nets: [] as string[] };
   const roots = parseSexp(text);
   const session = roots.find(isList);
   if (!session || session[0] !== 'session') throw new EngineError('malformed-output', 'session file has no (session …) root', 'Freerouting wrote something that is not a Specctra session');
@@ -77,7 +80,12 @@ export function parseSes(text: string, ctx: { copperLayers: string[]; netIdByNam
       const path = child(wire, 'path');
       if (!path) continue;
       const layer = layerId(atom(path, 1) ?? '');
-      const width = toNm(atom(path, 2), 'wire width');
+      let width = toNm(atom(path, 2), 'wire width');
+      if (ctx.minWidthNm && width < ctx.minWidthNm) {
+        widened.count++;
+        if (!widened.nets.includes(name)) widened.nets.push(name);
+        width = ctx.minWidthNm;
+      }
       const coords = path.slice(3).filter((x): x is string => typeof x === 'string');
       for (let i = 0; i + 3 < coords.length; i += 2) {
         const a = { x: toNm(coords[i], 'x'), y: -toNm(coords[i + 1], 'y') };
@@ -92,5 +100,5 @@ export function parseSes(text: string, ctx: { copperLayers: string[]; netIdByNam
       vias.push({ id: uuidv5(`ses/${name}/via/${v++}`, ctx.namespace), netId, at: { x: toNm(atom(via, 2), 'via x'), y: -toNm(atom(via, 3), 'via y') }, size: stack.size, drill: stack.drill, layers: [ctx.copperLayers[0]!, ctx.copperLayers[ctx.copperLayers.length - 1]!] });
     }
   }
-  return { segments, vias, nets };
+  return { segments, vias, nets, widened };
 }

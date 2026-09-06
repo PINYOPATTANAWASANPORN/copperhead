@@ -24,6 +24,7 @@ With no subcommand, `copperhead` starts the interactive agent shell. Every comma
 | `sync` | Either | Verify phase no, resolve phase yes | Reconciles docs, files, and constraints. |
 | `draft` | [Design from a brief](/workflows/create-from-brief/) | No | Deterministically draws the schematic from `schematic.intent.json`. |
 | `score` | Either | No | Quantitative legibility score for the schematic (0-100, advisory). |
+| `pcb` | Layout | No | Board layout harness: `import`, `route`, `verify`, `score`, `render` (RFC 11). Engines run locally; no model. |
 
 ## Global options
 
@@ -173,6 +174,52 @@ Checks, in order:
 | `1` | Not ready — a `[FAIL]` item needs fixing. |
 
 With `--json`, prints `{ ok, checks: [{ name, status, detail, hint? }] }`.
+
+## `copperhead pcb`
+
+The board layout harness ([RFC 11](https://github.com/animesh-chouhan/copperhead-rfcs)): copperhead imports the board into its own IR, runs wrapped routing engines behind one fail-closed contract, verifies every candidate independently of the engine (geometry, connectivity, return path, KiCad DRC), ranks the valid ones, and writes an evidence bundle. It never routes a board itself and never calls a model; only local engines run.
+
+```bash
+copperhead pcb import [--board <path>]
+copperhead pcb verify [board] [--no-kicad]
+copperhead pcb route  [--board <path>] [--routers <ids>] [--mode <mode>] [--nets <names>]
+                      [--critical-nets <names>] [--layer-pref <specs>] [--preserve] [--seed <n>]
+                      [--budget-seconds <n>] [--allow-harness-engines] [--apply] [--run-dir <path>]
+copperhead pcb score  <run-dir> [--scoring <profile>]
+copperhead pcb render [board] [--out <svg>] [--plain] [--scale <n>]
+```
+
+- **`import`** parses the board (and its `.kicad_pro` when present) into the IR and prints what it found: layers, components, nets, existing copper, and anything the import could not carry (`lossy`).
+- **`verify`** runs the harness checkers on one board file and prints the diagnostics, metrics, gates, and any disagreement between checkers. Zones are refilled on a copy, so the file is never touched. Exit codes are the layout statuses below.
+- **`route`** snapshots the board, runs the eligible routers, materializes and verifies each result as a candidate, ranks them, and reports one outcome. Nothing is written to the board unless `--apply`; the run directory holds every candidate with its provenance.
+- **`score`** re-ranks the candidates of an existing run directory under a scoring profile.
+- **`render`** draws the board to SVG with the verify diagnostics numbered on it (`--plain` for a bare thumbnail).
+
+| `route` option | Description |
+| --- | --- |
+| `--routers <ids>` | Engine ids in preference order. Built in: `router-freerouting` (GPL, out of process, needs a JRE 25 and the jar), `router-kicad-tools` (MIT, needs `kct`), `router-reference` (harness fixtures only). |
+| `--mode <mode>` | `single` (first eligible engine), `race` and `ensemble` (every eligible engine, best candidate wins), `staged` (power and ground first at their class width, then `--critical-nets`, then the bulk by race). |
+| `--nets <names>` | Route only these nets; every other net's copper stays and acts as an obstacle. |
+| `--layer-pref <specs>` | `F.Cu=horizontal,B.Cu=vertical`, or `<layer>=any` and `<layer>=off`; mapped onto the engine's own layer settings. |
+| `--preserve` | Keep the copper already on the board instead of ripping it up. |
+| `--budget-seconds <n>` | Engine-second and wall-clock budget per run (default: config or 600). |
+| `--allow-harness-engines` | Let `router-reference` compete. It exists to test the harness, not to route boards. |
+| `--apply` | Copy the selected candidate over the board file. |
+| `--run-dir <path>` | Where the evidence bundle goes (default `.copperhead/runs/<ts>/layout`). |
+
+| Exit code | Status | Meaning |
+| --- | --- | --- |
+| `0` | `PASS` / `PARTIAL` | A valid candidate was selected; `PARTIAL` still owes connections or no candidate passed a hard gate (the board is unchanged). |
+| `2` | `HOLD` | Waiting on a user decision. |
+| `3` | `REFUSE` | The board failed pre-flight or the placement gate; no engine ran. |
+| `4` | `UNSUPPORTED` | No registered engine is eligible for this board and policy. |
+| `5` | `TIMEOUT` | Every engine ran out of budget. |
+| `6` | `ENGINE_ERROR` | No engine produced a candidate. |
+| `7` | `INVALID_OUTPUT` | An engine modified its input snapshot; its output was discarded. |
+
+The run directory: `snapshot.json` (the immutable input, hashed), `plan.json` (staged mode), `candidates/<engine>-<n>/` with `job.json`, `result.json`, `provenance.json` (binary, arguments, versions, seed, exit code), `candidate.kicad_pcb`, `diagnostics.json`, `metrics.json`, and `ranking.json`, `outcome.json`, `events.jsonl` at the top. Engines get a scrubbed environment (no `*_KEY`, `*_TOKEN`, `*_SECRET`, `PASSWORD`).
+
+`copperhead-bench run|compare|report` (a second bin) drives the same `route` path over a suite (`bench/suites/*.json`) and writes JSON, HTML, and CSV reports with the RFC 11 §13.4 record; `compare` refuses to diff runs of different benchmark versions.
 
 ## `copperhead sync`
 

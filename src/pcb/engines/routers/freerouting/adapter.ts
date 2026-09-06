@@ -136,7 +136,7 @@ export class FreeroutingRouter implements RouterPlugin {
     if (!existsSync(sesPath)) throw new EngineError('no-output', 'Freerouting exited clean but wrote no session file', 'see freerouting.log in the run directory');
     const ses = await readFile(sesPath, 'utf8');
     const copperLayers = design.board.layers.filter((l) => l.kind === 'copper').map((l) => l.id);
-    const parsed = parseSes(ses, { copperLayers, netIdByName: new Map(design.nets.map((n) => [n.name, n.id])), rules: design.board.rules, namespace: `${design.designId}/${job.runId}` });
+    const parsed = parseSes(ses, { copperLayers, netIdByName: new Map(design.nets.map((n) => [n.name, n.id])), rules: design.board.rules, namespace: `${design.designId}/${job.runId}`, minWidthNm: typeof job.strategy.trackWidthNm === 'number' ? job.strategy.trackWidthNm : design.board.rules.trackWidthNm });
     const routable = design.nets.filter((n) => n.padIds.length >= 2 && (!job.scope.netIds || job.scope.netIds.includes(n.id)));
     if (!parsed.segments.length && routable.length) throw new EngineError('empty-result', 'the session carries no wires for a board with nets to route', 'see freerouting.log; the DSN may have been rejected');
     const unroutedMatch = /(\d+) unrouted/i.exec(combined.split('\n').reverse().find((l) => /unrouted/i.test(l)) ?? '');
@@ -149,7 +149,9 @@ export class FreeroutingRouter implements RouterPlugin {
       arcs: [],
       vias: parsed.vias,
       unroutedNetIds: unrouted,
-      diagnostics: [],
+      diagnostics: parsed.widened.count
+        ? [{ code: 'quality.engine_neckdown_widened', category: 'quality', severity: 'info', entityIds: [], entityReferences: parsed.widened.nets, message: `${parsed.widened.count} wire(s) Freerouting necked down below the class width were widened to it before verification`, suggestedActions: [], sourceChecker: { id: FREEROUTING_MANIFEST.id, version: '1' } }]
+        : [],
       runtime: { wallSeconds: wall, engineSeconds: wall },
       provenance: { engineId: FREEROUTING_MANIFEST.id, engineVersion: versionOf(jar) ? path.basename(jar).replace(/^freerouting-|\.jar$/g, '') : 'unknown', adapterVersion: '1', invocation: { binary: java, args, envKeys: ['PATH', 'HOME', 'JAVA_TOOL_OPTIONS'] }, seed: job.seed, exitCode: res.exitCode ?? -1, startedAt: new Date(t0).toISOString(), finishedAt: new Date().toISOString() },
     };
