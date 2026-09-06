@@ -193,7 +193,9 @@ export async function runSuite(opts: BenchOptions): Promise<{ report: BenchRepor
         const wallSeconds = (Date.now() - t0) / 1000;
         const engineSeconds = res.invocations.reduce((a, i) => a + (i.result?.runtime.wallSeconds ?? 0), 0);
         // engines in race/ensemble run concurrently, so the harness overhead is the wall beyond the slowest engine
-        const engineWall = mode === 'race' || mode === 'ensemble' ? Math.max(0, ...res.invocations.map((i) => i.result?.runtime.wallSeconds ?? 0)) : engineSeconds;
+        // an engine that timed out or crashed still occupied its wall: take the invocation span from provenance
+        const spans = res.invocations.map((i) => i.provenance.startedAt && i.provenance.finishedAt ? (Date.parse(i.provenance.finishedAt) - Date.parse(i.provenance.startedAt)) / 1000 : (i.result?.runtime.wallSeconds ?? 0));
+        const engineWall = mode === 'race' || mode === 'ensemble' ? Math.max(0, ...spans) : spans.reduce((a, x) => a + x, 0);
         const candidates: CandidateRecord[] = res.ranking.candidates.map((c) => ({ id: c.id, rank: c.rank, eligible: c.eligible, gateFailures: [...c.gateFailures, ...c.profileGateFailures], score: c.score ?? Number.POSITIVE_INFINITY, metrics: c.metrics as Record<string, number> }));
         const eligible = candidates.filter((c) => c.eligible);
         const selected = candidates.find((c) => c.id === res.ranking.selected);
