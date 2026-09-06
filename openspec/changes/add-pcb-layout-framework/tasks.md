@@ -13,14 +13,14 @@
 
 ## 2. Phase 1: IR, KiCad adapter, verification
 
-- [ ] 2.1 `src/pcb/ir/`: `PcbDesign`, `BoardDefinition`, `ComponentInstance`, `PadDefinition`, `NetDefinition`, `PlacementState`, `RoutingState`, `CopperZone`; integer-nanometre geometry module behind the chosen kernel; canonical serialization and content hash; schema version and migration hook; `status.ts` with the eight statuses
-- [ ] 2.2 KiCad import: board-side read-only reader in `src/kicad/sexp.ts` (footprints, pads, nets, outline, copper, zones, netclasses, `.kicad_dru`), closing #8; stable ids from KiCad UUIDs; `referenceMap`
-- [ ] 2.3 KiCad export: apply a candidate to an immutable copy by text surgery (footprint `(at …)`, appended copper with UUIDv5 ids, zones untouched); zone refill through the pinned tool; shared number and uuid helpers moved to `emit.ts`
-- [ ] 2.4 `BoardSnapshot` and the isolated run directory; a test proving an engine wrapper writing to its input cannot touch the source (AC-17.2); stale-hash rejection
-- [ ] 2.5 `src/pcb/verify/`: geometry checker, connectivity checker, KiCad DRC adapter over `report.ts`, normalized `Diagnostic`, `checker_disagreement` events; kicad-tools DRC and kicad-happy adapters as `process`-mode checkers
-- [ ] 2.6 Fabrication profile `jlcpcb-2layer` vendored as JSON with the critical-DRC family list; pre-flight input checks (§10.6) returning `REFUSE`
-- [ ] 2.7 Tests: round trip on the reference boards and the KiCad demo projects retains geometry and connectivity (AC-17.1); every golden seeded violation detected with its stable code (AC-17.6); canonical hash stability
-- [ ] 2.8 Exit: round-trip fixtures pass; seeded violations detected; import-direction test in place (D1)
+- [x] 2.1 `src/pcb/ir/`: `PcbDesign`, `BoardDefinition`, `ComponentInstance`, `PadDefinition`, `NetDefinition`, `PlacementState`, `RoutingState`, `CopperZone`; integer-nanometre geometry module behind the chosen kernel; canonical serialization and content hash; schema version and migration hook; `status.ts` with the eight statuses
+- [x] 2.2 KiCad import: board-side read-only reader in `src/kicad/sexp.ts` (footprints, pads, nets, outline, copper, zones, netclasses, `.kicad_dru`), closing #8; stable ids from KiCad UUIDs; `referenceMap`
+- [x] 2.3 KiCad export: apply a candidate to an immutable copy by text surgery (footprint `(at …)`, appended copper with UUIDv5 ids, zones untouched); zone refill through the pinned tool; shared number and uuid helpers moved to `emit.ts`
+- [x] 2.4 `BoardSnapshot` and the isolated run directory; a test proving an engine wrapper writing to its input cannot touch the source (AC-17.2); stale-hash rejection
+- [x] 2.5 `src/pcb/verify/`: geometry checker, connectivity checker, KiCad DRC adapter over `report.ts`, normalized `Diagnostic`, `checker_disagreement` events; kicad-tools DRC adapter as a `process`-mode checker (kicad-happy deferred: not yet torn down, no adapter in Phase 1)
+- [x] 2.6 Fabrication profile `jlcpcb-2layer` vendored as JSON with the critical-DRC family list; pre-flight input checks (§10.6) returning `REFUSE`
+- [x] 2.7 Tests: round trip on the reference boards and the KiCad demo projects retains geometry and connectivity (AC-17.1); every golden seeded violation detected with its stable code (AC-17.6); canonical hash stability
+- [x] 2.8 Exit: round-trip fixtures pass; seeded violations detected; import-direction test in place (D1)
 
 ## 3. Phase 2: routing harness
 

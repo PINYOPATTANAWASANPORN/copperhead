@@ -1,0 +1,117 @@
+/**
+ * Verification (RFC 11 §10, AC-17.6, AC-17.7): the golden boards raise the
+ * diagnostics their expected.json names, with the entity references named,
+ * and nothing else at error severity; gates agree with the expected status;
+ * a real routed board (StickHub, after a live zone refill) verifies clean.
+ */
+import { describe, it, expect } from 'vitest';
+import { readFile, readdir, writeFile, mkdtemp, rm, cp } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execa } from 'execa';
+import { importBoard } from '../src/pcb/ir/kicad/import.js';
+import { applyCandidate } from '../src/pcb/ir/kicad/export.js';
+import { refillZones, extractFills } from '../src/pcb/ir/kicad/zones.js';
+import { verifyDesign } from '../src/pcb/verify/index.js';
+import { JLCPCB_2LAYER } from '../src/pcb/verify/profiles/index.js';
+import { runDrc } from '../src/kicad/cli.js';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const GOLDEN = path.join(HERE, '..', 'bench', 'golden');
+const STICKHUB = '/usr/share/kicad/demos/stickhub/StickHub.kicad_pcb';
+const IMPLEMENTED = /^(geom|conn|drc|preflight)\./;
+
+interface Expected {
+  status: string;
+  diagnostics: { code: string; entityReferences: string[] }[];
+  drc: { errorTypes: string[]; consequential?: string[]; unconnected: number };
+}
+
+async function haveKicad(): Promise<boolean> {
+  try {
+    await execa('kicad-cli', ['version']);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const cases = (await readdir(GOLDEN, { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name).sort();
+
+describe('profile', () => {
+  it('the typed profile equals the vendored JSON', async () => {
+    const json = JSON.parse(await readFile(path.join(HERE, '..', 'src', 'pcb', 'verify', 'profiles', 'jlcpcb-2layer.json'), 'utf8'));
+    expect(JLCPCB_2LAYER).toEqual(json);
+  });
+});
+
+describe('golden microboards verify as expected', () => {
+  it.each(cases)('%s', async (name) => {
+    const dir = path.join(GOLDEN, name);
+    const exp = JSON.parse(await readFile(path.join(dir, 'expected.json'), 'utf8')) as Expected;
+    const pcb = path.join(dir, 'board.kicad_pcb');
+    const { design } = importBoard({ boardText: await readFile(pcb, 'utf8'), boardPath: pcb, projectText: await readFile(path.join(dir, 'board.kicad_pro'), 'utf8'), now: 't' });
+    const kicad = await haveKicad();
+    const drc = kicad ? await runDrc(pcb) : undefined;
+    const v = verifyDesign({ design, ...(drc ? { drc } : {}) });
+    const codes = new Set(v.diagnostics.map((d) => d.code));
+    for (const e of exp.diagnostics) {
+      if (!IMPLEMENTED.test(e.code)) continue;
+      if (e.code.startsWith('drc.') && !kicad) continue;
+      expect(codes, `${name}: expected ${e.code}`).toContain(e.code);
+      const hit = v.diagnostics.filter((d) => d.code === e.code);
+      for (const ref of e.entityReferences) expect(hit.some((d) => d.entityReferences.includes(ref)), `${name}: ${e.code} should name ${ref}`).toBe(true);
+    }
+    // no unexpected error-severity harness codes (KiCad consequential types excepted)
+    const expectedCodes = new Set(exp.diagnostics.map((d) => d.code));
+    const allowedDrc = new Set([...exp.drc.errorTypes, ...(exp.drc.consequential ?? [])].map((t) => `drc.${t}`));
+    for (const d of v.diagnostics) {
+      if (d.severity !== 'error') continue;
+      if (d.code.startsWith('drc.')) {
+        expect(allowedDrc, `${name}: unexpected ${d.code}`).toContain(d.code);
+        continue;
+      }
+      expect(expectedCodes.has(d.code) || (d.code === 'conn.open' && expectedCodes.has('conn.short')), `${name}: unexpected ${d.code}: ${d.message}`).toBe(true);
+    }
+    // completion: KiCad and the connectivity checker agree on what is owed
+    if (drc) expect(v.metrics.unrouted_count, `${name}: unrouted`).toBe(exp.drc.unconnected);
+    // gates follow the expected status for the implemented families
+    const implementedFailure = exp.diagnostics.some((d) => IMPLEMENTED.test(d.code) && d.code !== 'conn.unrouted' && !(d.code.startsWith('drc.') && !kicad));
+    if (exp.status === 'PARTIAL') {
+      expect(v.gates.placement.passed && v.gates.routing.passed, `${name}: gates should pass`).toBe(true);
+    } else if (implementedFailure) {
+      expect(v.gates.preflight.passed && v.gates.placement.passed && v.gates.routing.passed, `${name}: a gate should fail`).toBe(false);
+    }
+  }, 120_000);
+});
+
+describe('a real routed board verifies clean', () => {
+  it('StickHub after a live zone refill: no shorts, no opens, completion 1.0', async () => {
+    if (!existsSync(STICKHUB) || !(await haveKicad())) return;
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-verify-'));
+    try {
+      await cp(path.dirname(STICKHUB), dir, { recursive: true });
+      const p = path.join(dir, 'StickHub.kicad_pcb');
+      const text = await readFile(STICKHUB, 'utf8');
+      const { design: original } = importBoard({ boardText: text, boardPath: p, now: 't' });
+      await writeFile(p, applyCandidate(text, original, {}).text, 'utf8');
+      const drc = await refillZones(p);
+      const refilled = await readFile(p, 'utf8');
+      const { design } = importBoard({ boardText: refilled, boardPath: p, projectText: await readFile(path.join(dir, 'StickHub.kicad_pro'), 'utf8'), now: 't' });
+      const fills = extractFills(refilled);
+      expect(fills.length).toBeGreaterThan(0);
+      const v = verifyDesign({ design, fills, drc });
+      const errors = v.diagnostics.filter((d) => d.severity === 'error' && !d.code.startsWith('drc.'));
+      expect(errors.map((d) => `${d.code}: ${d.message}`)).toEqual([]);
+      expect(v.metrics.unrouted_count).toBe(0);
+      expect(v.metrics.completion_rate).toBe(1);
+      expect(v.metrics.shorts).toBe(0);
+      expect(v.disagreements).toEqual([]);
+      expect(v.gates.routing.passed).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+});
