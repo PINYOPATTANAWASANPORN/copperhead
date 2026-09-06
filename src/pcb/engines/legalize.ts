@@ -205,6 +205,8 @@ export function legalizeEdge(design: PcbDesign, movable: Set<string>, placements
   const inset = design.board.rules.copperEdgeClearanceNm + 250_000;
   for (const comp of design.components) {
     if (!movable.has(comp.id) || comp.attributes.locked) continue;
+    // mounting holes sit where the mechanics put them, at the edge included; the keepout stage leaves them alone too
+    if (comp.pads.every((pad) => pad.type === 'np_thru_hole') || /^H\d/.test(comp.reference)) continue;
     const e0 = extent(comp);
     if (!e0) continue;
     const placed = byId.get(comp.id);

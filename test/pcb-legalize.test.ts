@@ -96,6 +96,16 @@ describe('rule stages', () => {
     // a part already inside is untouched
     expect(legalizeEdge(after, movable, []).placements).toEqual([]);
   });
+  it('edge: a mounting hole at the edge is not moved (B4: H1 on keepout was pushed 2.8 mm in)', async () => {
+    const { design } = await load('keepout');
+    const h1 = design.components.find((c) => c.reference === 'H1')!;
+    const ob = design.board.outline.outer;
+    const minX = Math.min(...ob.map((q) => q.x));
+    const movable = new Set(design.components.map((c) => c.id));
+    const r = legalizeEdge(design, movable, [{ id: h1.id, at: { x: minX + 1_000_000, y: h1.at.y }, rotation: h1.rotation, side: h1.attributes.side }]);
+    expect(r.notes).toEqual([]);
+    expect(r.placements.find((p) => p.id === h1.id)!.at.x).toBe(minX + 1_000_000);
+  });
 });
 
 describe('placeBoard with the rule stages', () => {
