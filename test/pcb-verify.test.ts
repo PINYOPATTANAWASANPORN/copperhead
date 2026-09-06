@@ -129,3 +129,22 @@ describe('IR renderer', () => {
     expect(svg).toContain('>1</text>');
   });
 });
+
+describe('pre-flight annular ring', () => {
+  it('measures a slotted hole per axis and tolerates imperial rounding on a round one', async () => {
+    const p = path.join(GOLDEN, 'completion', 'board.kicad_pcb');
+    const { design } = importBoard({ boardText: await readFile(p, 'utf8'), boardPath: p, now: 't' });
+    const j1 = design.components.find((c) => c.reference === 'J1')!;
+    const pad = j1.pads.find((x) => x.type === 'thru_hole')!;
+    // barrel-jack style: 3.5 x 3.5 pad around a 1 x 3 slot; d carries the slot's long side, which is not the ring
+    pad.size = { w: 3_500_000, h: 3_500_000 };
+    pad.drill = { d: 3_000_000, slot: { w: 1_000_000, h: 3_000_000 } };
+    expect(verifyDesign({ design }).diagnostics.filter((d) => d.code === 'preflight.annular' && d.entityReferences[0] === `J1.${pad.number}`)).toEqual([]);
+    // 0.0354 in pad on a 0.6 mm drill: 149.58 µm ring against a 150 µm minimum
+    pad.size = { w: 899_160, h: 1_501_140 };
+    pad.drill = { d: 600_000 };
+    expect(verifyDesign({ design }).diagnostics.filter((d) => d.code === 'preflight.annular' && d.entityReferences[0] === `J1.${pad.number}`)).toEqual([]);
+    pad.drill = { d: 620_000 };
+    expect(verifyDesign({ design }).diagnostics.filter((d) => d.code === 'preflight.annular' && d.entityReferences[0] === `J1.${pad.number}`)).toHaveLength(1);
+  });
+});

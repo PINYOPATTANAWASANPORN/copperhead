@@ -32,7 +32,8 @@ export function checkPreflight(design: PcbDesign, profile: FabricationProfile, i
     }
     for (const p of c.pads) {
       if (p.type !== 'thru_hole' || !p.drill) continue;
-      const ring = Math.round((Math.min(p.size.w, p.size.h) - p.drill.d) / 2);
+      // a slotted hole is measured against the pad on each axis; a round hole against the pad's short side
+      const ring = p.drill.slot ? Math.round(Math.min((p.size.w - p.drill.slot.w) / 2, (p.size.h - p.drill.slot.h) / 2)) : Math.round((Math.min(p.size.w, p.size.h) - p.drill.d) / 2);
       if (ring + ANNULAR_TOLERANCE_NM < profile.minAnnularNm) {
         d.push(make(PREFLIGHT_CHECKER, 'preflight.annular', { entityIds: [p.id], entityReferences: [`${c.reference}.${p.number}`], measured: { value: ring, unit: 'nm' }, allowed: { value: profile.minAnnularNm, unit: 'nm', relation: '>=' }, message: `${c.reference}.${p.number} annular ring is below the ${profile.id} minimum`, suggestedActions: ['request-user-action'] }));
       }
