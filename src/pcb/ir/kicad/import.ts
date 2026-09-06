@@ -281,7 +281,8 @@ function graphicsOutline(graphics: SexpNode[][], layers: Set<string>, lossy: str
     segs.push(...geo.segs);
     closed.push(...geo.closed);
   }
-  const { loops, open } = chainLoops(segs, mmToNm(0.001));
+  // 10 µm: KiCad's DRC accepts outlines with gaps of a few µm from legacy imperial boards; nearest-endpoint matching keeps arc vertices apart
+  const { loops, open } = chainLoops(segs, mmToNm(0.01));
   for (const loop of loops) if (loop.length >= 3) closed.push({ outer: loop, holes: [] });
   if (open) lossy.push(`${what}: ${open} unclosed segment chain(s) ignored`);
   return closed;

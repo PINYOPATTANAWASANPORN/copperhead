@@ -17,7 +17,7 @@ import { makeSnapshot } from '../src/pcb/ir/snapshot.js';
 import { emitDsn } from '../src/pcb/engines/routers/freerouting/dsn.js';
 import { parseSes } from '../src/pcb/engines/routers/freerouting/ses.js';
 import { FreeroutingRouter, resolveJar, resolveJava } from '../src/pcb/engines/routers/freerouting/adapter.js';
-import { KicadToolsRouter, resolveKct } from '../src/pcb/engines/routers/kicad-tools/adapter.js';
+import { KicadToolsRouter, resolveKct, toCodeDialect } from '../src/pcb/engines/routers/kicad-tools/adapter.js';
 import { EngineError } from '../src/pcb/ir/status.js';
 import { mmToNm } from '../src/pcb/ir/units.js';
 import type { RoutingJob, RunContext } from '../src/pcb/engines/contracts.js';
@@ -190,4 +190,41 @@ describe('live engines (bench/corpora/tools.sh)', () => {
       await rm(dir, { recursive: true, force: true });
     }
   }, 600_000);
+});
+
+describe('real-world board dialects', () => {
+  // spisolator (PCBench, MIT): a KiCad 4 board with a back-side SOIC, upgraded by kicad-cli to the KiCad 10 format
+  const fixture = path.join(HERE, 'fixtures', 'pcb', 'spisolator.kicad_pcb');
+  it('presents back-side images from the top view like KiCad\'s exporter (pins mirrored, [T] padstacks, place back rot+180)', async () => {
+    const { design } = importBoard({ boardText: await readFile(fixture, 'utf8'), boardPath: fixture, now: 't' });
+    const u1 = design.components.find((c) => c.reference === 'U1')!;
+    expect(u1.attributes.side).toBe('back');
+    const dsn = emitDsn(design, { boardName: 'spisolator', edgeClearanceNm: 0 });
+    // numbers from pcbnew.ExportSpecctraDSN on the same board
+    expect(dsn).toMatch(/\(place U1 148590 -114935 back 180 /);
+    const image = /\(image "?SMD_Packages:SOIC-14_N"?[\s\S]*?\n    \)/.exec(dsn)![0];
+    expect(image).toMatch(/\(pin "?Rect\[T\]Pad_508x1343_um_0_\w+"? 1 -3810 -3402\)/);
+    expect(image).toMatch(/\(pin "?Rect\[T\]Pad_508x1343_um_\d+_\w+"? 8 3810 3148\)/);
+    expect(image).not.toMatch(/\[B\]/);
+  });
+  it('rewrites the KiCad 10 net dialect into net codes for kct without touching anything else', async () => {
+    const text = await readFile(fixture, 'utf8');
+    const { design } = importBoard({ boardText: text, boardPath: fixture, now: 't' });
+    expect(design.source.netDialect).toBe('name');
+    const out = toCodeDialect(text, design);
+    expect(out).toMatch(/\n\t\(net 0 ""\)\n\t\(net \d+ "GND"\)/);
+    expect(out).not.toMatch(/\(net "[^"]*"\)/);
+    expect((out.match(/\(net \d+ "\/BUFEN"\)/g) ?? []).length).toBeGreaterThan(1);
+    const back = importBoard({ boardText: out, boardPath: fixture, now: 't' }).design;
+    expect(back.source.netDialect).toBe('code');
+    expect(back.nets.map((n) => n.name).sort()).toEqual(design.nets.map((n) => n.name).sort());
+    expect(back.components.flatMap((c) => c.pads.map((p) => p.netId && back.nets.find((n) => n.id === p.netId)!.name))).toEqual(design.components.flatMap((c) => c.pads.map((p) => p.netId && design.nets.find((n) => n.id === p.netId)!.name)));
+  });
+  it('chains an outline with a legacy 2.5 µm gap', async () => {
+    const p = path.join(ROOT, 'bench', 'var', 'corpora', 'pcbench-upgraded', 'kitspace_piezo_amplifier.kicad_pcb');
+    if (!existsSync(p)) return;
+    const { design, warnings } = importBoard({ boardText: await readFile(p, 'utf8'), boardPath: p, now: 't' });
+    expect(warnings.filter((w) => /unclosed/.test(w))).toEqual([]);
+    expect(design.board.outline.outer.length).toBeGreaterThanOrEqual(4);
+  });
 });

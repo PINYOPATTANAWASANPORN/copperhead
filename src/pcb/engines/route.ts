@@ -156,6 +156,7 @@ function outcomeOf(invocations: Invocation<RoutingResult>[], candidates: Materia
   for (const inv of invocations) {
     if (inv.snapshotViolation) detail.push(`${inv.engineId}: INVALID_OUTPUT, ${inv.snapshotViolation}`);
     else if (inv.error) detail.push(`${inv.engineId}: ${inv.error.kind}: ${inv.error.message}${inv.error.fix ? ` (fix: ${inv.error.fix})` : ''}`);
+    else if (inv.result && (inv.result.status === 'failed' || inv.result.status === 'unsupported')) detail.push(`${inv.engineId}: ${inv.result.status}${inv.result.diagnostics[0] ? `: ${inv.result.diagnostics[0].message}` : ' (no copper, no explanation from the engine)'}`);
   }
   const selected = ranking.selected ? candidates.find((c) => c.engineId === ranking.selected) : undefined;
   if (selected) {

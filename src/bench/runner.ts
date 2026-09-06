@@ -201,6 +201,7 @@ export async function runSuite(opts: BenchOptions): Promise<{ report: BenchRepor
         const selectionRegret = selected && selected.eligible ? Math.max(0, selected.score - oracle) : 0;
         const invalidOverValid = selected && !selected.eligible && eligible.length ? 1 : 0;
         const errors = res.invocations.filter((i) => i.error).map((i) => `${i.engineId}: ${i.error!.kind}: ${i.error!.message}`);
+        for (const i of res.invocations) if (!i.error && i.result && (i.result.status === 'failed' || i.result.status === 'unsupported')) errors.push(`${i.engineId}: ${i.result.status}${i.result.diagnostics[0] ? `: ${i.result.diagnostics[0].message}` : ' (no copper, no explanation from the engine)'}`);
         const rec: BoardRecord = { id: entry.id, board: path.relative(opts.repoRoot, boardPath), seed, status: res.outcome.status, summary: res.outcome.summary, selected: res.ranking.selected ?? null, wallSeconds, engineSeconds, overheadSeconds: Math.max(0, wallSeconds - engineWall), candidates, ineligible: res.ineligible, errors, selectionRegret, invalidOverValid, runDir: path.relative(opts.repoRoot, runDir) };
         const expectedPath = path.join(path.dirname(boardPath), 'expected.json');
         if (suite.corpus === 'golden' && existsSync(expectedPath)) {

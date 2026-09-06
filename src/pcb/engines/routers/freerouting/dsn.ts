@@ -44,13 +44,34 @@ function polygonKey(pts: Point[]): string {
   return pts.map((p) => `${Math.round(p.x / 1000)},${Math.round(p.y / 1000)}`).join(';');
 }
 
-/** The pad's copper in the footprint's local frame (rotation relative to the footprint baked in). */
+/**
+ * The pad's copper in the footprint's local frame (rotation relative to the
+ * footprint baked in). Images are presented from the top view, as KiCad's
+ * exporter does: a back-side footprint is flipped about its X axis (local
+ * y negated, layers swapped) and placed with `back` and rotation + 180,
+ * which Specctra's own left-right mirror undoes.
+ */
 function localCopper(pad: PadDefinition, c: ComponentInstance): Polygon {
-  return rotate(translate(pad.copper, -pad.at.x, -pad.at.y), -c.rotation);
+  const local = rotate(translate(pad.copper, -pad.at.x, -pad.at.y), -c.rotation);
+  return c.attributes.side === 'back' ? mirrorY(local) : local;
 }
 
 function localPoint(p: Point, c: ComponentInstance): Point {
-  return rotatePoint({ x: p.x - c.at.x, y: p.y - c.at.y }, -c.rotation);
+  const local = rotatePoint({ x: p.x - c.at.x, y: p.y - c.at.y }, -c.rotation);
+  return c.attributes.side === 'back' ? { x: local.x, y: -local.y } : local;
+}
+
+function mirrorY(poly: Polygon): Polygon {
+  const m = (pts: Point[]) => pts.map((p) => ({ x: p.x, y: -p.y })).reverse();
+  return { outer: m(poly.outer), holes: poly.holes.map(m) };
+}
+
+/** Copper layers of a pad as seen from the top view (swapped for back-side footprints). */
+function topViewLayers(pad: PadDefinition, c: ComponentInstance, copper: string[]): string[] {
+  const layers = pad.layers.filter((l) => copper.includes(l));
+  if (c.attributes.side !== 'back' || layers.length !== 1) return layers;
+  const i = copper.indexOf(layers[0]!);
+  return [copper[copper.length - 1 - i]!];
 }
 
 export function emitDsn(design: PcbDesign, opts: DsnOptions): string {
@@ -61,7 +82,7 @@ export function emitDsn(design: PcbDesign, opts: DsnOptions): string {
   const padstacks = new Map<string, Padstack>();
   const stackOf = (pad: PadDefinition, c: ComponentInstance): string => {
     const local = localCopper(pad, c);
-    const layers = pad.layers.filter((l) => copper.includes(l));
+    const layers = topViewLayers(pad, c, copper);
     const tag = layers.length > 1 ? 'A' : layers[0] === copper[0] ? 'T' : 'B';
     let stack: Padstack;
     if (pad.shape === 'circle') {
@@ -69,7 +90,7 @@ export function emitDsn(design: PcbDesign, opts: DsnOptions): string {
     } else {
       const pts = local.outer;
       const key = polygonKey(pts);
-      const rot = normMdeg(pad.rotation - c.rotation);
+      const rot = normMdeg(c.attributes.side === 'back' ? -(pad.rotation - c.rotation) : pad.rotation - c.rotation);
       const b = bbox(local);
       stack = { name: `${pad.shape === 'roundrect' ? 'RoundRect' : pad.shape === 'oval' ? 'Oval' : 'Rect'}[${tag}]Pad_${um(b.maxX - b.minX)}x${um(b.maxY - b.minY)}_um_${Math.round(mdegToDeg(rot))}_${hash(key)}`, layers, shape: { kind: 'polygon', pts } };
     }

@@ -20,6 +20,9 @@ export interface PreflightInputs {
   noConnects?: Set<string>;
 }
 
+/** Imperial pad sizes round to sub-micron shortfalls (0.0354 in = 0.89916 mm); a fab does not see 0.4 µm. */
+const ANNULAR_TOLERANCE_NM = 1000;
+
 export function checkPreflight(design: PcbDesign, profile: FabricationProfile, inputs: PreflightInputs = {}): CheckResult {
   const d: Diagnostic[] = [];
   for (const c of design.components) {
@@ -30,7 +33,7 @@ export function checkPreflight(design: PcbDesign, profile: FabricationProfile, i
     for (const p of c.pads) {
       if (p.type !== 'thru_hole' || !p.drill) continue;
       const ring = Math.round((Math.min(p.size.w, p.size.h) - p.drill.d) / 2);
-      if (ring < profile.minAnnularNm) {
+      if (ring + ANNULAR_TOLERANCE_NM < profile.minAnnularNm) {
         d.push(make(PREFLIGHT_CHECKER, 'preflight.annular', { entityIds: [p.id], entityReferences: [`${c.reference}.${p.number}`], measured: { value: ring, unit: 'nm' }, allowed: { value: profile.minAnnularNm, unit: 'nm', relation: '>=' }, message: `${c.reference}.${p.number} annular ring is below the ${profile.id} minimum`, suggestedActions: ['request-user-action'] }));
       }
     }

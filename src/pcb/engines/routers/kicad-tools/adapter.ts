@@ -11,6 +11,8 @@ import path from 'node:path';
 import type { EngineManifest, RoutingJob, RoutingResult, RouterPlugin, RunContext } from '../../contracts.js';
 import { ENGINE_SCHEMA_VERSION } from '../../contracts.js';
 import { EngineError } from '../../../ir/status.js';
+import type { PcbDesign } from '../../../ir/types.js';
+import { topLevelBlocks } from '../../../ir/kicad/blocks.js';
 import { importBoard } from '../../../ir/kicad/import.js';
 import { extractFills } from '../../../ir/kicad/zones.js';
 import { nmToMm } from '../../../ir/units.js';
@@ -56,7 +58,13 @@ export class KicadToolsRouter implements RouterPlugin {
     const strategy = String(job.strategy.strategy ?? 'negotiated');
     if (!(KCT_STRATEGIES as readonly string[]).includes(strategy)) throw new EngineError('schema-mismatch', `unknown kct strategy "${strategy}"`, `use one of ${KCT_STRATEGIES.join(', ')}`);
     const outPath = path.join(ctx.workDir, 'routed.kicad_pcb');
-    const args = ['route', ctx.boardPath, '-o', outPath, '--strategy', strategy, '--trace-width', nmToMm(rules.trackWidthNm), '--clearance', nmToMm(rules.clearanceNm), '--via-drill', nmToMm(rules.viaDrillNm), '--via-diameter', nmToMm(rules.viaDiameterNm), '--timeout', String(Math.max(10, job.limits.wallSeconds - 5)), '--skip-drc', '--layers', '2'];
+    // kct's parser expects `(net N "name")` and a net table; KiCad 10 boards carry only `(net "name")`
+    let boardPath = ctx.boardPath;
+    if (design.source.netDialect === 'name') {
+      boardPath = path.join(ctx.workDir, 'board-netcodes.kicad_pcb');
+      await writeFile(boardPath, toCodeDialect(await readFile(ctx.boardPath, 'utf8'), design), 'utf8');
+    }
+    const args = ['route', boardPath, '-o', outPath, '--strategy', strategy, '--trace-width', nmToMm(rules.trackWidthNm), '--clearance', nmToMm(rules.clearanceNm), '--via-drill', nmToMm(rules.viaDrillNm), '--via-diameter', nmToMm(rules.viaDiameterNm), '--timeout', String(Math.max(10, job.limits.wallSeconds - 5)), '--skip-drc', '--layers', '2'];
     if (job.scope.preserveExistingRoutes) args.push('--preserve-existing');
     if (job.scope.netIds) {
       const names = design.nets.filter((n) => job.scope.netIds!.includes(n.id)).map((n) => n.name);
@@ -95,4 +103,18 @@ export class KicadToolsRouter implements RouterPlugin {
       provenance: { engineId: KICAD_TOOLS_MANIFEST.id, engineVersion: '0.20.0', adapterVersion: '1', invocation: { binary: kct, args, envKeys: ['PATH', 'HOME', 'VIRTUAL_ENV'] }, seed: job.seed, exitCode: res.exitCode ?? -1, startedAt: new Date(t0).toISOString(), finishedAt: new Date().toISOString() },
     };
   }
+}
+
+/** Rewrite a name-dialect board (KiCad 10) into the code dialect (KiCad 8/9) that kct parses: a net table after (setup) and `(net N "name")` on every object. */
+export function toCodeDialect(text: string, design: PcbDesign): string {
+  const codes = new Map(design.nets.map((n) => [n.name, n.code]));
+  let next = Math.max(0, ...codes.values()) + 1;
+  const body = text.replace(/\(net "((?:[^"\\]|\\.)*)"\)/g, (_m, name: string) => {
+    if (!codes.has(name)) codes.set(name, next++);
+    return `(net ${codes.get(name)} "${name}")`;
+  });
+  const table = ['\t(net 0 "")', ...[...codes.entries()].sort((a, b) => a[1] - b[1]).map(([name, code]) => `\t(net ${code} "${name}")`)].join('\n');
+  const setup = topLevelBlocks(body).find((b) => b.head === 'setup');
+  const at = setup ? setup.end : body.lastIndexOf(')');
+  return `${body.slice(0, at)}\n${table}${body.slice(at)}`;
 }
