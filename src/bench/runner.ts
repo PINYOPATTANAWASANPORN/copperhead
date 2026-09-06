@@ -359,7 +359,7 @@ async function runVerifySuite(opts: BenchOptions, suite: SuiteFile, kind: 'verif
       const v = verifyDesign({ design, fills: extractFills(text), ...(drc ? { drc } : {}), constraints: registry });
       const errors = v.diagnostics.filter((d) => d.severity === 'error');
       const status = holds.length ? 'HOLD' : !v.gates.preflight.passed || !v.gates.placement.passed ? 'REFUSE' : errors.length ? 'PARTIAL' : (v.metrics.unrouted_count ?? 0) > 0 ? 'PARTIAL' : 'PASS';
-      const applicable = Object.values(registry).filter((c) => c.class && c.severity === 'hard' && !['routing', 'stackup'].includes(c.class) || (c.class === 'routing' && String(c.parameters?.min_width_nm ?? '') !== '')).length;
+      const applicable = v.metrics.intent_hard_total ?? 0;
       const violations = v.metrics.intent_hard_violations ?? 0;
       hardApplicable += applicable;
       hardPassed += Math.max(0, applicable - violations);

@@ -63,7 +63,7 @@
 - [x] 6.4 Physics compiler (IPC-2221 generic formula vendored as `vendor/ipc/current-width.json`; the IPC-2152 tables are not redistributable): IPC-2152-compatible current-width where data exists, advisory otherwise; impedance `HOLD` without stackup; stackup class accepted but pinned to one two-layer profile
 - [ ] 6.4a (blocked: needs the `fetch_datasheet` / `web_search` clients from `add-part-research-tools`, not on this branch) Reference layout retrieval, network sources: the `datasheet` source (rule extraction from the cached datasheet, figure reading by one model call with capped confidence) and online design search through the part-research `web_search` client with shallow clones under `var/refs/`; `pcb_find_references` tool and `--refresh-references` / `--approve-reference` on `pcb layout`; transcript network log
 - [x] 6.5 Intent checker for fixed, edge, orientation, attachment, group (spread against budget, region containment), region, separation, keepout (orientation is declared-but-not-evaluated, info severity); `pcb_infer_intent` tool; `copperhead pcb infer-intent`; layout track in `check` (AC-17.14)
-- [ ] 6.6 Track E (intent) and track F (refusal) in the bench with the curated microboard categories of §13.3
+- [x] 6.6 Track E (intent) and track F (refusal) in the bench with the curated microboard categories of §13.3 (`copperbench --kind verify`; 15 golden boards, 9 categories; 40 remains the target)
 - [ ] 6.7 Exit: B3 report (≥90% of applicable hard intent constraints pass; no geometry-invalid candidate marked complete)
 
 ## 7. Phase 5: closed loop

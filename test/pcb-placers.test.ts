@@ -206,3 +206,27 @@ describe('copperhead pcb place CLI', () => {
     }
   }, 300_000);
 });
+
+describe('placement against intent (B3)', () => {
+  it('decoupling-far: stage 3 attaches C1 from the intent, every candidate then satisfies it', async () => {
+    if (!(await haveKicad())) return;
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-place-intent-'));
+    try {
+      const res = await placeBoard({ repoRoot: ROOT, boardPath: path.join(GOLDEN, 'decoupling-far', 'board.kicad_pcb'), runDir: path.join(dir, 'run'), placers: ['placer-fixed', 'placer-reference'], mode: 'ensemble', policy: HARNESS, probe: false, limits: { engineSeconds: 60, wallSeconds: 60 } });
+      expect(res.outcome.status).toBe('PASS');
+      // stage 3 attaches C1 to U1 before any wrapped placer runs, so every candidate inherits the attachment
+      expect(res.plan!.stages.find((s) => s.name === 'attach')!.componentIds.length).toBeGreaterThanOrEqual(2); // C1 and its target U1
+      for (const id of ['placer-fixed', 'placer-reference']) {
+        const c = res.ranking.candidates.find((x) => x.id === id)!;
+        expect(c.eligible, id).toBe(true);
+        expect(c.metrics.intent_hard_violations, id).toBe(0);
+        expect(c.metrics.intent_hard_total, id).toBe(1);
+      }
+      // the same board verified as given still violates it
+      const asGiven = verifyDesign({ design: (await import('../src/pcb/ir/kicad/import.js')).importBoard({ boardText: await readFile(path.join(GOLDEN, 'decoupling-far', 'board.kicad_pcb'), 'utf8'), boardPath: 'b', now: 't' }).design, constraints: (await import('../src/pcb/intent/load.js').then((m) => m.loadConstraints(res.candidates[0]!.design, path.join(GOLDEN, 'decoupling-far', 'board.kicad_pcb')))).registry });
+      expect(asGiven.metrics.intent_hard_violations).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+});

@@ -36,6 +36,8 @@ import { applyCandidate } from '../ir/kicad/export.js';
 import { bbox, bboxOf, type Polygon } from '../ir/geometry.js';
 import type { PlacedComponent, ComponentInstance, PcbDesign } from '../ir/types.js';
 import type { Block } from '../intent/blocks.js';
+import { loadConstraints } from '../intent/load.js';
+import type { Constraint } from '../../memory/constraints.js';
 
 export interface PlaceOptions {
   repoRoot: string;
@@ -66,6 +68,14 @@ export interface PlaceOptions {
   /** Stage 3 inputs: reference blocks to copy around their anchors, and single attachments (`relative.attached`). */
   reuse?: LayoutBlockSpec[];
   attached?: Omit<AttachedConstraint, 'kind'>[];
+  /**
+   * Layout constraints for the intent checker. Default: the board's intent file
+   * (beside the board or under docs) plus its own rules. Their attachments feed
+   * stage 3 and their functional groups feed the anchors when no blocks are given.
+   */
+  constraints?: Record<string, Constraint> | null;
+  docsDir?: string;
+  intentPath?: string | null;
   log?: (line: string) => void;
 }
 
@@ -115,10 +125,23 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
   const scoring = loadScoringProfile(opts.scoring ?? 'default-placement-2-layer');
   const wantedRefs = opts.movableReferences ? new Set(opts.movableReferences) : null;
   let design = imported.design;
+  // the constraint registry: intent + the board's own rules unless the caller passed one (null = none)
+  let constraints: Record<string, Constraint> = {};
+  if (opts.constraints !== null) {
+    if (opts.constraints) constraints = opts.constraints;
+    else {
+      const loaded = await loadConstraints(design, opts.boardPath, { ...(opts.intentPath !== undefined ? { intentPath: opts.intentPath } : {}), ...(opts.docsDir ? { docsDir: opts.docsDir } : {}), repoRoot: opts.repoRoot });
+      constraints = loaded.registry;
+      for (const h of loaded.holds) log(`intent: ${h}`);
+      if (loaded.intentPath) log(`intent: ${path.relative(opts.repoRoot, loaded.intentPath)} (${Object.keys(constraints).filter((k) => k.startsWith('layout.')).length} constraint(s) with the board's own rules)`);
+    }
+  }
+  // stage-3 attachments from the registry (relative.attached, hard or soft), unless the caller supplied its own
+  const attached = opts.attached ?? Object.entries(constraints).filter(([k, c]) => k.startsWith('layout.relative.attached.') && c.class === 'relative').map(([, c]) => ({ ref: String(c.scope?.refs?.[0] ?? ''), to: `${String(c.parameters?.target ?? '')}${Array.isArray(c.parameters?.pins) && (c.parameters!.pins as string[]).length ? `.${(c.parameters!.pins as string[])[0]}` : ''}`, max_distance_nm: Number(c.parameters?.max_distance_nm ?? 2_000_000) })).filter((a) => a.ref && a.to);
   let movableIds = design.components.filter((c) => !c.attributes.locked && (!wantedRefs || wantedRefs.has(c.reference))).map((c) => c.id);
   await mkdir(opts.runDir, { recursive: true });
   let plan: PlacementPlan | undefined;
-  if (opts.blocks?.length || opts.reuse?.length || opts.attached?.length) {
+  if (opts.blocks?.length || opts.reuse?.length || attached.length) {
     // staged plan, stages 1 to 3: locked parts stay; anchors go to their region centroids and are locked for the wrapped placer
     const lockedIds = design.components.filter((c) => c.attributes.locked).map((c) => c.id);
     const anchorsPlacer = new AnchorsPlacer();
@@ -132,10 +155,10 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
     movableIds = movableIds.filter((id) => !anchorIds.has(id));
     // stage 3: reference blocks around their anchors and single attachments, then locked like the anchors
     let attachedIds = new Set<string>();
-    if (opts.reuse?.length || opts.attached?.length) {
+    if (opts.reuse?.length || attached.length) {
       const stageSnapshot = makeSnapshot(design, { kind: 'placement', movableComponentIds: movableIds }, { seed: opts.seed ?? 0, limits: { ...DEFAULT_LIMITS, ...opts.limits } });
-      const constraints = [...(opts.reuse ?? []).map((spec) => ({ kind: 'layout.reuse', spec })), ...(opts.attached ?? []).map((a) => ({ kind: 'relative.attached' as const, ...a }))];
-      const attach = await new AttachPlacer().place({ runId: 'attach', snapshot: stageSnapshot, movableComponentIds: movableIds, constraints, objectives: [], seed: opts.seed ?? 0, limits: stageSnapshot.limits }, { workDir: opts.runDir, boardPath: opts.boardPath, log });
+      const stageConstraints = [...(opts.reuse ?? []).map((spec) => ({ kind: 'layout.reuse', spec })), ...attached.map((a) => ({ kind: 'relative.attached' as const, ...a }))];
+      const attach = await new AttachPlacer().place({ runId: 'attach', snapshot: stageSnapshot, movableComponentIds: movableIds, constraints: stageConstraints, objectives: [], seed: opts.seed ?? 0, limits: stageSnapshot.limits }, { workDir: opts.runDir, boardPath: opts.boardPath, log });
       if (attach.placements.length) {
         text = applyCandidate(text, design, { placement: attach.placements }).text;
         design = importBoard({ boardText: text, boardPath: path.relative(opts.repoRoot, opts.boardPath), ...(projectText ? { projectText, projectPath: path.relative(opts.repoRoot, projectPath!) } : {}), kicadVersion, ...(opts.profile ? { fabricationProfile: opts.profile } : {}) }).design;
@@ -144,7 +167,7 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
       // the parts they were placed against must not move either, or the bulk placer breaks the relation
       const byRef = new Map(design.components.map((c) => [c.reference, c.id]));
       for (const spec of opts.reuse ?? []) if (byRef.has(spec.anchor) && attach.placements.length) attachedIds.add(byRef.get(spec.anchor)!);
-      for (const a of opts.attached ?? []) {
+      for (const a of attached) {
         const target = byRef.get(a.to.split('.')[0]!);
         if (target && attach.placements.some((p) => p.id === byRef.get(a.ref))) attachedIds.add(target);
       }
@@ -198,9 +221,9 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
     });
     // copper routed to the old positions is invalid once a part moves: rip it up, keep the zones
     const candidate = { placement: inv.result.placements, ...(hasCopper && moved ? { routing: { segments: [], arcs: [], vias: [], preserveIds: new Set<string>() } } : {}) };
-    const cand = await materialize(inv, candidate, { sourceText: text, design, ...(projectText ? { projectText } : {}), profile, kicadVersion, ...(opts.noKicad ? { noKicad: true } : {}) });
+    const cand = await materialize(inv, candidate, { sourceText: text, design, ...(projectText ? { projectText } : {}), profile, kicadVersion, ...(opts.noKicad ? { noKicad: true } : {}), ...(Object.keys(constraints).length ? { constraints } : {}) });
     candidates.push(cand);
-    const metrics: Record<string, number> = { ...placementMetrics({ design: cand.design, verify: cand.verify, runtimeSeconds: inv.result.runtime.wallSeconds }), unplaced_count: inv.result.unplacedComponentIds.length, refused_count: cand.refused.length };
+    const metrics: Record<string, number> = { ...placementMetrics({ design: cand.design, verify: cand.verify, runtimeSeconds: inv.result.runtime.wallSeconds }), unplaced_count: inv.result.unplacedComponentIds.length, refused_count: cand.refused.length, intent_hard_violations: cand.verify.metrics.intent_hard_violations ?? 0, intent_soft_violations: cand.verify.metrics.intent_soft_violations ?? 0, intent_hard_total: cand.verify.metrics.intent_hard_total ?? 0, intent_compliance: cand.verify.metrics.intent_compliance ?? 1 };
     if (opts.probe !== false && cand.verify.gates.placement.passed) {
       try {
         const p = await routabilityProbe({ repoRoot: opts.repoRoot, pcbPath: cand.pcbPath, workDir: inv.workDir, ...(opts.probe?.routerId ? { routerId: opts.probe.routerId } : {}), ...(opts.probe?.budgetSeconds ? { budgetSeconds: opts.probe.budgetSeconds } : {}), registry: opts.probe?.registry ?? defaultRouterRegistry(opts.repoRoot), policy: opts.policy ?? DEFAULT_POLICY, ...(opts.noKicad ? { noKicad: true } : {}), log: (l) => log(`  probe: ${l}`) });

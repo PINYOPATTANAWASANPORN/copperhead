@@ -9,6 +9,7 @@ import path from 'node:path';
 import type { PcbDesign, ZoneFill } from '../ir/types.js';
 import { importBoard } from '../ir/kicad/import.js';
 import { applyCandidate, type Candidate } from '../ir/kicad/export.js';
+import type { Constraint } from '../../memory/constraints.js';
 import { refillZones, extractFills } from '../ir/kicad/zones.js';
 import { verifyDesign, type VerifyResult } from '../verify/index.js';
 import type { FabricationProfile } from '../verify/profiles/index.js';
@@ -29,6 +30,8 @@ export interface MaterializedCandidate {
 }
 
 export interface MaterializeOptions {
+  /** Layout constraints for the intent checker (intent + ECAD); optional. */
+  constraints?: Record<string, Constraint>;
   sourceText: string;
   design: PcbDesign;
   projectText?: string;
@@ -60,7 +63,7 @@ export async function materialize(inv: Invocation<RoutingResult | PlacementResul
   }
   const design = importBoard({ boardText: text, boardPath: pcbPath, ...(opts.projectText ? { projectText: opts.projectText } : {}), now: opts.design.source.importedAt }).design;
   const fills = extractFills(text);
-  const verify = verifyDesign({ design, fills, ...(drc ? { drc } : {}), profile: opts.profile, ...(opts.kicadVersion ? { kicadVersion: opts.kicadVersion } : {}) });
+  const verify = verifyDesign({ design, fills, ...(drc ? { drc } : {}), profile: opts.profile, ...(opts.kicadVersion ? { kicadVersion: opts.kicadVersion } : {}), ...(opts.constraints ? { constraints: opts.constraints } : {}) });
   await writeFile(path.join(inv.workDir, 'candidate.json'), JSON.stringify(design), 'utf8');
   await writeFile(path.join(inv.workDir, 'diagnostics.json'), JSON.stringify(verify.diagnostics, null, 2), 'utf8');
   return { engineId: inv.engineId, workDir: inv.workDir, pcbPath, design, fills, drc, verify, refused: out.refused };

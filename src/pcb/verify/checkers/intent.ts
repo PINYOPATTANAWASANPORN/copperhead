@@ -134,8 +134,10 @@ export function checkIntent(design: PcbDesign, registry: Record<string, Constrai
     }
     void ids;
   }
-  const hard = Object.values(registry).filter((c) => c.class && c.severity === 'hard').length;
+  // applicable = entries this checker evaluates (routing classes and dru rules are KiCad DRC's; stackup is not checked)
+  const evaluated = (k: string, c: Constraint) => (c.class === 'mechanical' || c.class === 'relative' || c.class === 'functional' || (c.class === 'manufacturing' && k.startsWith('layout.manufacturing.keepout.')) || (c.class === 'routing' && k.startsWith('layout.routing.width.')));
+  const hard = Object.entries(registry).filter(([k, c]) => c.severity === 'hard' && evaluated(k, c)).length;
   const violatedHard = new Set(d.filter((x) => x.severity === 'error').map((x) => x.code)).size;
-  const soft = Object.values(registry).filter((c) => c.class && c.severity === 'soft').length;
+  const soft = Object.entries(registry).filter(([k, c]) => c.severity === 'soft' && evaluated(k, c)).length;
   return { checker: INTENT_CHECKER, status: statusOf(d), evidence: [], diagnostics: d, metrics: { intent_hard_violations: d.filter((x) => x.severity === 'error').length, intent_soft_violations: d.filter((x) => x.severity === 'warning').length, intent_hard_total: hard, intent_soft_total: soft, intent_compliance: hard + soft ? 1 - (d.filter((x) => x.severity === 'error').length + 0.5 * d.filter((x) => x.severity === 'warning').length) / (hard + soft) : 1, intent_codes: violatedHard } };
 }

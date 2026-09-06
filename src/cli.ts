@@ -429,7 +429,7 @@ pcbGroup
         repoRoot: repo, boardPath, runDir, ...(placers ? { placers } : {}), mode, ...(opts.movable ? { movableReferences: opts.movable.split(',').map((s) => s.trim()) } : {}), ...(reuse?.length ? { reuse } : {}), seed: Number(opts.seed), limits: { engineSeconds: budget, wallSeconds: budget }, ...(pcb.profile ? { profile: pcb.profile } : {}), ...(pcb.maxParallelEngines ? { maxParallel: pcb.maxParallelEngines } : {}),
         policy: { network: pcb.allowRemoteEngines ? 'required' : 'optional', allowHarnessEngines: opts.allowHarnessEngines || (pcb.allowHarnessEngines ?? false), denyLicenses: [] },
         probe: opts.probe ? { routerId: opts.probeRouter } : false,
-        ...(blocks ? { blocks } : {}), ...(attached?.length ? { attached } : {}),
+        ...(blocks ? { blocks } : {}), ...(attached?.length ? { attached } : {}), docsDir: path.join(repo, config.docs), intentPath: pcb.intentPath ?? null,
         log: json ? () => {} : (l) => console.error(l),
       });
       if (opts.apply) {
