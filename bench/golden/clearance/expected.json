@@ -2,7 +2,7 @@
   "case": "clearance",
   "fault": "SIG1 and SIG2 tracks end 0.05 mm apart, under the 0.2 mm rule",
   "generator": "bench/golden/generate.ts",
-  "status": "REFUSE",
+  "status": "PARTIAL",
   "diagnostics": [
     {
       "code": "drc.clearance",

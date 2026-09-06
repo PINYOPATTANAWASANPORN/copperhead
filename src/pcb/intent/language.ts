@@ -108,7 +108,30 @@ export function parseIntent(text: string, source = 'intent'): ParsedIntent {
     push(`layout.manufacturing.keepout.${region}`, base('manufacturing', 'hard', [], { region, prohibit: list(o.prohibit).length ? list(o.prohibit) : ['components', 'copper'], ...(radius !== null ? { radius_nm: radius } : {}) }, 90));
   }
   const routing = (doc.routing ?? {}) as Record<string, unknown>;
-  for (const k of Object.keys(routing)) if (!['priorities', 'layers'].includes(k)) unknown.push(`routing.${k}`);
+  for (const k of Object.keys(routing)) if (!['priorities', 'layers', 'widths', 'currents'].includes(k)) unknown.push(`routing.${k}`);
+  for (const [i, w] of ((routing.widths as unknown[]) ?? []).entries()) {
+    const o = (w ?? {}) as Record<string, unknown>;
+    const net = str(o.net);
+    const min = mm(o.min_width_mm);
+    if (!net || min === null) {
+      errors.push(`routing.widths[${i}]: needs net and min_width_mm`);
+      continue;
+    }
+    push(`layout.routing.width.${net}`, base('routing', 'hard', [], { min_width_nm: min, net }, 70));
+    entries[entries.length - 1]!.scope = { nets: [net] };
+  }
+  for (const [i, c] of ((routing.currents as unknown[]) ?? []).entries()) {
+    const o = (c ?? {}) as Record<string, unknown>;
+    const net = str(o.net);
+    const amps = typeof o.amps === 'number' ? o.amps : null;
+    if (!net || amps === null) {
+      errors.push(`routing.currents[${i}]: needs net and amps`);
+      continue;
+    }
+    // the physics compiler turns this into a width; kept as a requirement so the report can cite it
+    push(`layout.electrical-layout.current.${net}`, base('electrical-layout', 'hard', [], { amps, net, ...(typeof o.rise_c === 'number' ? { rise_c: o.rise_c } : {}) }, 70));
+    entries[entries.length - 1]!.scope = { nets: [net] };
+  }
   if (Array.isArray(routing.priorities)) {
     const order = (routing.priorities as unknown[]).map((tier) => list(tier));
     push('layout.routing.priority', base('routing', 'soft', order.flat().filter((n) => n !== 'remaining'), { order: JSON.stringify(order) }));

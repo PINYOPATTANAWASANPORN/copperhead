@@ -82,7 +82,11 @@ describe('golden microboards verify as expected', () => {
     // gates follow the expected status for the implemented families
     const implementedFailure = exp.diagnostics.some((d) => IMPLEMENTED.test(d.code) && d.code !== 'conn.unrouted' && !(d.code.startsWith('drc.') && !kicad));
     if (exp.status === 'PARTIAL') {
-      expect(v.gates.placement.passed && v.gates.routing.passed, `${name}: gates should pass`).toBe(true);
+      // PARTIAL is a placed board: the placement gate holds; the routing gate holds unless the seeded fault is a routing one
+      expect(v.gates.placement.passed, `${name}: placement gate should pass`).toBe(true);
+      const routingFault = exp.diagnostics.some((d) => /^(drc\.|intent\.routing\.|conn\.short)/.test(d.code) && !(d.code.startsWith('drc.') && !kicad));
+      if (!routingFault) expect(v.gates.routing.passed, `${name}: routing gate should pass`).toBe(true);
+      else expect(v.gates.routing.passed, `${name}: routing gate should fail`).toBe(false);
     } else if (implementedFailure) {
       expect(v.gates.preflight.passed && v.gates.placement.passed && v.gates.routing.passed, `${name}: a gate should fail`).toBe(false);
     }

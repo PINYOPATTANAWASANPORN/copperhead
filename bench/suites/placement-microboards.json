@@ -2,12 +2,36 @@
   "suite": "placement-microboards",
   "kind": "placement",
   "corpus": "golden",
-  "tracks": ["d"],
+  "tracks": [
+    "d"
+  ],
   "criteria": "the ten golden microboards re-placed from their committed positions; every part not locked in KiCad is movable",
-  "cases": ["completion", "congestion", "clearance", "open", "short", "overlap", "outside-board", "fixed-connector", "decoupling-far", "keepout"],
-  "placers": ["placer-kicad-tools-physics", "placer-pyplacer", "placer-fixed"],
+  "cases": [
+    "completion",
+    "congestion",
+    "clearance",
+    "open",
+    "short",
+    "overlap",
+    "outside-board",
+    "fixed-connector",
+    "decoupling-far",
+    "keepout",
+    "decoupling-qfn",
+    "ldo-caps",
+    "crystal",
+    "separation",
+    "power-width"
+  ],
+  "placers": [
+    "placer-kicad-tools-physics",
+    "placer-pyplacer",
+    "placer-fixed"
+  ],
   "probeRouter": "router-freerouting",
   "mode": "ensemble",
-  "seeds": [0],
+  "seeds": [
+    0
+  ],
   "budgetSeconds": 300
 }

@@ -1,6 +1,6 @@
 # Golden microboards
 
-Ten small KiCad 10 boards, each carrying exactly one seeded layout fault, with an `expected.json` naming the diagnostic the layout harness must raise for it and what KiCad's own DRC reports (RFC 11 §13.2 and §14 milestone B0; ADR 0003). They are the layout half of the broken-fixture zoo asked for in #14.
+Fifteen small KiCad 10 boards, each carrying exactly one seeded layout fault, with an `expected.json` naming the diagnostic the layout harness must raise for it and what KiCad's own DRC reports (RFC 11 §13.2 and §14 milestone B0; ADR 0003). They are the layout half of the broken-fixture zoo asked for in #14.
 
 | Case | Seeded fault | Harness diagnostic | KiCad DRC sees |
 | --- | --- | --- | --- |
@@ -14,8 +14,13 @@ Ten small KiCad 10 boards, each carrying exactly one seeded layout fault, with a
 | `clearance` | two tracks 0.05 mm apart under a 0.2 mm rule | `drc.clearance` | `clearance` |
 | `completion` | legal placement, nothing routed | `conn.unrouted` × 14 | 14 unconnected items |
 | `congestion` | 36-pin header fanning 16 nets into a QFN through one channel | `quality.congestion` (metric) | 21 unconnected items |
+| `decoupling-qfn` | C1 decouples a QFN pin but sits 12 mm away (`intent.yaml`) | `intent.relative.attached` | nothing |
+| `ldo-caps` | the LDO's output capacitor sits 15 mm from the regulator (`intent.yaml`) | `intent.relative.attached` | nothing |
+| `crystal` | one load capacitor breaks the clock block's spread budget (`intent.yaml`) | `intent.functional.group.spread` (soft) | nothing |
+| `separation` | analog and digital blocks 3 mm apart against a 10 mm minimum (`intent.yaml`) | `intent.functional.separation` | nothing |
+| `power-width` | a 2 A net routed at 0.25 mm against a 0.8 mm requirement (`intent.yaml`) | `intent.routing.width` | nothing |
 
-Four of the ten are invisible to DRC. That is the point of the set: a harness that only wraps KiCad DRC cannot pass B0.
+Nine of the fifteen are invisible to DRC. That is the point of the set: a harness that only wraps KiCad DRC cannot pass B0.
 
 `expected.json` fields: `status` (the terminal status the run must end in), `diagnostics` (codes and entity references the harness must emit), `drc.errorTypes` (KiCad error types that must appear), `drc.consequential` (types that may appear because they follow from the fault), `drc.unconnected` (KiCad's unconnected-item count), `metricsWithin` (metric ranges, from Phase 2).
 

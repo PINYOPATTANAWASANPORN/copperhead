@@ -89,6 +89,7 @@ export const CODES: Record<string, CodeInfo> = {
   'intent.functional.group.region': { category: 'intent', severity: 'warning', gate: 'none', summary: 'a block member is outside its signal-flow region' },
   'intent.functional.separation': { category: 'intent', severity: 'error', gate: 'placement', summary: 'two blocks are closer than their minimum separation' },
   'intent.manufacturing.keepout': { category: 'intent', severity: 'error', gate: 'placement', summary: 'a part lies in a keepout' },
+  'intent.routing.width': { category: 'intent', severity: 'error', gate: 'routing', summary: 'a net is routed narrower than its required width' },
   'intent.*': { category: 'intent', severity: 'error', gate: 'placement', summary: 'a declared layout constraint is violated' },
   'quality.*': { category: 'quality', severity: 'info', gate: 'none', summary: 'a scored quality signal' },
 };

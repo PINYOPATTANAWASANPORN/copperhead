@@ -33,10 +33,10 @@ async function haveKicad(): Promise<boolean> {
 const cases = (await readdir(GOLDEN, { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name).sort();
 
 describe('golden microboards', () => {
-  it('has the ten cases the RFC names', () => {
+  it('has the ten cases the RFC names plus the §13.3 intent categories', () => {
     expect(cases).toEqual([
-      'clearance', 'completion', 'congestion', 'decoupling-far', 'fixed-connector',
-      'keepout', 'open', 'outside-board', 'overlap', 'short',
+      'clearance', 'completion', 'congestion', 'crystal', 'decoupling-far', 'decoupling-qfn', 'fixed-connector',
+      'keepout', 'ldo-caps', 'open', 'outside-board', 'overlap', 'power-width', 'separation', 'short',
     ]);
   });
 

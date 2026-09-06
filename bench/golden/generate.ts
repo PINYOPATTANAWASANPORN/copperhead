@@ -49,6 +49,7 @@ const FP = {
   hole: 'MountingHole:MountingHole_3.2mm_M3',
   qfn16: 'Package_DFN_QFN:QFN-16-1EP_3x3mm_P0.5mm_EP1.7x1.7mm',
   xtal: 'Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm',
+  sot223: 'Package_TO_SOT_SMD:SOT-223-3_TabPin2',
 };
 
 const atom = (n: SexpNode[] | undefined, i: number) => (typeof n?.[i] === 'string' ? (n![i] as string) : undefined);
@@ -236,7 +237,7 @@ const CASES: Case[] = [
     parts: [{ ref: 'U1', fp: FP.soic8, value: 'MCU', x: 110, y: 112 }, { ref: 'C1', fp: FP.c0603, value: '100n', x: 118, y: 110.095 }],
     nets: { VCC: ['U1.8', 'C1.2'], GND: ['U1.4', 'C1.1'] },
     segments: [{ net: 'VCC', layer: 'F.Cu', from: P('U1.8'), to: [117.175, 110.095] }],
-    expected: { status: 'REFUSE', diagnostics: [{ code: 'conn.short', entityReferences: ['VCC', 'GND'] }], drc: { errorTypes: ['shorting_items'], consequential: ['solder_mask_bridge'], unconnected: 2 } },
+    expected: { status: 'PARTIAL', diagnostics: [{ code: 'conn.short', entityReferences: ['VCC', 'GND'] }], drc: { errorTypes: ['shorting_items'], consequential: ['solder_mask_bridge'], unconnected: 2 } },
   },
   {
     name: 'clearance',
@@ -250,7 +251,7 @@ const CASES: Case[] = [
       { net: 'SIG2', layer: 'F.Cu', from: P('U1.7'), to: [118, 111.365] },
       { net: 'SIG2', layer: 'F.Cu', from: [118, 111.365], to: [124, 110.395] },
     ],
-    expected: { status: 'REFUSE', diagnostics: [{ code: 'drc.clearance', entityReferences: ['SIG1', 'SIG2'] }], drc: { errorTypes: ['clearance'], unconnected: 4 } },
+    expected: { status: 'PARTIAL', diagnostics: [{ code: 'drc.clearance', entityReferences: ['SIG1', 'SIG2'] }], drc: { errorTypes: ['clearance'], unconnected: 4 } },
   },
   {
     name: 'completion',
@@ -298,6 +299,58 @@ const CASES: Case[] = [
     },
   },
 ];
+
+// RFC 11 §13.3 categories beyond the first ten (Phase 4): decoupling around a QFN, LDO capacitor
+// attachment, crystal load capacitors, analog/digital separation, power-width. Each is one seeded
+// intent fault the intent checker must raise; KiCad DRC sees none of them.
+CASES.push(
+  {
+    name: 'decoupling-qfn',
+    fault: 'C1 decouples the QFN pin 16 but sits 12 mm away; C2 is placed right',
+    outline: [36, 26],
+    parts: [{ ref: 'U1', fp: FP.qfn16, value: 'RF', x: 112, y: 112 }, { ref: 'C1', fp: FP.c0603, value: '100n', x: 126, y: 120 }, { ref: 'C2', fp: FP.c0603, value: '100n', x: 112.75, y: 115.5 }],
+    nets: { VDD: ['U1.16', 'C1.1'], VDDA: ['U1.8', 'C2.1'], GND: ['U1.17', 'C1.2', 'C2.2'] },
+    intent: 'placement:\n  attachments:\n    - component: C1\n      target: { component: U1, pins: ["16"] }\n      max_distance_mm: 1.5\n      priority: critical\n    - component: C2\n      target: { component: U1, pins: ["8"] }\n      max_distance_mm: 2.5\n      priority: critical\n',
+    expected: { status: 'REFUSE', diagnostics: [{ code: 'intent.relative.attached', entityReferences: ['C1', 'U1'] }], drc: { errorTypes: [], unconnected: 4 } },
+  },
+  {
+    name: 'ldo-caps',
+    fault: 'the LDO output capacitor C2 sits 15 mm from the regulator; the input capacitor C1 is attached',
+    outline: [40, 26],
+    parts: [{ ref: 'U1', fp: FP.sot223, value: 'AMS1117-3.3', x: 112, y: 112 }, { ref: 'C1', fp: FP.c0603, value: '10u', x: 105.9, y: 114.3 }, { ref: 'C2', fp: FP.c0603, value: '10u', x: 130, y: 118 }],
+    nets: { VIN: ['U1.3', 'C1.1'], VOUT: ['U1.2', 'U1.4', 'C2.1'], GND: ['U1.1', 'C1.2', 'C2.2'] },
+    intent: 'placement:\n  attachments:\n    - component: C1\n      target: { component: U1, pins: ["3"] }\n      max_distance_mm: 3\n      priority: critical\n    - component: C2\n      target: { component: U1, pins: ["2"] }\n      max_distance_mm: 3\n      priority: critical\n',
+    expected: { status: 'REFUSE', diagnostics: [{ code: 'intent.relative.attached', entityReferences: ['C2', 'U1'] }], drc: { errorTypes: [], unconnected: 5 } },
+  },
+  {
+    name: 'crystal',
+    fault: 'the crystal block (Y1, C1, C2) has a 4 mm spread budget; C2 sits 11 mm from the MCU',
+    outline: [36, 26],
+    parts: [{ ref: 'U1', fp: FP.soic8, value: 'MCU', x: 110, y: 112 }, { ref: 'Y1', fp: FP.xtal, value: '16M', x: 116, y: 112 }, { ref: 'C1', fp: FP.c0603, value: '22p', x: 116, y: 108 }, { ref: 'C2', fp: FP.c0603, value: '22p', x: 121, y: 118 }],
+    nets: { XI: ['U1.1', 'Y1.1', 'C1.1'], XO: ['U1.2', 'Y1.3', 'C2.1'], GND: ['U1.4', 'Y1.2', 'Y1.4', 'C1.2', 'C2.2'] },
+    intent: 'placement:\n  groups:\n    - id: clock\n      components: [U1, Y1, C1, C2]\n      max_spread_mm: 8\n',
+    expected: { status: 'PARTIAL', diagnostics: [{ code: 'intent.functional.group.spread', entityReferences: ['C2'] }], drc: { errorTypes: [], unconnected: 8 } },
+  },
+  {
+    name: 'separation',
+    fault: 'the analog front end (U1, R1) and the digital block (U2, R2) must stay 10 mm apart; they are 3 mm apart',
+    outline: [40, 26],
+    parts: [{ ref: 'U1', fp: FP.soic8, value: 'OPAMP', x: 110, y: 112 }, { ref: 'R1', fp: FP.r0603, value: '10k', x: 110, y: 118 }, { ref: 'U2', fp: FP.soic8, value: 'MCU', x: 118.5, y: 112 }, { ref: 'R2', fp: FP.r0603, value: '10k', x: 118.5, y: 118 }],
+    nets: { AIN: ['U1.1', 'R1.1'], SIG: ['U1.6', 'U2.3'], GND: ['U1.4', 'U2.4', 'R1.2', 'R2.2'], IO: ['U2.5', 'R2.1'] },
+    intent: 'placement:\n  groups:\n    - id: analog\n      components: [U1, R1]\n    - id: digital\n      components: [U2, R2]\n  separation:\n    - groups: [analog, digital]\n      minimum_mm: 10\n',
+    expected: { status: 'REFUSE', diagnostics: [{ code: 'intent.functional.separation', entityReferences: ['U1', 'U2'] }], drc: { errorTypes: [], unconnected: 6 } },
+  },
+  {
+    name: 'power-width',
+    fault: 'VIN carries 2 A and is routed at 0.25 mm; the intent asks for 0.8 mm',
+    outline: [36, 26],
+    parts: [{ ref: 'J1', fp: FP.hdr4, value: 'PWR', x: 104, y: 108 }, { ref: 'U1', fp: FP.sot223, value: 'LDO', x: 122, y: 112 }],
+    nets: { VIN: ['J1.1', 'U1.3'], GND: ['J1.2', 'U1.1'] },
+    segments: [{ net: 'VIN', layer: 'F.Cu', from: [104, 108], to: [116, 108], width: 0.25 }, { net: 'VIN', layer: 'F.Cu', from: [116, 108], to: [116, 112], width: 0.25 }],
+    intent: 'routing:\n  widths:\n    - net: VIN\n      min_width_mm: 0.8\n  currents:\n    - net: VIN\n      amps: 2\n',
+    expected: { status: 'PARTIAL', diagnostics: [{ code: 'intent.routing.width', entityReferences: ['VIN'] }], drc: { errorTypes: [], unconnected: 2 } },
+  },
+);
 
 async function main(): Promise<void> {
   const dirs = await footprintSearchDirs();

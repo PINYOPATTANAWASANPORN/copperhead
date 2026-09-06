@@ -13,6 +13,13 @@ import path from 'node:path';
 import { execa } from 'execa';
 import { routeBoard, defaultRegistry } from '../pcb/engines/route.js';
 import { placeBoard, defaultPlacerRegistry } from '../pcb/engines/place.js';
+import { importBoard } from '../pcb/ir/kicad/import.js';
+import { verifyDesign } from '../pcb/verify/index.js';
+import { loadConstraints } from '../pcb/intent/load.js';
+import { refillZones, extractFills } from '../pcb/ir/kicad/zones.js';
+import { cp as copyDir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { mkdtemp, rm } from 'node:fs/promises';
 import type { ExecutionMode } from '../pcb/engines/runner.js';
 import type { EnginePolicy } from '../pcb/engines/registry.js';
 import { kicadCliVersion } from '../kicad/cli.js';
@@ -32,7 +39,7 @@ export interface SuiteFile {
   /** pcbench: board records from bench/corpora. */
   boards?: { id: string; file?: string; license?: string; footprints?: number }[];
   /** routing (default) or placement: which harness path the suite drives. */
-  kind?: 'routing' | 'placement';
+  kind?: 'routing' | 'placement' | 'verify';
   routers?: string[];
   placers?: string[];
   /** placement: router used by the routability probe (default router-freerouting). */
@@ -46,7 +53,7 @@ export interface BenchOptions {
   repoRoot: string;
   suitePath: string;
   outDir?: string;
-  kind?: 'routing' | 'placement';
+  kind?: 'routing' | 'placement' | 'verify';
   routers?: string[];
   placers?: string[];
   probeRouter?: string;
@@ -89,6 +96,8 @@ export interface BoardRecord {
   selectionRegret: number;
   /** 1 when an ineligible candidate was selected while an eligible one existed. */
   invalidOverValid: number;
+  /** verify kind: the harness's own verdict on the board as given. */
+  verify?: { gates: { preflight: boolean; placement: boolean; routing: boolean }; errors: string[]; intentHardApplicable: number; intentHardViolations: number; expectedStatus?: string; matched?: boolean };
   /** golden cases: the status `pcb verify` owes the seeded fault (informational; routing rips the copper up unless preserved). */
   expectedVerifyStatus?: string;
   runDir: string;
@@ -96,7 +105,7 @@ export interface BoardRecord {
 
 export interface BenchReport {
   benchmarkVersion: string;
-  kind: 'routing' | 'placement';
+  kind: 'routing' | 'placement' | 'verify';
   suite: string;
   corpus: string;
   corpusCommit?: string;
@@ -124,6 +133,8 @@ export interface BenchReport {
     seedVariance: Record<string, number>;
     /** placement: over every gate-passing candidate with a probe, Pearson r between HPWL and probe completion (the B2 question). */
     hpwlVsRoutability?: { candidates: number; r: number | null; meanCompletion: number };
+    /** verify (tracks E and F): hard intent constraints passed over applicable, and expected-status agreement. */
+    intent?: { hardApplicable: number; hardPassed: number; passRate: number; expectedMatched: number; expectedTotal: number };
   };
 }
 
@@ -168,6 +179,7 @@ export async function runSuite(opts: BenchOptions): Promise<{ report: BenchRepor
   await mkdir(dir, { recursive: true });
   const kind = opts.kind ?? suite.kind ?? 'routing';
   const registry = kind === 'placement' ? defaultPlacerRegistry(opts.repoRoot) : defaultRegistry(opts.repoRoot);
+  if (kind === 'verify') return runVerifySuite(opts, suite, kind);
   const routers = opts.routers ?? suite.routers ?? defaultRegistry(opts.repoRoot).list('router').map((e) => e.manifest.id);
   const placers = opts.placers ?? suite.placers ?? registry.list('placer').map((e) => e.manifest.id);
   const engineIds = kind === 'placement' ? placers : routers;
@@ -301,4 +313,87 @@ function pearson(pts: [number, number][]): number | null {
     syy += (y - my) ** 2;
   }
   return sxx > 0 && syy > 0 ? sxy / Math.sqrt(sxx * syy) : null;
+}
+
+/** Tracks E (intent) and F (refusal): verify each board as given, no engine; compare against expected.json where present. */
+async function runVerifySuite(opts: BenchOptions, suite: SuiteFile, kind: 'verify'): Promise<{ report: BenchReport; dir: string }> {
+  const log = opts.log ?? (() => {});
+  const startedAt = new Date().toISOString();
+  const dir = opts.outDir ?? path.join(opts.repoRoot, 'bench', 'var', 'runs', `${startedAt.replace(/[:.]/g, '-')}-${suite.suite}`);
+  await mkdir(dir, { recursive: true });
+  const track = opts.track ?? suite.tracks[0] ?? 'e';
+  const entries = suite.corpus === 'golden' ? (suite.cases ?? []).map((id) => ({ id, file: undefined as string | undefined })) : (suite.boards ?? []).map((b) => ({ id: b.id, file: b.file }));
+  const wanted = opts.boards ? entries.filter((e) => opts.boards!.includes(e.id)) : entries;
+  const pkg = JSON.parse(await readFile(path.join(opts.repoRoot, 'package.json'), 'utf8')) as { version: string };
+  let kicad = 'unknown';
+  if (!opts.noKicad) {
+    try {
+      kicad = await kicadCliVersion();
+    } catch {
+      kicad = 'unknown';
+    }
+  }
+  const boards: BoardRecord[] = [];
+  let hardApplicable = 0, hardPassed = 0, expectedTotal = 0, expectedMatched = 0;
+  for (const entry of wanted) {
+    const t0 = Date.now();
+    try {
+      const boardPath = await resolveBoard(opts, suite, entry.id, entry.file, dir);
+      let text = await readFile(boardPath, 'utf8');
+      const proPath = boardPath.replace(/\.kicad_pcb$/, '.kicad_pro');
+      const projectText = existsSync(proPath) ? await readFile(proPath, 'utf8') : undefined;
+      let drc;
+      if (!opts.noKicad) {
+        const tmp = await mkdtemp(path.join(tmpdir(), 'copperbench-verify-'));
+        try {
+          await copyDir(path.dirname(boardPath), tmp, { recursive: true });
+          const copy = path.join(tmp, path.basename(boardPath));
+          drc = await refillZones(copy);
+          text = await readFile(copy, 'utf8');
+        } finally {
+          await rm(tmp, { recursive: true, force: true });
+        }
+      }
+      const { design } = importBoard({ boardText: text, boardPath, ...(projectText ? { projectText } : {}), kicadVersion: kicad });
+      const { registry, holds } = await loadConstraints(design, boardPath);
+      const v = verifyDesign({ design, fills: extractFills(text), ...(drc ? { drc } : {}), constraints: registry });
+      const errors = v.diagnostics.filter((d) => d.severity === 'error');
+      const status = holds.length ? 'HOLD' : !v.gates.preflight.passed || !v.gates.placement.passed ? 'REFUSE' : errors.length ? 'PARTIAL' : (v.metrics.unrouted_count ?? 0) > 0 ? 'PARTIAL' : 'PASS';
+      const applicable = Object.values(registry).filter((c) => c.class && c.severity === 'hard' && !['routing', 'stackup'].includes(c.class) || (c.class === 'routing' && String(c.parameters?.min_width_nm ?? '') !== '')).length;
+      const violations = v.metrics.intent_hard_violations ?? 0;
+      hardApplicable += applicable;
+      hardPassed += Math.max(0, applicable - violations);
+      const rec: BoardRecord = { id: entry.id, board: path.relative(opts.repoRoot, boardPath), seed: 0, status, summary: `${errors.length} error(s), gates ${v.gates.preflight.passed ? 'preflight ok' : 'PREFLIGHT'} / ${v.gates.placement.passed ? 'placement ok' : 'PLACEMENT'} / ${v.gates.routing.passed ? 'routing ok' : 'ROUTING'}`, selected: null, wallSeconds: (Date.now() - t0) / 1000, engineSeconds: 0, overheadSeconds: (Date.now() - t0) / 1000, candidates: [], ineligible: [], errors: holds, selectionRegret: 0, invalidOverValid: 0, runDir: '', verify: { gates: { preflight: v.gates.preflight.passed, placement: v.gates.placement.passed, routing: v.gates.routing.passed }, errors: [...new Set(errors.map((d) => d.code))], intentHardApplicable: applicable, intentHardViolations: violations } };
+      const expectedPath = path.join(path.dirname(boardPath), 'expected.json');
+      if (suite.corpus === 'golden' && existsSync(expectedPath)) {
+        const expected = JSON.parse(await readFile(expectedPath, 'utf8')) as { status?: string; diagnostics?: { code: string }[] };
+        if (expected.status) {
+          const codes = new Set(v.diagnostics.map((d) => d.code));
+          const matched = expected.status === status && (expected.diagnostics ?? []).every((d) => codes.has(d.code));
+          rec.verify!.expectedStatus = expected.status;
+          rec.verify!.matched = matched;
+          rec.expectedVerifyStatus = expected.status;
+          expectedTotal++;
+          if (matched) expectedMatched++;
+        }
+      }
+      boards.push(rec);
+      log(`${entry.id}: ${status}${rec.verify!.expectedStatus ? ` (expected ${rec.verify!.expectedStatus}${rec.verify!.matched ? ', matched' : ', MISMATCH'})` : ''}; ${applicable} hard intent constraint(s), ${violations} violated`);
+    } catch (err) {
+      log(`${entry.id}: ENGINE_ERROR: ${(err as Error).message}`);
+      boards.push({ id: entry.id, board: '', seed: 0, status: 'ENGINE_ERROR', summary: (err as Error).message, selected: null, wallSeconds: (Date.now() - t0) / 1000, engineSeconds: 0, overheadSeconds: 0, candidates: [], ineligible: [], errors: [(err as Error).message], selectionRegret: 0, invalidOverValid: 0, runDir: '' });
+    }
+  }
+  const byStatus: Record<string, number> = {};
+  for (const b of boards) byStatus[b.status] = (byStatus[b.status] ?? 0) + 1;
+  const report: BenchReport = {
+    benchmarkVersion: BENCHMARK_VERSION, kind, suite: suite.suite, corpus: suite.corpus, ...(suite.commit ? { corpusCommit: suite.commit } : {}), track, startedAt, finishedAt: new Date().toISOString(),
+    harness: { copperhead: pkg.version, commit: await gitCommit(opts.repoRoot), kicad, node: process.version, platform: `${os.platform()} ${os.arch()}` },
+    engines: [], scoring: 'none', mode: 'verify', seeds: [0], budgetSeconds: 0,
+    reproduce: `copperbench run ${path.relative(opts.repoRoot, opts.suitePath)} --kind verify --track ${track}${opts.boards ? ` --boards ${opts.boards.join(',')}` : ''}`,
+    boards,
+    summary: { boards: boards.length, runs: boards.length, byStatus, cleanPassRate: boards.length ? boards.filter((b) => b.status === 'PASS').length / boards.length : 0, meanCompletion: 0, selectionRegretTotal: 0, invalidOverValidCount: 0, meanOverheadSeconds: boards.length ? boards.reduce((a, b) => a + b.overheadSeconds, 0) / boards.length : 0, meanEngineSeconds: 0, seedVariance: {}, intent: { hardApplicable, hardPassed, passRate: hardApplicable ? hardPassed / hardApplicable : 1, expectedMatched, expectedTotal } },
+  };
+  await writeReport(dir, report);
+  return { report, dir };
 }

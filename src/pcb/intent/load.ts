@@ -10,6 +10,8 @@ import type { PcbDesign } from '../ir/types.js';
 import type { Constraint } from '../../memory/constraints.js';
 import { parseIntent, intentToRegistry } from './language.js';
 import { ecadConstraints, mergeEcad } from './ecad.js';
+import { widthConstraint } from './physics.js';
+import { loadProfile } from '../verify/profiles/index.js';
 
 export interface LoadedConstraints {
   registry: Record<string, Constraint>;
@@ -38,6 +40,16 @@ export async function loadConstraints(design: PcbDesign, boardPath: string, opts
     for (const u of parsed.unknown) holds.push(`${path.basename(p)}: unknown key ${u}`);
     for (const e of parsed.errors) holds.push(`${path.basename(p)}: ${e}`);
     break;
+  }
+  // current requirements become width constraints through the physics compiler (hard only when copper weight is known)
+  const profile = loadProfile(design.board.fabricationProfile);
+  const copper = profile.copperWeightOz;
+  for (const [k, c] of Object.entries(registry)) {
+    if (!k.startsWith('layout.electrical-layout.current.')) continue;
+    const net = String(c.parameters?.net ?? ''), amps = Number(c.parameters?.amps ?? 0);
+    if (!net || !amps) continue;
+    const w = widthConstraint({ net, amps, ...(copper ? { copperOzFt2: copper, riseC: Number(c.parameters?.rise_c ?? 10), layer: 'external' as const } : {}) }, `physics:${k}`);
+    if (!registry[w.key]) registry[w.key] = w.constraint;
   }
   const merged = mergeEcad(registry, ecadConstraints(design));
   for (const c of merged.contradictions) holds.push(`${c.key}: the board's own rules contradict the ${c.theirs} entry`);

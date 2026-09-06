@@ -98,6 +98,16 @@ export function checkIntent(design: PcbDesign, registry: Record<string, Constrai
       }
       const min = num(p.min_nm, 0);
       if (pair && best < min) d.push(make(INTENT_CHECKER, 'intent.functional.separation', { severity: sev(c), entityIds: pair.map((x) => x.id), entityReferences: pair.map((x) => x.reference), measured: { value: Math.round(best), unit: 'nm' }, allowed: { value: min, unit: 'nm', relation: '>=' }, message: `${ga} and ${gb} must stay ${(min / 1e6).toFixed(1)} mm apart; ${pair[0].reference} and ${pair[1].reference} are ${(best / 1e6).toFixed(1)} mm apart`, suggestedActions: ['move-group'] }));
+    } else if (c.class === 'routing' && key.startsWith('layout.routing.width.')) {
+      const netName = String(p.net ?? c.scope?.nets?.[0] ?? '');
+      const net = design.nets.find((n) => n.name === netName);
+      const min = num(p.min_width_nm, 0);
+      if (!net || !min) continue;
+      const thin = design.routing.segments.filter((s) => s.netId === net.id && s.width < min);
+      if (thin.length) {
+        const worst = Math.min(...thin.map((s) => s.width));
+        d.push(make(INTENT_CHECKER, 'intent.routing.width', { severity: sev(c), entityIds: thin.map((s) => s.id), entityReferences: [netName], measured: { value: worst, unit: 'nm' }, allowed: { value: min, unit: 'nm', relation: '>=' }, message: `${netName}: ${thin.length} segment(s) narrower than ${(min / 1e6).toFixed(2)} mm (narrowest ${(worst / 1e6).toFixed(2)} mm)`, suggestedActions: ['rip-up-nets'] }));
+      }
     } else if (c.class === 'manufacturing' && key.startsWith('layout.manufacturing.keepout.')) {
       const prohibit = strs(p.prohibit);
       const forbidsParts = !prohibit.length || prohibit.some((x) => ['components', 'footprints', 'pads'].includes(x));

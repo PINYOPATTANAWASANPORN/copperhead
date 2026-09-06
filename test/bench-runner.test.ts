@@ -36,7 +36,7 @@ describe('suites', () => {
   it('both committed suites load and name their corpus and tracks', async () => {
     const micro = await loadSuite(path.join(ROOT, 'bench/suites/microboards.json'));
     expect(micro.corpus).toBe('golden');
-    expect(micro.cases!.length).toBe(10);
+    expect(micro.cases!.length).toBe(15);
     for (const c of micro.cases!) expect(existsSync(path.join(ROOT, 'bench/golden', c, 'board.kicad_pcb')), c).toBe(true);
     const qual = await loadSuite(path.join(ROOT, 'bench/suites/pcbench-qual.json'));
     expect(qual.corpus).toBe('pcbench');
@@ -78,7 +78,7 @@ describe('runSuite (B0: byte-stable harness)', () => {
       const two = await runSuite({ ...base, outDir: path.join(dir, 'two') });
       for (const f of ['report.json', 'report.html', 'summary.csv']) expect(existsSync(path.join(one.dir, f)), f).toBe(true);
       expect(one.report.boards.map((b) => [b.id, b.status])).toEqual([['completion', 'PASS'], ['short', 'PARTIAL']]);
-      expect(one.report.boards[1]!.expectedVerifyStatus).toBe('REFUSE');
+      expect(one.report.boards[1]!.expectedVerifyStatus).toBe('PARTIAL');
       expect(one.report.engines[0]).toMatchObject({ id: 'router-reference', adopted: 'harness-only' });
       expect(one.report.summary.selectionRegretTotal).toBe(0);
       expect(one.report.summary.invalidOverValidCount).toBe(0);
@@ -121,7 +121,7 @@ describe('placement suites', () => {
     const pcb = await loadSuite(path.join(ROOT, 'bench/suites/placement-pcbench.json'));
     expect(micro.kind).toBe('placement');
     expect(pcb.kind).toBe('placement');
-    expect(micro.cases!.length + pcb.boards!.length).toBe(30);
+    expect(micro.cases!.length + pcb.boards!.length).toBe(35);
     expect(micro.placers).toContain('placer-fixed');
   });
   it('runs a placement suite through placeBoard with the probe and reports HPWL against routability', async () => {

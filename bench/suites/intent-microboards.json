@@ -1,0 +1,8 @@
+{
+  "suite": "intent-microboards",
+  "kind": "verify",
+  "corpus": "golden",
+  "tracks": ["e"],
+  "criteria": "golden microboards carrying layout intent (an intent.yaml beside the board, or a keepout rule area): the harness must raise the seeded intent code and no other error",
+  "cases": ["fixed-connector", "decoupling-far", "keepout", "decoupling-qfn", "ldo-caps", "crystal", "separation", "power-width"]
+}

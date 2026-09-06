@@ -6,7 +6,8 @@ import type { BenchReport, BoardRecord } from './runner.js';
 
 const ROUTING_METRICS = ['completion_rate', 'unrouted_count', 'drc_error_count', 'drc_critical_count', 'shorts', 'total_wirelength_nm', 'via_count', 'bend_count', 'pour_largest_share', 'runtime_s'];
 const PLACEMENT_METRICS = ['routability_completion', 'routability_drc_errors', 'hpwl_nm', 'congestion_overflow', 'courtyard_overlap_count', 'outside_board_count', 'unplaced_count', 'runtime_s'];
-const metricsFor = (r: BenchReport) => (r.kind === 'placement' ? PLACEMENT_METRICS : ROUTING_METRICS);
+const VERIFY_METRICS: string[] = [];
+const metricsFor = (r: BenchReport) => (r.kind === 'placement' ? PLACEMENT_METRICS : r.kind === 'verify' ? VERIFY_METRICS : ROUTING_METRICS);
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -35,7 +36,8 @@ function boardRow(b: BoardRecord, METRICS: string[]): string {
   const cands = b.candidates.map((c) => `<li class="${c.eligible ? 'ok' : 'bad'}">${esc(c.id)} · rank ${c.rank} · score ${c.score.toFixed(3)}${c.gateFailures.length ? ` · ${esc(c.gateFailures.join(', '))}` : ''}</li>`).join('');
   const inel = b.ineligible.map((i) => `<li class="muted">${esc(i.engineId)}: ${esc(i.reasons.join('; '))}</li>`).join('');
   const errs = b.errors.map((e) => `<li class="bad">${esc(e)}</li>`).join('');
-  return `<tr class="s-${esc(b.status)}"><td class="board">${esc(b.id)}<div class="muted">seed ${b.seed}${b.expectedVerifyStatus ? ` · verify owes ${esc(b.expectedVerifyStatus)}` : ''}</div></td><td class="status"><b>${esc(b.status)}</b><div class="muted">${esc(b.summary)}</div></td><td>${esc(b.selected ?? '—')}</td>${METRICS.map((k) => `<td class="num">${fmt(k, sel?.metrics[k])}</td>`).join('')}<td class="num">${b.wallSeconds.toFixed(1)} / ${b.engineSeconds.toFixed(1)} / ${b.overheadSeconds.toFixed(1)}</td><td><ul>${cands}${inel}${errs}</ul></td></tr>`;
+  const ver = b.verify ? `<li>gates: preflight ${b.verify.gates.preflight ? 'ok' : 'FAIL'}, placement ${b.verify.gates.placement ? 'ok' : 'FAIL'}, routing ${b.verify.gates.routing ? 'ok' : 'FAIL'}</li><li>${b.verify.intentHardViolations} of ${b.verify.intentHardApplicable} hard intent constraint(s) violated${b.verify.expectedStatus ? ` · expected ${esc(b.verify.expectedStatus)} ${b.verify.matched ? '✓' : '✗'}` : ''}</li>${b.verify.errors.length ? `<li class="bad">${esc(b.verify.errors.join(', '))}</li>` : ''}` : '';
+  return `<tr class="s-${esc(b.status)}"><td class="board">${esc(b.id)}<div class="muted">seed ${b.seed}${b.expectedVerifyStatus ? ` · verify owes ${esc(b.expectedVerifyStatus)}` : ''}</div></td><td class="status"><b>${esc(b.status)}</b><div class="muted">${esc(b.summary)}</div></td><td>${esc(b.selected ?? '—')}</td>${METRICS.map((k) => `<td class="num">${fmt(k, sel?.metrics[k])}</td>`).join('')}<td class="num">${b.wallSeconds.toFixed(1)} / ${b.engineSeconds.toFixed(1)} / ${b.overheadSeconds.toFixed(1)}</td><td><ul>${cands}${inel}${errs}${ver}</ul></td></tr>`;
 }
 
 export function renderHtml(r: BenchReport): string {
@@ -62,6 +64,7 @@ td.num{text-align:right;white-space:nowrap}td.status{min-width:220px}td.board{mi
 <div>invalid-over-valid selections</div><div>${s.invalidOverValidCount}</div>
 <div>mean engine / overhead seconds</div><div>${s.meanEngineSeconds.toFixed(1)} / ${s.meanOverheadSeconds.toFixed(1)}</div>
 ${Object.keys(s.seedVariance).length ? `<div>seed variance (wirelength CV)</div><div>${esc(Object.entries(s.seedVariance).map(([k, v]) => `${k} ${(v * 100).toFixed(1)}%`).join(' · '))}</div>` : ''}
+${s.intent ? `<div>hard intent constraints</div><div>${s.intent.hardPassed} of ${s.intent.hardApplicable} passed (${(s.intent.passRate * 100).toFixed(0)}%); expected status matched on ${s.intent.expectedMatched} of ${s.intent.expectedTotal} board(s)</div>` : ''}
 ${s.hpwlVsRoutability ? `<div>HPWL vs probe completion</div><div>Pearson r ${s.hpwlVsRoutability.r === null ? 'n/a' : s.hpwlVsRoutability.r.toFixed(2)} over ${s.hpwlVsRoutability.candidates} eligible candidate(s); mean completion ${(s.hpwlVsRoutability.meanCompletion * 100).toFixed(1)}%</div>` : ''}
 </div>
 <h2>Record (RFC 11 §13.4)</h2>
