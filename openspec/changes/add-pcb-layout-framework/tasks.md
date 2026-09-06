@@ -52,8 +52,8 @@
 - [x] 5.2b Reference layout retrieval, local sources (in `src/pcb/intent/references.ts`; the datasheet source and online search need a model and land in Phase 4): `ReferenceSource` interface, the `design` source over KiCad demos, PCBench, reference boards, and `pcb.referenceDesigns` (import, cut to block, role mapping), the `teardown` source over RFC 1 outputs, similarity scoring, the `.copperhead/layout-refs/` cache and index, the license policy with `HOLD` and approval, application as attachment and group constraints consumed by `placer-layout-reuse`
 - [x] 5.2a Deterministic block derivation from SUBSYSTEMS.md and the schematic intent's `group` field (anchor, signal-flow region, spread budget); `placer-anchors` and `placer-attach` rule stages; the default staged placement plan (§8.5) with stages 1 to 3 locked before the wrapped placer runs (blocks live in `src/pcb/intent/blocks.ts` so the engines may import them; `placer-attach` is a no-op stage until the intent checker's `relative.attached` lands in Phase 4)
 - [x] 5.3 Placement verification: hard placement gates (§10.4); routability probe through the fixed reference routing configuration; placement metrics (§11.1) — intent-derived metrics (`intent_compliance`, `critical_attachment_nm`, block spread) land with the intent checker in Phase 4
-- [ ] 5.4 30 placement cases in the bench; `copperhead pcb place` (done); HPWL-vs-completion evidence
-- [ ] 5.5 Exit: B2 report and the §8.3 decision recorded
+- [x] 5.4 30 placement cases in the bench; `copperhead pcb place`; HPWL-vs-completion evidence (B2: r = −0.65 across the 20 real boards, 0.03 on the microboards)
+- [x] 5.5 Exit: B2 report and the §8.3 decision recorded (`bench/reports/B2-2026-09-06.md`: no copperhead placer at B2; re-evaluate on intent at B3; a legalization repair action is the first Phase 5 catalogue entry)
 
 ## 6. Phase 4: intent
 
