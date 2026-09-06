@@ -276,6 +276,7 @@
     "RepairActionType": {
       "type": "string",
       "enum": [
+        "continue-routing",
         "change-net-priority",
         "select-router",
         "tune-router",
