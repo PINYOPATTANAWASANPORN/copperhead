@@ -171,9 +171,13 @@ copperhead export bom --supplier mouser --spares 15     # Mouser cart CSV, 15% s
 
 Nothing is a black box: decisions land in an append-only `docs/DECISIONS.md`, every run writes a human-readable summary next to its transcript, and a per-run `docs/CHANGELOG.md` narrates the design history.
 
+### Board layout
+
+copperhead lays boards out the same way it does everything else: it never places or routes a board itself. It wraps engines that do (Freerouting, kicad-tools, pyplacer) behind one fail-closed contract and owns everything around them: the board representation, the intent you declare in YAML (edges, attachments, groups, keepouts, widths), the rule stages that satisfy that intent before any engine runs, the verification every candidate must pass (its own geometry and connectivity checks, with KiCad DRC as one voter), the ranking, the repair loop, and the evidence written into `docs/LAYOUT.md`. `copperhead check` re-verifies a laid-out board from then on. The supported envelope is two layers, low-speed digital and DC power, under 50 parts; anything else ends in `HOLD` or `REFUSE` with the reason. Details: [the layout framework](docs/src/content/docs/concepts/layout-framework.md), [RFC 11](https://github.com/copperheadhq/copperhead-rfcs/blob/main/rfc/rfc11.md), and the milestone reports under [`bench/reports/`](bench/reports/).
+
 ## What it is not
 
-- **Not an autorouter.** Routing stays human or delegated; copperhead produces the DRC-clean draft that layout tools optimize from.
+- **Not an autorouter or a placer.** copperhead wraps existing engines and verifies their output; it does not build its own, and every result is measured against the human baseline before anything is claimed.
 - **Not a new editor.** No walled garden; your KiCad install remains the editor.
 - **Not the engineer of record.** A human signs off; the agent never claims a design is fab-ready beyond "ERC/DRC clean".
 
