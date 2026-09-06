@@ -552,7 +552,7 @@ Application: an approved block with the best score per anchor becomes `relative.
 
 ```ts
 export type RepairActionType =
-  | 'change-net-priority' | 'select-router' | 'tune-router' | 'rip-up-nets'
+  | 'continue-routing' | 'change-net-priority' | 'select-router' | 'tune-router' | 'rip-up-nets'
   | 'move-group' | 'resize-region' | 'rotate-component' | 'use-ranked-candidate'
   | 'request-user-action';
 ```

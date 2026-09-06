@@ -54,23 +54,29 @@ describe('repair catalog and planner', () => {
       const c = estimate({ type: e.type, reason: '', parameters: {} }, last);
       if (e.reruns === 'none') expect(c.engineSeconds).toBe(0);
       if (e.reruns === 'routing') expect(c.engineSeconds).toBe(20);
+      if (e.reruns === 'routing-owed') expect(c.engineSeconds).toBe(10);
       if (e.reruns === 'placement') expect(c.engineSeconds).toBe(24);
     }
   });
-  it('the deterministic policy: shorts rip up, owed connections tune then switch engine, hard intent with nothing left holds', () => {
+  it('the deterministic policy: shorts rip up, owed connections continue, tune, then switch engine, hard intent with nothing left holds', () => {
     const base = { ranking: null, budgetRemaining: { engineSeconds: 600, wallSeconds: 600 }, last: { routingSeconds: 10, placementSeconds: 2 }, history: [], routers: ['router-a', 'router-b'] };
     expect(deterministicPlan({ ...base, diagnostics: [diag('conn.short', ['GND', 'VCC'])] }).action).toMatchObject({ type: 'rip-up-nets', parameters: { nets: ['GND', 'VCC'] } });
     const owed = [diag('conn.unrouted', ['SIG1'], 'info')];
-    const first = deterministicPlan({ ...base, diagnostics: owed }).action!;
+    const zero = deterministicPlan({ ...base, diagnostics: owed }).action!;
+    expect(zero).toMatchObject({ type: 'continue-routing', parameters: { nets: ['SIG1'] } });
+    const first = deterministicPlan({ ...base, diagnostics: owed, history: [zero] }).action!;
     expect(first.type).toBe('tune-router');
-    const second = deterministicPlan({ ...base, diagnostics: owed, history: [first] }).action!;
+    const second = deterministicPlan({ ...base, diagnostics: owed, history: [zero, first] }).action!;
     expect(second).toMatchObject({ type: 'select-router', parameters: { routerId: 'router-a' } });
-    const third = deterministicPlan({ ...base, diagnostics: owed, history: [first, second] }).action!;
+    const third = deterministicPlan({ ...base, diagnostics: owed, history: [zero, first, second] }).action!;
     expect(third).toMatchObject({ type: 'select-router', parameters: { routerId: 'router-b' } });
-    const fourth = deterministicPlan({ ...base, diagnostics: owed, history: [first, second, third] }).action!;
+    const fourth = deterministicPlan({ ...base, diagnostics: owed, history: [zero, first, second, third] }).action!;
     expect(fourth.type).toBe('change-net-priority');
-    const none = deterministicPlan({ ...base, diagnostics: owed, history: [first, second, third, fourth] });
+    const none = deterministicPlan({ ...base, diagnostics: owed, history: [zero, first, second, third, fourth] });
     expect(none.action).toBeNull();
+    // a first pass that spent its whole share: continuing costs half of it and fits where a full rerun does not
+    expect(deterministicPlan({ ...base, diagnostics: owed, last: { routingSeconds: 300, placementSeconds: 2 }, budgetRemaining: { engineSeconds: 295, wallSeconds: 295 } }).action!.type).toBe('continue-routing');
+    expect(deterministicPlan({ ...base, diagnostics: owed, last: { routingSeconds: 300, placementSeconds: 2 }, budgetRemaining: { engineSeconds: 295, wallSeconds: 295 }, history: [zero] }).action).toBeNull();
     const hold = deterministicPlan({ ...base, diagnostics: [diag('intent.functional.separation', ['U1', 'U2'])] });
     expect(hold.action!.type).toBe('request-user-action');
     // nothing fits a tiny budget

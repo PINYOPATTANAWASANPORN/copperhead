@@ -223,6 +223,8 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
       case 'select-router': routerPick = [String(a.parameters.routerId)]; break;
       case 'change-net-priority': routeOrder = Array.isArray(a.parameters.nets) ? (a.parameters.nets as string[]) : null; break;
       case 'rip-up-nets': ripUp = Array.isArray(a.parameters.nets) ? (a.parameters.nets as string[]) : null; break;
+      // the owed nets are routed the way ripped-up ones are: scoped to those nets, every other piece of copper kept
+      case 'continue-routing': ripUp = Array.isArray(a.parameters.nets) ? (a.parameters.nets as string[]) : null; break;
       case 'use-ranked-candidate': {
         const r: RouteRun | PlaceRun | null = (routing as RouteRun | null) ?? (placement as PlaceRun | null);
         const next = r?.ranking.candidates.filter((c) => c.eligible)[Number(a.parameters.rank ?? 2) - 1];

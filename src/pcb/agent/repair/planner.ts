@@ -51,6 +51,8 @@ export function deterministicPlan(input: PlanInput): Plan {
   if (shorts.length) candidates.push({ type: 'rip-up-nets', reason: `copper joins ${[...new Set(shorts)].slice(0, 3).join(', ')}: rip those nets up and route them again`, parameters: { nets: [...new Set(shorts)] } });
   if (c['intent.routing.width']) candidates.push({ type: 'rip-up-nets', reason: 'a net is narrower than its required width: rip it up and route it at the class width', parameters: { nets: input.diagnostics.filter((d) => d.code === 'intent.routing.width').flatMap((d) => d.entityReferences) } });
   if (unrouted.length) {
+    // cheapest first: the copper so far stays, only what is owed is routed (a first pass the budget cut short is finished this way)
+    candidates.push({ type: 'continue-routing', reason: `${unrouted.length} connection(s) owed: keep the copper and route those nets`, parameters: { nets: [...new Set(unrouted)] } });
     candidates.push({ type: 'tune-router', reason: `${unrouted.length} connection(s) owed: more passes`, parameters: { passes: 40 } });
     if (routers[0]) candidates.push({ type: 'select-router', reason: `${unrouted.length} connection(s) owed: try ${routers[0]}`, parameters: { routerId: routers[0] } });
     candidates.push({ type: 'change-net-priority', reason: 'route the owed nets first', parameters: { nets: [...new Set(unrouted)], first: true } });

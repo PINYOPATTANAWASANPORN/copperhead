@@ -9,6 +9,7 @@ export type DiagnosticCategory = 'geometry' | 'connectivity' | 'drc' | 'intent' 
 export type Severity = 'error' | 'warning' | 'info';
 
 export type RepairActionType =
+  | 'continue-routing'
   | 'change-net-priority'
   | 'select-router'
   | 'tune-router'

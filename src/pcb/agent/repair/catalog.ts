@@ -17,13 +17,14 @@ export interface CatalogEntry {
   type: RepairActionType;
   summary: string;
   parameters: Record<string, string>;
-  /** Which stage the action re-runs. */
-  reruns: 'placement' | 'routing' | 'none';
+  /** Which stage the action re-runs; 'routing-owed' routes only the owed nets over the copper kept. */
+  reruns: 'placement' | 'routing' | 'routing-owed' | 'none';
   /** Diagnostic code prefixes the action is a plausible answer to. */
   answers: string[];
 }
 
 export const CATALOG: CatalogEntry[] = [
+  { type: 'continue-routing', summary: 'keep the copper routed so far and route only the owed nets with what is left of the budget', parameters: { nets: 'string[]' }, reruns: 'routing-owed', answers: ['conn.unrouted'] },
   { type: 'change-net-priority', summary: 'route the named nets first (or last) on the next routing pass', parameters: { nets: 'string[]', first: 'boolean' }, reruns: 'routing', answers: ['conn.unrouted', 'conn.open', 'intent.routing.width'] },
   { type: 'select-router', summary: 'route with a different registered engine', parameters: { routerId: 'string' }, reruns: 'routing', answers: ['conn.unrouted', 'drc.', 'conn.short'] },
   { type: 'tune-router', summary: 'change an engine knob (passes, strategy) and route again', parameters: { passes: 'number', strategy: 'string' }, reruns: 'routing', answers: ['conn.unrouted', 'drc.clearance', 'drc.track_width'] },
@@ -39,12 +40,13 @@ export function catalogEntry(type: RepairActionType): CatalogEntry | undefined {
   return CATALOG.find((c) => c.type === type);
 }
 
-/** Cost estimate: a routing rerun costs what the last routing run cost; a placement action costs a placement plus a routing rerun. */
+/** Cost estimate: a routing rerun costs what the last routing run cost, routing only the owed nets half of it; a placement action costs a placement plus a routing rerun. */
 export function estimate(action: RepairAction, last: { routingSeconds: number; placementSeconds: number }): { engineSeconds: number; wallSeconds: number } {
   const entry = catalogEntry(action.type);
   const routing = Math.max(5, last.routingSeconds);
   const placement = Math.max(2, last.placementSeconds);
   if (!entry || entry.reruns === 'none') return { engineSeconds: 0, wallSeconds: 1 };
   if (entry.reruns === 'routing') return { engineSeconds: routing, wallSeconds: routing * 1.2 + 5 };
+  if (entry.reruns === 'routing-owed') return { engineSeconds: routing / 2, wallSeconds: routing * 0.6 + 5 };
   return { engineSeconds: placement + routing, wallSeconds: (placement + routing) * 1.2 + 10 };
 }
