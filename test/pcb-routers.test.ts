@@ -156,6 +156,25 @@ describe('Freerouting failure kinds are named', () => {
   });
 });
 
+describe('kicad-tools failure kinds are named', () => {
+  it('a grid refusal on the router\'s own safety rule is "declined", not a crash', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-kct-'));
+    try {
+      const { pcb, design } = await completion();
+      const fake = path.join(dir, 'kct');
+      await writeFile(fake, '#!/bin/sh\necho "Error: Auto-grid selected 0.127mm > clearance/2 (0.1mm) because the memory budget cap (max_cells=500,000) forced a coarser grid." >&2\necho "The router\'s own safety rule rejects this grid; routing WILL produce clearance-violating vias/segments (DRC shorts)." >&2\nexit 1\n', 'utf8');
+      await chmod(fake, 0o755);
+      await expect(new KicadToolsRouter({ kct: fake }).route(job(design), ctxIn(dir, pcb))).rejects.toMatchObject({ kind: 'declined', message: expect.stringMatching(/kct declines the board.*0\.127mm/) });
+      const crash = path.join(dir, 'kct-crash');
+      await writeFile(crash, '#!/bin/sh\necho "Traceback (most recent call last): KeyError" >&2\nexit 1\n', 'utf8');
+      await chmod(crash, 0o755);
+      await expect(new KicadToolsRouter({ kct: crash }).route(job(design), ctxIn(dir, pcb))).rejects.toMatchObject({ kind: 'process-failed' });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('live engines (bench/corpora/tools.sh)', () => {
   const tools = path.join(ROOT, 'bench', 'var', 'tools');
   it('Freerouting routes the completion board (COPPERHEAD_TEST_FREEROUTING=1)', async () => {

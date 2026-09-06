@@ -128,6 +128,8 @@ describe('layoutBoard', () => {
       if (res.outcome.status === 'PARTIAL') {
         expect(res.cycles.length).toBeGreaterThanOrEqual(2);
         expect(res.cycles[1]!.action).not.toBeNull();
+        // owed connections are info-severity: the cycle record counts them on the selected candidate, not on the outcome that drops them (B4)
+        expect(res.cycles[0]!.owed).toBeGreaterThan(0);
       }
       expect(await readFile(path.join(dir, 'hardware', 'board.kicad_pcb'), 'utf8')).toBe(before);
       expect(existsSync(path.join(res.runDir, 'evidence.json'))).toBe(true);

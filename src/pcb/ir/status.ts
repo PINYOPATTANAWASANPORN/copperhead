@@ -42,6 +42,8 @@ export type EngineErrorKind =
   | 'runtime-too-old'
   | 'timeout'
   | 'process-failed'
+  /** The engine refused the board on its own safety rule (a grid it cannot route cleanly, a feature it does not do); no crash, and nothing to retry. */
+  | 'declined'
   | 'no-output'
   | 'malformed-output'
   | 'empty-result'

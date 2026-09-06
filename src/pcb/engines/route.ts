@@ -179,6 +179,10 @@ function outcomeOf(invocations: Invocation<RoutingResult>[], candidates: Materia
     if (finals.every((i) => ['no-binary', 'no-runtime', 'runtime-too-old'].includes(failedKind(i) ?? ''))) {
       return { status: 'UNSUPPORTED', summary: `no routing engine is installed (${finals.map((i) => `${i.engineId}: ${failedKind(i)}`).join(', ')})`, detail, diagnostics: [] };
     }
+    // every engine that ran declined the board on its own rule (or is missing): the board is out of reach here, not broken
+    if (finals.every((i) => ['declined', 'no-binary', 'no-runtime', 'runtime-too-old'].includes(failedKind(i) ?? ''))) {
+      return { status: 'UNSUPPORTED', summary: `every routing engine declined the board (${finals.map((i) => `${i.engineId}: ${i.error?.message ?? failedKind(i)}`).join('; ').slice(0, 400)})`, detail, diagnostics: [] };
+    }
     if (finals.every((i) => failedKind(i))) return { status: 'ENGINE_ERROR', summary: `no engine produced a candidate (${finals.map((i) => `${i.engineId}: ${failedKind(i)}`).join(', ')})`, detail, diagnostics: [] };
   }
   // candidates exist but none passed the gates

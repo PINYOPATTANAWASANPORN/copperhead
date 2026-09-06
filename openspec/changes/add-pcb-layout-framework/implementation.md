@@ -102,7 +102,7 @@ export interface Outcome {
 
 Mapping onto the agent loop: `PASS`/`PARTIAL` complete a stage; `HOLD` halts `create` with a resume hint and is the `finish({outcome: 'refuse'})` path in `do` with the HOLD detail as the summary; `REFUSE` is the existing refusal path; the remaining four are stage failures with the status as the failure class. Every CLI command exits 0 on `PASS`/`PARTIAL`, 2 on `HOLD`, 3 on `REFUSE`, 4 on `UNSUPPORTED`, 5 on `TIMEOUT`, 6 on `ENGINE_ERROR`, 7 on `INVALID_OUTPUT`; usage errors keep exit 1.
 
-Engine-side failures are typed: `class EngineError extends Error { kind: 'no-binary' | 'no-runtime' | 'runtime-too-old' | 'timeout' | 'process-failed' | 'no-output' | 'malformed-output' | 'empty-result' | 'schema-mismatch' }`, each carrying a `fix` string. `runtime-too-old` is detected from `UnsupportedClassVersionError` in Java output *(verified: Freerouting 2.4.1 needs a JRE 25, 2.2.4 a JRE 21)*.
+Engine-side failures are typed: `class EngineError extends Error { kind: 'no-binary' | 'no-runtime' | 'runtime-too-old' | 'timeout' | 'process-failed' | 'declined' | 'no-output' | 'malformed-output' | 'empty-result' | 'schema-mismatch' }`, each carrying a `fix` string. `declined` is an engine refusing the board on its own rule (kct's auto-grid coarser than clearance/2); a board every engine declines is UNSUPPORTED, not ENGINE_ERROR. `runtime-too-old` is detected from `UnsupportedClassVersionError` in Java output *(verified: Freerouting 2.4.1 needs a JRE 25, 2.2.4 a JRE 21)*.
 
 ## 3. The IR (P1)
 

@@ -37,7 +37,7 @@ import { bbox, bboxOf, type Polygon } from '../ir/geometry.js';
 import type { PlacedComponent, ComponentInstance, PcbDesign } from '../ir/types.js';
 import type { Block } from '../intent/blocks.js';
 import { loadConstraints } from '../intent/load.js';
-import { placeMechanical, legalizeKeepouts, legalizeSeparation } from './legalize.js';
+import { placeMechanical, legalizeKeepouts, legalizeSeparation, legalizeEdge } from './legalize.js';
 import type { Constraint } from '../../memory/constraints.js';
 
 export interface PlaceOptions {
@@ -226,15 +226,16 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
   for (const inv of res.invocations) {
     if (!inv.result || inv.snapshotViolation) continue;
     if (inv.result.status === 'failed' || inv.result.status === 'unsupported') continue;
-    // rule stages on the engine's result: out of keepouts, blocks apart; what moved is recorded on the candidate
+    // rule stages on the engine's result: out of keepouts, blocks apart, in from the edge; what moved is recorded on the candidate
     const movableNow = new Set(movableIds);
     const k = legalizeKeepouts(design, constraints, movableNow, inv.result.placements);
     const sep = legalizeSeparation(design, constraints, movableNow, k.placements);
-    const legalizeNotes = [...k.notes, ...sep.notes];
+    const edge = legalizeEdge(design, movableNow, sep.placements);
+    const legalizeNotes = [...k.notes, ...sep.notes, ...edge.notes];
     if (legalizeNotes.length) {
-      inv.result = { ...inv.result, placements: sep.placements };
+      inv.result = { ...inv.result, placements: edge.placements };
       for (const n of legalizeNotes) log(`${inv.engineId}: legalized: ${n}`);
-      await writeFile(path.join(inv.workDir, 'legalized.json'), JSON.stringify({ notes: legalizeNotes, placements: sep.placements }, null, 2), 'utf8');
+      await writeFile(path.join(inv.workDir, 'legalized.json'), JSON.stringify({ notes: legalizeNotes, placements: edge.placements }, null, 2), 'utf8');
     }
     const before = new Map(design.components.map((c) => [c.id, c]));
     const moved = inv.result.placements.some((p) => {

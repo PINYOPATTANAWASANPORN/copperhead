@@ -5,6 +5,7 @@
  *   - edge: a part with `mechanical.edge` goes against that edge; `mechanical.fixed` goes to its point
  *   - keepout: a part inside a keepout (rule area or mounting-hole ring) moves the least distance out
  *   - separation: two blocks closer than their minimum are pushed apart along the line of their centroids
+ *   - edge: a part a wrapped placer left inside the copper-to-edge clearance is moved the least distance back in
  * Every move is returned as a placement plus a note, so the run records what was legalized.
  */
 import type { PcbDesign, ComponentInstance, PlacedComponent } from '../ir/types.js';
@@ -192,6 +193,29 @@ export function legalizeSeparation(design: PcbDesign, registry: Record<string, C
       byId.set(x.id, { id: x.id, at: { x: Math.round(at.x + ux * s), y: Math.round(at.y + uy * s) }, rotation: p?.rotation ?? x.rotation, side: p?.side ?? x.attributes.side });
     }
     notes.push(`block ${mover === movB ? gb : ga} moved ${(s / 1e6).toFixed(1)} mm away from ${mover === movB ? ga : gb} (${(best / 1e6).toFixed(1)} mm apart against ${(min / 1e6).toFixed(1)} mm)${s < shift ? ', limited by the outline' : ''}`);
+  }
+  return { placements: [...byId.values()], notes };
+}
+
+/** Stage 2 rule: a movable part whose extent lies inside the copper-to-edge clearance is moved the least distance back inside the outline. Wrapped placers do not all know the rule (B4: pyplacer parked parts 0.2 mm from the edge and the board was refused). A part pushed in may then overlap a neighbour; the placement gate judges that. */
+export function legalizeEdge(design: PcbDesign, movable: Set<string>, placements: PlacedComponent[]): LegalizeResult {
+  const byId = new Map(placements.map((p) => [p.id, p]));
+  const notes: string[] = [];
+  const ob = bbox(design.board.outline);
+  const inset = design.board.rules.copperEdgeClearanceNm + 250_000;
+  for (const comp of design.components) {
+    if (!movable.has(comp.id) || comp.attributes.locked) continue;
+    const e0 = extent(comp);
+    if (!e0) continue;
+    const placed = byId.get(comp.id);
+    const at = placed ? { ...placed.at } : { ...comp.at };
+    const eb = bbox(placed ? translate(e0, placed.at.x - comp.at.x, placed.at.y - comp.at.y) : e0);
+    const fx = eb.minX < ob.minX + inset ? ob.minX + inset - eb.minX : eb.maxX > ob.maxX - inset ? ob.maxX - inset - eb.maxX : 0;
+    const fy = eb.minY < ob.minY + inset ? ob.minY + inset - eb.minY : eb.maxY > ob.maxY - inset ? ob.maxY - inset - eb.maxY : 0;
+    // the file's micrometre rounding must not read as a new shortfall on the next pass; the 250 µm margin covers it
+    if (Math.abs(fx) <= 10_000 && Math.abs(fy) <= 10_000) continue;
+    byId.set(comp.id, { id: comp.id, at: { x: Math.round(at.x + fx), y: Math.round(at.y + fy) }, rotation: placed?.rotation ?? comp.rotation, side: placed?.side ?? comp.attributes.side });
+    notes.push(`${comp.reference} moved ${(Math.hypot(fx, fy) / 1e6).toFixed(2)} mm in from the board edge`);
   }
   return { placements: [...byId.values()], notes };
 }

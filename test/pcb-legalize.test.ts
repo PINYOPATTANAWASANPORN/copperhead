@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execa } from 'execa';
-import { placeMechanical, legalizeKeepouts, legalizeSeparation, keepoutZones } from '../src/pcb/engines/legalize.js';
+import { placeMechanical, legalizeKeepouts, legalizeSeparation, legalizeEdge, keepoutZones } from '../src/pcb/engines/legalize.js';
 import { placeBoard } from '../src/pcb/engines/place.js';
 import { loadConstraints } from '../src/pcb/intent/load.js';
 import { checkIntent } from '../src/pcb/verify/checkers/intent.js';
@@ -75,6 +75,26 @@ describe('rule stages', () => {
     const ob = design.board.outline.outer;
     const maxX = Math.max(...ob.map((q) => q.x));
     for (const c of after.components) for (const pad of c.pads) expect(pad.at.x).toBeLessThan(maxX);
+  });
+  it('edge: a placer result inside the copper-to-edge clearance is moved the least distance back in (B4: pyplacer on overlap)', async () => {
+    const { text, projectText, design } = await load('overlap');
+    const movable = new Set(design.components.map((c) => c.id));
+    const c1 = design.components.find((c) => c.reference === 'C1')!;
+    const ob = design.board.outline.outer;
+    const minX = Math.min(...ob.map((q) => q.x));
+    // what pyplacer did on B4: C1 parked 1.2 mm from the west edge, its copper inside the 0.5 mm rule
+    const proposed = [{ id: c1.id, at: { x: minX + 1_235_000, y: c1.at.y }, rotation: c1.rotation, side: c1.attributes.side }];
+    const r = legalizeEdge(design, movable, proposed);
+    expect(r.notes).toHaveLength(1);
+    expect(r.notes[0]).toMatch(/^C1 moved .* mm in from the board edge$/);
+    const moved = r.placements.find((p) => p.id === c1.id)!;
+    expect(moved.at.x).toBeGreaterThan(proposed[0]!.at.x);
+    expect(moved.at.x - proposed[0]!.at.x).toBeLessThan(3_000_000);
+    const after = importBoard({ boardText: applyCandidate(text, design, { placement: r.placements }).text, boardPath: 'b', projectText, now: 't' }).design;
+    const inset = design.board.rules.copperEdgeClearanceNm;
+    for (const c of after.components) for (const pad of c.pads) expect(pad.at.x - inset).toBeGreaterThan(minX);
+    // a part already inside is untouched
+    expect(legalizeEdge(after, movable, []).placements).toEqual([]);
   });
 });
 

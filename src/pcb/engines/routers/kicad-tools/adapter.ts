@@ -69,6 +69,11 @@ export class KicadToolsRouter implements RouterPlugin {
     await writeFile(path.join(ctx.workDir, 'kct.log'), `${res.stdout ?? ''}\n${res.stderr ?? ''}`, 'utf8');
     if (res.timedOut) throw new EngineError('timeout', `kct route exceeded ${job.limits.wallSeconds}s`, 'raise the budget or use --strategy basic');
     if (res.failed && /ENOENT/.test(String((res as { code?: string }).code ?? ''))) throw new EngineError('no-binary', `kct not found at "${kct}"`, 'run bench/corpora/tools.sh kicad-tools or pip install kicad-tools==0.20.0');
+    const combined = `${res.stdout ?? ''}\n${res.stderr ?? ''}`;
+    // kct refuses a grid coarser than clearance/2 rather than route shorts (B4: dense boards at 0.2 mm); that is the engine's answer, not a crash
+    if (!existsSync(outPath) && /safety rule rejects this grid|Auto-grid selected [^\n]* > clearance\/2/.test(combined)) {
+      throw new EngineError('declined', `kct declines the board: its auto-grid cannot go finer than clearance/2 within its memory budget (${(combined.match(/Auto-grid selected ([^\n]*)/)?.[1] ?? '').trim().slice(0, 160)})`, 'loosen the clearance, add layers, or route with Freerouting');
+    }
     if (!existsSync(outPath)) throw new EngineError(res.exitCode === 0 ? 'no-output' : 'process-failed', `kct route ${res.exitCode === 0 ? 'wrote no output' : `exited ${res.exitCode}`}: ${(res.stderr ?? res.stdout ?? '').trim().split('\n').slice(-3).join(' | ').slice(0, 300)}`, 'see kct.log in the run directory');
     const text = await readFile(outPath, 'utf8');
     const routed = importBoard({ boardText: text, boardPath: outPath, now: design.source.importedAt }).design;

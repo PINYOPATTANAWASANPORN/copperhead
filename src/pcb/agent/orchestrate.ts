@@ -105,6 +105,12 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
   let routerPick: string[] | null = null;
   let ripUp: string[] | null = null;
   let bestOutcome: Outcome<Diagnostic> | null = null;
+  let bestRuns: { routing: RouteRun | null; placement: PlaceRun | null } = { routing: null, placement: null };
+  let rolledBack = false;
+  /** Owed connections are info-severity and the outcome drops them: count them on the selected candidate of the run that produced the outcome. */
+  const owedByOutcome = new WeakMap<Outcome<Diagnostic>, number>();
+  const selectedDiagsOf = (r: RouteRun | PlaceRun | null): Diagnostic[] | null => (r && r.ranking.selected ? r.candidates.find((c) => c.engineId === r.ranking.selected)?.verify.diagnostics ?? null : null);
+  const owedOf = (o: Outcome<Diagnostic>): number => owedByOutcome.get(o) ?? o.diagnostics.filter((d) => d.code === 'conn.unrouted').length;
   // whole seconds: the limits land in the snapshot, whose canonical form holds integers only
   const remaining = () => ({ engineSeconds: Math.max(0, Math.floor(budget - (Date.now() - t0) / 1000)), wallSeconds: Math.max(0, Math.floor(budget - (Date.now() - t0) / 1000)) });
 
@@ -162,11 +168,12 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
   // cycle 0: place, route
   let outcome: Outcome<Diagnostic> = { status: 'PARTIAL', summary: 'nothing ran', detail: [], diagnostics: [] };
   const RANK: Record<string, number> = { PASS: 0, PARTIAL: 1, HOLD: 2, UNSUPPORTED: 3, TIMEOUT: 4, ENGINE_ERROR: 5, INVALID_OUTPUT: 6, REFUSE: 7 };
-  const score = (o: Outcome<Diagnostic>) => [RANK[o.status] ?? 9, o.diagnostics.filter((d) => d.severity === 'error').length, o.diagnostics.filter((d) => d.code === 'conn.unrouted').length];
+  const score = (o: Outcome<Diagnostic>) => [RANK[o.status] ?? 9, o.diagnostics.filter((d) => d.severity === 'error').length, owedOf(o)];
   const worse = (a: Outcome<Diagnostic>, b: Outcome<Diagnostic>) => { const x = score(a), y = score(b); return x[0]! > y[0]! || (x[0] === y[0] && (x[1]! > y[1]! || (x[1] === y[1] && x[2]! > y[2]!))); };
   const best = path.join(opts.runDir, 'best.kicad_pcb');
   const record = (n: number, action: RepairAction | null, o: Outcome<Diagnostic>, t: number) => {
-    const owed = o.diagnostics.filter((d) => d.code === 'conn.unrouted').length;
+    const owed = (selectedDiagsOf(routing) ?? o.diagnostics).filter((d) => d.code === 'conn.unrouted').length;
+    owedByOutcome.set(o, owed);
     cycles.push({ n, action, status: o.status, summary: o.summary, errors: o.diagnostics.filter((d) => d.severity === 'error').length, owed, seconds: (Date.now() - t) / 1000 });
     log(`cycle ${n}${action ? ` (${action.type})` : ''}: ${o.status}: ${o.summary}`);
   };
@@ -182,6 +189,7 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
   record(0, null, outcome, tc);
   await copyFile(work, best);
   bestOutcome = outcome;
+  bestRuns = { routing, placement };
 
   // repair cycles
   for (let n = 1; n <= maxCycles && outcome.status !== 'PASS'; n++) {
@@ -192,7 +200,7 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
       break;
     }
     // plan over the selected candidate's full diagnostics: owed connections are info-severity and the outcome drops them
-    const selectedDiags = ((routing as RouteRun | null)?.candidates.find((c) => c.engineId === (routing as RouteRun | null)?.ranking.selected) ?? (placement as PlaceRun | null)?.candidates.find((c) => c.engineId === (placement as PlaceRun | null)?.ranking.selected))?.verify.diagnostics ?? outcome.diagnostics;
+    const selectedDiags = selectedDiagsOf(routing) ?? selectedDiagsOf(placement) ?? outcome.diagnostics;
     const plan = await planRepair({ diagnostics: selectedDiags, ranking: (routing as RouteRun | null)?.ranking ?? (placement as PlaceRun | null)?.ranking ?? null, budgetRemaining: left, last: { routingSeconds: lastRoutingSeconds, placementSeconds: lastPlacementSeconds }, history, routers: routerIds, provider: opts.provider ?? null });
     if (!plan.action) {
       log(`no repair action: ${plan.reason}`);
@@ -237,19 +245,25 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
     outcome = await runRouting(n);
     record(n, a, outcome, tn);
     outcome = await keepBest(n, outcome);
+    // a router that made the cycle worse (declined the board, crashed) is not kept for the next action either
+    if (a.type === 'select-router' && rolledBack) routerPick = null;
   }
   return finish(outcome);
 
   /** A cycle that ends worse than the best so far is rolled back: the working board and the outcome return to the best, the action stays tried. */
   async function keepBest(n: number, o: Outcome<Diagnostic>): Promise<Outcome<Diagnostic>> {
-    const prev = cycles.slice(0, -1).reduce<Outcome<Diagnostic> | null>((acc) => acc, null);
-    void prev;
+    rolledBack = false;
     if (bestOutcome && worse(o, bestOutcome)) {
+      rolledBack = true;
       await copyFile(best, work);
+      // the planner reads the selected candidate of the run behind the outcome: that is the best run again, not the one rolled back
+      routing = bestRuns.routing;
+      placement = bestRuns.placement;
       log(`cycle ${n} ended worse (${o.status}); kept the previous board (${bestOutcome.status})`);
       return bestOutcome;
     }
     bestOutcome = o;
+    bestRuns = { routing, placement };
     await copyFile(work, best);
     return o;
   }
