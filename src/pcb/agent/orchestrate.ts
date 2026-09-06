@@ -101,6 +101,7 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
   let routeOrder: string[] | null = null;
   let routerPick: string[] | null = null;
   let ripUp: string[] | null = null;
+  let bestOutcome: Outcome<Diagnostic> | null = null;
   // whole seconds: the limits land in the snapshot, whose canonical form holds integers only
   const remaining = () => ({ engineSeconds: Math.max(0, Math.floor(budget - (Date.now() - t0) / 1000)), wallSeconds: Math.max(0, Math.floor(budget - (Date.now() - t0) / 1000)) });
 
@@ -157,6 +158,10 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
 
   // cycle 0: place, route
   let outcome: Outcome<Diagnostic> = { status: 'PARTIAL', summary: 'nothing ran', detail: [], diagnostics: [] };
+  const RANK: Record<string, number> = { PASS: 0, PARTIAL: 1, HOLD: 2, UNSUPPORTED: 3, TIMEOUT: 4, ENGINE_ERROR: 5, INVALID_OUTPUT: 6, REFUSE: 7 };
+  const score = (o: Outcome<Diagnostic>) => [RANK[o.status] ?? 9, o.diagnostics.filter((d) => d.severity === 'error').length, o.diagnostics.filter((d) => d.code === 'conn.unrouted').length];
+  const worse = (a: Outcome<Diagnostic>, b: Outcome<Diagnostic>) => { const x = score(a), y = score(b); return x[0]! > y[0]! || (x[0] === y[0] && (x[1]! > y[1]! || (x[1] === y[1] && x[2]! > y[2]!))); };
+  const best = path.join(opts.runDir, 'best.kicad_pcb');
   const record = (n: number, action: RepairAction | null, o: Outcome<Diagnostic>, t: number) => {
     const owed = o.diagnostics.filter((d) => d.code === 'conn.unrouted').length;
     cycles.push({ n, action, status: o.status, summary: o.summary, errors: o.diagnostics.filter((d) => d.severity === 'error').length, owed, seconds: (Date.now() - t) / 1000 });
@@ -172,6 +177,8 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
   }
   if (opts.route !== false) outcome = await runRouting(0);
   record(0, null, outcome, tc);
+  await copyFile(work, best);
+  bestOutcome = outcome;
 
   // repair cycles
   for (let n = 1; n <= maxCycles && outcome.status !== 'PASS'; n++) {
@@ -220,13 +227,29 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
         outcome = await runPlacement(n, refs.length ? { refs, dx, dy } : undefined);
         if (outcome.status === 'PASS' || outcome.status === 'PARTIAL') outcome = await runRouting(n);
         record(n, a, outcome, tn);
+        outcome = await keepBest(n, outcome);
         continue;
       }
     }
     outcome = await runRouting(n);
     record(n, a, outcome, tn);
+    outcome = await keepBest(n, outcome);
   }
   return finish(outcome);
+
+  /** A cycle that ends worse than the best so far is rolled back: the working board and the outcome return to the best, the action stays tried. */
+  async function keepBest(n: number, o: Outcome<Diagnostic>): Promise<Outcome<Diagnostic>> {
+    const prev = cycles.slice(0, -1).reduce<Outcome<Diagnostic> | null>((acc) => acc, null);
+    void prev;
+    if (bestOutcome && worse(o, bestOutcome)) {
+      await copyFile(best, work);
+      log(`cycle ${n} ended worse (${o.status}); kept the previous board (${bestOutcome.status})`);
+      return bestOutcome;
+    }
+    bestOutcome = o;
+    await copyFile(work, best);
+    return o;
+  }
 
   async function finish(o: Outcome<Diagnostic>): Promise<LayoutResult> {
     let applied = false;

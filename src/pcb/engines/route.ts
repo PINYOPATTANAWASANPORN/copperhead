@@ -134,7 +134,8 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
     // a staged branch is the union of the carried stages and its own copper
     const carried = inv.stage?.carried;
     const result: RoutingResult = carried ? { ...inv.result, segments: [...carried.segments, ...inv.result.segments], arcs: [...carried.arcs, ...inv.result.arcs], vias: [...carried.vias, ...inv.result.vias] } : inv.result;
-    const preserve = (opts.preserveExistingRoutes ?? false) || !!inv.stage;
+    // staged branches already carry the earlier stages' copper in the composite result; the board's original copper is kept only when asked
+    const preserve = opts.preserveExistingRoutes ?? false;
     const cand = await materialize(inv, candidateFromRouting(result, preserve, design), { sourceText: text, design, ...(projectText ? { projectText } : {}), profile, kicadVersion, ...(opts.noKicad ? { noKicad: true } : {}) });
     candidates.push(cand);
     const wall = res.invocations.filter((x) => x === inv || (x.stage && !x.stage.final)).reduce((a, x) => a + (x.result?.runtime.wallSeconds ?? 0), 0);

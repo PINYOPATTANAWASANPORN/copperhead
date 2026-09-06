@@ -172,7 +172,8 @@ export async function runRouting(opts: RoutingRunOptions): Promise<RoutingRun> {
       const final = i === stages.length - 1;
       const chosen = step.race ? engines : engines.slice(0, 1);
       const stageSnapshot = snapshot;
-      const job = (extra: Partial<RoutingJob>) => mk(ordinal, { snapshot: stageSnapshot, scope: { netIds: step.netIds, region: null, preserveExistingRoutes: true }, ...(step.strategy ? { strategy: step.strategy } : {}), ...extra });
+      // the first stage honours the job's preserve flag (a rip-up run must drop the existing copper); later stages keep what the earlier ones routed
+      const job = (extra: Partial<RoutingJob>) => mk(ordinal, { snapshot: stageSnapshot, scope: { netIds: step.netIds, region: null, preserveExistingRoutes: i === 0 ? opts.job.scope.preserveExistingRoutes : true }, ...(step.strategy ? { strategy: step.strategy } : {}), ...extra });
       const snapshotText = text;
       const carriedNow = { segments: [...carried.segments], arcs: [...carried.arcs], vias: [...carried.vias] };
       const tasks = chosen.map((engine) => {
@@ -192,8 +193,11 @@ export async function runRouting(opts: RoutingRunOptions): Promise<RoutingRun> {
         opts.log?.(`stage ${step.name}: no engine produced copper; the next stage routes its nets too`);
         continue;
       }
-      const routing = { segments: [...design.routing.segments, ...ok.result.segments], arcs: [...design.routing.arcs, ...ok.result.arcs], vias: [...design.routing.vias, ...ok.result.vias] };
-      const preserved = new Set<string>([...design.routing.segments.map((s) => s.id), ...design.routing.arcs.map((a) => a.id), ...design.routing.vias.map((v) => v.id)]);
+      // a rip-up run drops the board's existing copper at the first stage; later stages build on what the earlier ones routed
+      const keepExisting = i > 0 || opts.job.scope.preserveExistingRoutes;
+      const base = keepExisting ? design.routing : { segments: [], arcs: [], vias: [] };
+      const routing = { segments: [...base.segments, ...ok.result.segments], arcs: [...base.arcs, ...ok.result.arcs], vias: [...base.vias, ...ok.result.vias] };
+      const preserved = new Set<string>(keepExisting ? [...design.routing.segments.map((s) => s.id), ...design.routing.arcs.map((a) => a.id), ...design.routing.vias.map((v) => v.id)] : []);
       text = applyCandidate(text, design, { routing: { ...routing, preserveIds: preserved } }).text;
       design = importBoard({ boardText: text, boardPath: design.source.files.board, ...(opts.projectText ? { projectText: opts.projectText } : {}), now: design.source.importedAt }).design;
       carried.segments.push(...ok.result.segments);
