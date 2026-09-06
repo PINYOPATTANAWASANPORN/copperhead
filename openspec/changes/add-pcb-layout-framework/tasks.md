@@ -64,9 +64,11 @@
 - [ ] 6.4a (blocked: needs the `fetch_datasheet` / `web_search` clients from `add-part-research-tools`, not on this branch) Reference layout retrieval, network sources: the `datasheet` source (rule extraction from the cached datasheet, figure reading by one model call with capped confidence) and online design search through the part-research `web_search` client with shallow clones under `var/refs/`; `pcb_find_references` tool and `--refresh-references` / `--approve-reference` on `pcb layout`; transcript network log
 - [x] 6.5 Intent checker for fixed, edge, orientation, attachment, group (spread against budget, region containment), region, separation, keepout (orientation is declared-but-not-evaluated, info severity); `pcb_infer_intent` tool; `copperhead pcb infer-intent`; layout track in `check` (AC-17.14)
 - [x] 6.6 Track E (intent) and track F (refusal) in the bench with the curated microboard categories of §13.3 (`copperbench --kind verify`; 15 golden boards, 9 categories; 40 remains the target)
-- [ ] 6.7 Exit: B3 report (≥90% of applicable hard intent constraints pass; no geometry-invalid candidate marked complete)
+- [x] 6.7 Exit: B3 report published (`bench/reports/B3-2026-09-07.md`): tracks E and F 8/8 and 13/13; hard intent 6/10 after placement (60 %, below the 90 % claim: edge, keepout, and separation have no rule stage yet); no geometry-invalid candidate marked complete; §8.3 gate tripped on the sample, response proposed as rule stages in Phase 5, owner's decision
 
 ## 7. Phase 5: closed loop
+
+- [ ] 7.0 Rule stages the B3 evidence asks for before the repair loop: edge placement (stage 1: a part with `mechanical.edge` goes to that edge), keepout legalization (move a part the least distance out of a keepout), block separation (disjoint regions for separated blocks); re-take the B3 measure on the eight intent boards
 
 - [ ] 7.1 `src/pcb/agent/`: repair catalog with per-action cost estimates; engine-second and wall-clock budgets; planner over normalized diagnostics only; terminal statuses
 - [ ] 7.2 `pcb_layout` and `pcb_repair` tools (spec-gated); `edit_file` refusal of copper and zone edits on framework boards; `do` on a framework board through the repair loop
