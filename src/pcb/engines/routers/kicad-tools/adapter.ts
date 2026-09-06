@@ -11,9 +11,6 @@ import path from 'node:path';
 import type { EngineManifest, RoutingJob, RoutingResult, RouterPlugin, RunContext } from '../../contracts.js';
 import { ENGINE_SCHEMA_VERSION } from '../../contracts.js';
 import { EngineError } from '../../../ir/status.js';
-import type { PcbDesign } from '../../../ir/types.js';
-import { toolsDirs } from '../../tools.js';
-import { topLevelBlocks } from '../../../ir/kicad/blocks.js';
 import { importBoard } from '../../../ir/kicad/import.js';
 import { extractFills } from '../../../ir/kicad/zones.js';
 import { nmToMm } from '../../../ir/units.js';
@@ -37,15 +34,8 @@ export const KICAD_TOOLS_MANIFEST: EngineManifest = {
 
 export const KCT_STRATEGIES = ['basic', 'negotiated', 'monte-carlo', 'evolutionary'] as const;
 
-/** kct: COPPERHEAD_KCT > bench/var/tools/kt-venv (target repo, then the copperhead package) > PATH. */
-export function resolveKct(env = process.env, repoRoot = process.cwd()): string {
-  if (env.COPPERHEAD_KCT?.trim()) return env.COPPERHEAD_KCT.trim();
-  for (const dir of toolsDirs(repoRoot)) {
-    const venv = path.join(dir, 'kt-venv', 'bin', 'kct');
-    if (existsSync(venv)) return venv;
-  }
-  return 'kct';
-}
+import { resolveKct, toCodeDialect } from '../../kicad-tools.js';
+export { resolveKct, toCodeDialect };
 
 export class KicadToolsRouter implements RouterPlugin {
   constructor(private readonly opts: { kct?: string; repoRoot?: string } = {}) {}
@@ -107,18 +97,4 @@ export class KicadToolsRouter implements RouterPlugin {
       provenance: { engineId: KICAD_TOOLS_MANIFEST.id, engineVersion: '0.20.0', adapterVersion: '1', invocation: { binary: kct, args, envKeys: ['PATH', 'HOME', 'VIRTUAL_ENV'] }, seed: job.seed, exitCode: res.exitCode ?? -1, startedAt: new Date(t0).toISOString(), finishedAt: new Date().toISOString() },
     };
   }
-}
-
-/** Rewrite a name-dialect board (KiCad 10) into the code dialect (KiCad 8/9) that kct parses: a net table after (setup) and `(net N "name")` on every object. */
-export function toCodeDialect(text: string, design: PcbDesign): string {
-  const codes = new Map(design.nets.map((n) => [n.name, n.code]));
-  let next = Math.max(0, ...codes.values()) + 1;
-  const body = text.replace(/\(net "((?:[^"\\]|\\.)*)"\)/g, (_m, name: string) => {
-    if (!codes.has(name)) codes.set(name, next++);
-    return `(net ${codes.get(name)} "${name}")`;
-  });
-  const table = ['\t(net 0 "")', ...[...codes.entries()].sort((a, b) => a[1] - b[1]).map(([name, code]) => `\t(net ${code} "${name}")`)].join('\n');
-  const setup = topLevelBlocks(body).find((b) => b.head === 'setup');
-  const at = setup ? setup.end : body.lastIndexOf(')');
-  return `${body.slice(0, at)}\n${table}${body.slice(at)}`;
 }

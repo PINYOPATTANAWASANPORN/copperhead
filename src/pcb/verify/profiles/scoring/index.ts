@@ -23,7 +23,21 @@ export const DEFAULT_LOW_SPEED_2_LAYER: ScoringProfile = {
   higherIsBetter: ['completion_rate', 'pour_largest_share'],
 };
 
-const SCORING: Record<string, ScoringProfile> = { [DEFAULT_LOW_SPEED_2_LAYER.id]: DEFAULT_LOW_SPEED_2_LAYER };
+/** Placement candidates (RFC 11 §11.1): routability first, then wirelength and congestion; overlaps and off-board parts are gates. */
+export const DEFAULT_PLACEMENT_2_LAYER: ScoringProfile = {
+  id: 'default-placement-2-layer',
+  gates: { courtyard_overlap_count: { max: 0 }, outside_board_count: { max: 0 } },
+  weights: {
+    routability_completion: 0.35,
+    hpwl_nm: 0.3,
+    congestion_overflow: 0.2,
+    routability_drc_errors: 0.1,
+    runtime_s: 0.05,
+  },
+  higherIsBetter: ['routability_completion'],
+};
+
+const SCORING: Record<string, ScoringProfile> = { [DEFAULT_LOW_SPEED_2_LAYER.id]: DEFAULT_LOW_SPEED_2_LAYER, [DEFAULT_PLACEMENT_2_LAYER.id]: DEFAULT_PLACEMENT_2_LAYER };
 
 export function loadScoringProfile(id: string): ScoringProfile {
   const p = SCORING[id];

@@ -87,3 +87,51 @@ export function routingMetrics(input: RoutingMetricsInput): Record<string, numbe
   for (const [k, v] of Object.entries(m)) if (k.startsWith('pour_') || k.startsWith('bottom_') || k === 'stitching_vias_per_connector' || k === 'congestion_overflow') out[k] = v;
   return out;
 }
+
+/**
+ * Placement metrics (implementation spec §8.1): half-perimeter wirelength over
+ * pad centres, a 2 mm-cell congestion proxy, and the gate-relevant counts. The
+ * routability pair (`routability_completion`, `routability_drc_errors`) is
+ * added by the probe in engines/probe.ts when it runs.
+ */
+export function placementMetrics(input: { design: PcbDesign; verify: VerifyResult; runtimeSeconds?: number }): Record<string, number> {
+  const { design, verify } = input;
+  const padAt = new Map<string, { x: number; y: number }>();
+  for (const c of design.components) for (const p of c.pads) padAt.set(p.id, p.at);
+  let hpwl = 0;
+  const boxes: { minX: number; minY: number; maxX: number; maxY: number }[] = [];
+  for (const n of design.nets) {
+    const pts = n.padIds.map((id) => padAt.get(id)).filter((p): p is { x: number; y: number } => !!p);
+    if (pts.length < 2) continue;
+    const b = { minX: Math.min(...pts.map((p) => p.x)), minY: Math.min(...pts.map((p) => p.y)), maxX: Math.max(...pts.map((p) => p.x)), maxY: Math.max(...pts.map((p) => p.y)) };
+    hpwl += b.maxX - b.minX + (b.maxY - b.minY);
+    boxes.push(b);
+  }
+  // congestion proxy: nets whose bounding box covers a 2 mm cell each want a track through it;
+  // capacity is how many tracks at width + clearance fit across the cell per copper layer
+  const cell = 2_000_000;
+  const rules = design.board.rules;
+  const copperLayers = design.board.layers.filter((l) => l.kind === 'copper').length || 2;
+  const capacity = Math.max(1, Math.floor(cell / (rules.trackWidthNm + rules.clearanceNm))) * copperLayers;
+  const outline = design.board.outline.outer;
+  const bx = { minX: Math.min(...outline.map((p) => p.x)), minY: Math.min(...outline.map((p) => p.y)), maxX: Math.max(...outline.map((p) => p.x)), maxY: Math.max(...outline.map((p) => p.y)) };
+  const cols = Math.max(1, Math.ceil((bx.maxX - bx.minX) / cell));
+  const rows = Math.max(1, Math.ceil((bx.maxY - bx.minY) / cell));
+  const demand = new Int32Array(cols * rows);
+  for (const b of boxes) {
+    const c0 = Math.max(0, Math.floor((b.minX - bx.minX) / cell)), c1 = Math.min(cols - 1, Math.floor((b.maxX - bx.minX) / cell));
+    const r0 = Math.max(0, Math.floor((b.minY - bx.minY) / cell)), r1 = Math.min(rows - 1, Math.floor((b.maxY - bx.minY) / cell));
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) demand[r * cols + c]!++;
+  }
+  let overflow = 0;
+  for (let i = 0; i < demand.length; i++) if (demand[i]! > capacity) overflow++;
+  const count = (code: string) => verify.diagnostics.filter((d) => d.code === code && d.severity === 'error').length;
+  return {
+    hpwl_nm: hpwl,
+    congestion_overflow: overflow,
+    courtyard_overlap_count: count('geom.courtyard-overlap'),
+    outside_board_count: count('geom.outside-board'),
+    component_count: design.components.length,
+    runtime_s: input.runtimeSeconds ?? 0,
+  };
+}

@@ -184,6 +184,9 @@ The board layout harness ([RFC 11](https://github.com/animesh-chouhan/copperhead
 ```bash
 copperhead pcb import [--board <path>]
 copperhead pcb verify [board] [--no-kicad]
+copperhead pcb place  [--board <path>] [--placers <ids>] [--mode <mode>] [--movable <refs>] [--seed <n>]
+                      [--budget-seconds <n>] [--no-probe] [--probe-router <id>] [--allow-harness-engines]
+                      [--apply] [--run-dir <path>]
 copperhead pcb route  [--board <path>] [--routers <ids>] [--mode <mode>] [--nets <names>]
                       [--critical-nets <names>] [--layer-pref <specs>] [--preserve] [--seed <n>]
                       [--budget-seconds <n>] [--allow-harness-engines] [--apply] [--run-dir <path>]
@@ -193,6 +196,7 @@ copperhead pcb render [board] [--out <svg>] [--plain] [--scale <n>]
 
 - **`import`** parses the board (and its `.kicad_pro` when present) into the IR and prints what it found: layers, components, nets, existing copper, and anything the import could not carry (`lossy`).
 - **`verify`** runs the harness checkers on one board file and prints the diagnostics, metrics, gates, and any disagreement between checkers. Zones are refilled on a copy, so the file is never touched. Exit codes are the layout statuses below.
+- **`place`** snapshots the board with its movable set (every part not locked in KiCad, or `--movable`), runs the eligible placers, materializes each candidate (ripping up copper a moved part invalidated), verifies it, measures HPWL and a congestion proxy, probes routability by routing the candidate once with a fixed configuration, and ranks under `default-placement-2-layer` (overlaps and off-board parts are gates; routability first, then wirelength). Built-in placers: `placer-kicad-tools-physics` and `-evolutionary` (MIT, `kct`), `placer-pyplacer` (BSD-3, vendored, needs Python with numpy), `placer-fixed` (the control), `placer-reference` (harness only).
 - **`route`** snapshots the board, runs the eligible routers, materializes and verifies each result as a candidate, ranks them, and reports one outcome. Nothing is written to the board unless `--apply`; the run directory holds every candidate with its provenance.
 - **`score`** re-ranks the candidates of an existing run directory under a scoring profile.
 - **`render`** draws the board to SVG with the verify diagnostics numbered on it (`--plain` for a bare thumbnail).

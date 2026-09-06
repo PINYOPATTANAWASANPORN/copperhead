@@ -47,12 +47,12 @@
 
 ## 5. Phase 3: placement harness
 
-- [ ] 5.1 `placer-fixed`, `placer-pyplacer`, `placer-kicad-tools-physics`, `placer-kicad-tools-evolutionary` wrappers; `placer-reference` marked `harnessOnly`; `board.ts`'s shelf pack retired into it
+- [x] 5.1 `placer-fixed`, `placer-pyplacer`, `placer-kicad-tools-physics`, `placer-kicad-tools-evolutionary` wrappers; `placer-reference` marked `harnessOnly`; `board.ts`'s shelf pack retired into it (the reference placer packs over the IR; `board.ts` keeps its own copy for population, which runs before an IR exists)
 - [ ] 5.2 `placer-layout-reuse`: anchor transforms over approved module placements
 - [ ] 5.2b Reference layout retrieval, local sources: `ReferenceSource` interface, the `design` source over KiCad demos, PCBench, reference boards, and `pcb.referenceDesigns` (import, cut to block, role mapping), the `teardown` source over RFC 1 outputs, similarity scoring, the `.copperhead/layout-refs/` cache and index, the license policy with `HOLD` and approval, application as attachment and group constraints consumed by `placer-layout-reuse`
 - [ ] 5.2a Deterministic block derivation from SUBSYSTEMS.md and the schematic intent's `group` field (anchor, signal-flow region, spread budget); `placer-anchors` and `placer-attach` rule stages; the default staged placement plan (§8.5) with stages 1 to 3 locked before the wrapped placer runs
-- [ ] 5.3 Placement verification: hard placement gates (§10.4); routability probe through the fixed reference routing configuration; placement metrics (§11.1)
-- [ ] 5.4 30 placement cases in the bench; `copperhead pcb place`; HPWL-vs-completion evidence
+- [x] 5.3 Placement verification: hard placement gates (§10.4); routability probe through the fixed reference routing configuration; placement metrics (§11.1) — intent-derived metrics (`intent_compliance`, `critical_attachment_nm`, block spread) land with the intent checker in Phase 4
+- [ ] 5.4 30 placement cases in the bench; `copperhead pcb place` (done); HPWL-vs-completion evidence
 - [ ] 5.5 Exit: B2 report and the §8.3 decision recorded
 
 ## 6. Phase 4: intent

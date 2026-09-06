@@ -96,8 +96,17 @@ export function rank(inputs: ScoredInput[], profile: ScoringProfile): Ranking {
     c.rank = i + 1;
     c.reason = !c.eligible
       ? `ineligible: ${[...c.gateFailures, ...c.profileGateFailures].join('; ') || 'verification gate'}`
-      : `completion ${((c.metrics.completion_rate ?? 0) * 100).toFixed(0)}%, weighted score ${c.score!.toFixed(3)}${c.pareto ? ', on the Pareto frontier' : ''}`;
+      : `${headline(c.metrics)}weighted score ${c.score!.toFixed(3)}${c.pareto ? ', on the Pareto frontier' : ''}`;
   });
   const selected = ranked.find((c) => c.eligible) ?? null;
   return { profile: profile.id, candidates: ranked, selected: selected?.id ?? null, reason: selected ? `${selected.id}: ${selected.reason}` : 'no eligible candidate' };
+}
+
+/** The one number a reader wants first: routing completion for routed candidates, probed routability and wirelength for placements. */
+function headline(m: Record<string, number | undefined>): string {
+  if (m.completion_rate !== undefined) return `completion ${(m.completion_rate * 100).toFixed(0)}%, `;
+  const parts: string[] = [];
+  if (m.routability_completion !== undefined) parts.push(`routability ${(m.routability_completion * 100).toFixed(0)}%`);
+  if (m.hpwl_nm !== undefined) parts.push(`HPWL ${(m.hpwl_nm / 1e6).toFixed(1)} mm`);
+  return parts.length ? `${parts.join(', ')}, ` : '';
 }

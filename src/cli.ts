@@ -359,6 +359,59 @@ pcbGroup
     }
   });
 pcbGroup
+  .command('place')
+  .description('place the board through the wrapped placers, verify every candidate, and rank them (no model)')
+  .option('--board <path>', 'board to place (default: the configured board)')
+  .option('--placers <ids>', 'comma-separated engine ids in preference order (default: config or every built-in placer)')
+  .option('--mode <mode>', 'single | race | ensemble (default: config or single)')
+  .option('--movable <refs>', 'comma-separated refdes to move (default: every part not locked in KiCad)')
+  .option('--seed <n>', 'seed for seeded engines', '0')
+  .option('--budget-seconds <n>', 'engine-second and wall-clock budget')
+  .option('--no-probe', 'skip the routability probe on each candidate')
+  .option('--probe-router <id>', 'router for the probe', 'router-freerouting')
+  .option('--allow-harness-engines', 'let the reference placer and router compete (harness fixtures only)', false)
+  .option('--apply', 'write the selected candidate over the board file', false)
+  .option('--run-dir <path>', 'where to write the run (default: .copperhead/runs/<ts>/placement)')
+  .action(async (opts: { board?: string; placers?: string; mode?: string; movable?: string; seed: string; budgetSeconds?: string; probe: boolean; probeRouter: string; allowHarnessEngines: boolean; apply: boolean; runDir?: string }) => {
+    const repo = repoOf(program.opts());
+    const json = Boolean(program.opts().json);
+    try {
+      const { boardPath, config } = await pcbBoard(repo, opts.board);
+      const { placeBoard } = await import('./pcb/engines/place.js');
+      const path = await import('node:path');
+      const { copyFile } = await import('node:fs/promises');
+      const pcb = config.pcb ?? {};
+      const budget = Number(opts.budgetSeconds ?? pcb.budgetSeconds ?? 600);
+      const runDir = opts.runDir ? path.resolve(repo, opts.runDir) : path.join(repo, '.copperhead', 'runs', new Date().toISOString().replace(/[:.]/g, '-'), 'placement');
+      const placers = opts.placers?.split(',').map((s) => s.trim()).filter(Boolean) ?? pcb.placers;
+      const mode = (opts.mode ?? (pcb.mode === 'staged' ? 'single' : pcb.mode) ?? 'single') as 'single' | 'race' | 'ensemble';
+      const res = await placeBoard({
+        repoRoot: repo, boardPath, runDir, ...(placers ? { placers } : {}), mode, ...(opts.movable ? { movableReferences: opts.movable.split(',').map((s) => s.trim()) } : {}), seed: Number(opts.seed), limits: { engineSeconds: budget, wallSeconds: budget }, ...(pcb.profile ? { profile: pcb.profile } : {}), ...(pcb.maxParallelEngines ? { maxParallel: pcb.maxParallelEngines } : {}),
+        policy: { network: pcb.allowRemoteEngines ? 'required' : 'optional', allowHarnessEngines: opts.allowHarnessEngines || (pcb.allowHarnessEngines ?? false), denyLicenses: [] },
+        probe: opts.probe ? { routerId: opts.probeRouter } : false,
+        log: json ? () => {} : (l) => console.error(l),
+      });
+      if (opts.apply) {
+        const sel = res.ranking.selected ? res.candidates.find((c) => c.engineId === res.ranking.selected) : undefined;
+        if (sel && (res.outcome.status === 'PASS' || res.outcome.status === 'PARTIAL')) {
+          await copyFile(sel.pcbPath, boardPath);
+          res.outcome.detail.push(`applied ${res.ranking.selected} to ${path.relative(repo, boardPath)}`);
+        } else res.outcome.detail.push('nothing applied; the board is unchanged');
+      }
+      if (json) console.log(JSON.stringify({ ...res.outcome, diagnostics: res.outcome.diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message })), runDir: res.runDir, ranking: res.ranking, ineligible: res.ineligible, movable: res.movableIds.length }, null, 2));
+      else {
+        console.log(`${res.outcome.status}: ${res.outcome.summary}`);
+        for (const d of res.outcome.detail) console.log(`  ${d}`);
+        console.log(`  run: ${path.relative(repo, res.runDir)}`);
+      }
+      const { EXIT_CODE } = await import('./pcb/ir/status.js');
+      process.exit(EXIT_CODE[res.outcome.status]);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+pcbGroup
   .command('verify')
   .description('verify one board file: pre-flight, geometry, connectivity, return path, KiCad DRC')
   .argument('[board]', 'board file (default: the configured board)')
