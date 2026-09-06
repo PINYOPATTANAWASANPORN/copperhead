@@ -15,13 +15,14 @@ import { importBoard } from '../src/pcb/ir/kicad/import.js';
 import { applyCandidate } from '../src/pcb/ir/kicad/export.js';
 import { refillZones, extractFills } from '../src/pcb/ir/kicad/zones.js';
 import { verifyDesign } from '../src/pcb/verify/index.js';
+import { loadConstraints } from '../src/pcb/intent/load.js';
 import { JLCPCB_2LAYER } from '../src/pcb/verify/profiles/index.js';
 import { runDrc } from '../src/kicad/cli.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GOLDEN = path.join(HERE, '..', 'bench', 'golden');
 const STICKHUB = '/usr/share/kicad/demos/stickhub/StickHub.kicad_pcb';
-const IMPLEMENTED = /^(geom|conn|drc|preflight)\./;
+const IMPLEMENTED = /^(geom|conn|drc|preflight|intent)\./;
 
 interface Expected {
   status: string;
@@ -55,7 +56,8 @@ describe('golden microboards verify as expected', () => {
     const { design } = importBoard({ boardText: await readFile(pcb, 'utf8'), boardPath: pcb, projectText: await readFile(path.join(dir, 'board.kicad_pro'), 'utf8'), now: 't' });
     const kicad = await haveKicad();
     const drc = kicad ? await runDrc(pcb) : undefined;
-    const v = verifyDesign({ design, ...(drc ? { drc } : {}) });
+    const { registry } = await loadConstraints(design, pcb);
+    const v = verifyDesign({ design, ...(drc ? { drc } : {}), constraints: registry });
     const codes = new Set(v.diagnostics.map((d) => d.code));
     for (const e of exp.diagnostics) {
       if (!IMPLEMENTED.test(e.code)) continue;

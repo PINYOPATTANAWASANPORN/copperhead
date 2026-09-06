@@ -59,6 +59,7 @@ Every key is optional.
 | `freerouting.passes` | `20` | Autorouter passes. |
 | `allowRemoteEngines` | `false` | Whether engines that need the network are eligible. Never on the `check` path. |
 | `allowHarnessEngines` | `false` | Let the harness-only reference router compete. For test fixtures; it is not a router for real boards. |
+| `intentPath` | `docs/LAYOUT.intent.yaml` | Layout intent file in the RFC 11 §7.3 language (`placement.fixed`, `attachments`, `groups`, `separation`, `keepouts`, `routing.priorities`). |
 | `referenceDesigns` | `[]` | Paths (files or directories of `.kicad_pcb`) that are the user's own work: reference blocks cut from them apply without approval. |
 | `teardownCorpus` | `[]` | Directories holding RFC 1 teardown outputs; `placement-analysis.yaml` and `circuit-patterns.yaml` patterns become reference blocks. |
 | `layoutBlocks` | `[]` | Reference blocks to copy during `pcb place`: `{ id, source: <path to a .kicad_pcb>, anchor: <refdes>, members: [<refdes>…], map? }`. Each member is placed around the anchor with the source's relative offset and rotation, then held while the wrapped placer places the rest. |

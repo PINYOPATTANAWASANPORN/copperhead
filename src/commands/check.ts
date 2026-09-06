@@ -14,6 +14,7 @@ import { evidenceContract } from '../pcb/evidence.js';
 import { importBoard } from '../pcb/ir/kicad/import.js';
 import { extractFills } from '../pcb/ir/kicad/zones.js';
 import { verifyDesign } from '../pcb/verify/index.js';
+import { loadConstraints as loadLayoutConstraints } from '../pcb/intent/load.js';
 
 /**
  * `copperhead check` (alias `verify`): deterministic, zero LLM calls, CI-safe
@@ -152,7 +153,8 @@ export async function runCheck(repoRoot: string, log: (s: string) => void): Prom
     const verdict = evidenceContract(await readFile(layoutDoc, 'utf8'), boardText, boardPath, projectText);
     if (verdict.evidence) {
       const { design } = importBoard({ boardText, boardPath, ...(projectText ? { projectText } : {}) });
-      const v = verifyDesign({ design, fills: extractFills(boardText), ...(drc ? { drc } : {}) });
+      const { registry: layoutConstraints } = await loadLayoutConstraints(design, boardPath, { intentPath: config.pcb?.intentPath ?? null, docsDir: path.join(repoRoot, config.docs), repoRoot });
+      const v = verifyDesign({ design, fills: extractFills(boardText), ...(drc ? { drc } : {}), constraints: layoutConstraints });
       const errors = v.diagnostics.filter((d) => d.severity === 'error').map((d) => ({ code: d.code, entityReferences: d.entityReferences, message: d.message }));
       const gates = { preflight: v.gates.preflight.passed, placement: v.gates.placement.passed, routing: v.gates.routing.passed };
       const status = verdict.stale ? 'STALE' : verdict.evidence.status;

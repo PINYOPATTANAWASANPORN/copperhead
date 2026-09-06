@@ -505,11 +505,12 @@ pcbGroup
   .description('verify one board file: pre-flight, geometry, connectivity, return path, KiCad DRC')
   .argument('[board]', 'board file (default: the configured board)')
   .option('--no-kicad', 'skip kicad-cli (no DRC, no zone refill)')
-  .action(async (board: string | undefined, opts: { kicad: boolean }) => {
+  .option('--intent <path>', 'intent file (default: pcb.intentPath, <board dir>/intent.yaml, or docs/LAYOUT.intent.yaml)')
+  .action(async (board: string | undefined, opts: { kicad: boolean; intent?: string }) => {
     const repo = repoOf(program.opts());
     const json = Boolean(program.opts().json);
     try {
-      const { boardPath } = await pcbBoard(repo, board);
+      const { boardPath, config } = await pcbBoard(repo, board);
       const path = await import('node:path');
       const { readFile, mkdtemp, cp, rm } = await import('node:fs/promises');
       const { existsSync } = await import('node:fs');
@@ -535,11 +536,15 @@ pcbGroup
         }
       }
       const { design } = importBoard({ boardText: text, boardPath, ...(projectText ? { projectText } : {}) });
-      const v = verifyDesign({ design, fills: extractFills(text), ...(drc ? { drc } : {}) });
+      const { loadConstraints } = await import('./pcb/intent/load.js');
+      const { registry: constraints, intentPath, holds } = await loadConstraints(design, boardPath, { intentPath: config.pcb?.intentPath ?? opts.intent ?? null, docsDir: path.join(repo, config.docs), repoRoot: repo });
+      const v = verifyDesign({ design, fills: extractFills(text), ...(drc ? { drc } : {}), constraints });
       const errors = v.diagnostics.filter((d) => d.severity === 'error');
-      const status = !v.gates.preflight.passed ? 'REFUSE' : errors.length ? 'PARTIAL' : (v.metrics.unrouted_count ?? 0) > 0 ? 'PARTIAL' : 'PASS';
-      if (json) console.log(JSON.stringify({ status, metrics: v.metrics, gates: { preflight: v.gates.preflight.passed, placement: v.gates.placement.passed, routing: v.gates.routing.passed }, disagreements: v.disagreements, diagnostics: v.diagnostics.map((d) => ({ code: d.code, severity: d.severity, entityReferences: d.entityReferences, message: d.message })) }, null, 2));
+      const status = holds.length ? 'HOLD' : !v.gates.preflight.passed || !v.gates.placement.passed ? 'REFUSE' : errors.length ? 'PARTIAL' : (v.metrics.unrouted_count ?? 0) > 0 ? 'PARTIAL' : 'PASS';
+      if (json) console.log(JSON.stringify({ status, intent: intentPath ? path.relative(repo, intentPath) : null, holds, metrics: v.metrics, gates: { preflight: v.gates.preflight.passed, placement: v.gates.placement.passed, routing: v.gates.routing.passed }, disagreements: v.disagreements, diagnostics: v.diagnostics.map((d) => ({ code: d.code, severity: d.severity, entityReferences: d.entityReferences, message: d.message })) }, null, 2));
       else {
+        if (intentPath) console.log(`intent: ${path.relative(repo, intentPath)} (${Object.keys(constraints).length} constraint(s) with the board's own rules)`);
+        for (const h of holds) console.log(`  HOLD ${h}`);
         console.log(`${status}: ${v.metrics.routed_nets ?? 0} net(s) routed, ${v.metrics.unrouted_count ?? 0} owed, ${v.metrics.shorts ?? 0} short(s), ${v.metrics.drc_error_count ?? 0} KiCad error(s); gates preflight ${v.gates.preflight.passed ? 'pass' : 'FAIL'}, placement ${v.gates.placement.passed ? 'pass' : 'FAIL'}, routing ${v.gates.routing.passed ? 'pass' : 'FAIL'}`);
         for (const d of v.diagnostics.filter((d) => d.severity !== 'info')) console.log(`  ${d.severity} ${d.code}${d.entityReferences.length ? ` [${d.entityReferences.slice(0, 4).join(', ')}]` : ''}: ${d.message}`);
         for (const x of v.disagreements) console.log(`  disagreement ${x.code}: ${x.a.checker} says ${x.a.says}; ${x.b.checker} says ${x.b.says}`);
