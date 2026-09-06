@@ -24,6 +24,8 @@ export interface DsnOptions {
   edgeClearanceNm: number;
   /** Width for every routable net in scope, overriding the class width (staged power routing). */
   trackWidthNm?: number;
+  /** Clearance the engine routes to, overriding the board's rule (the generous-first pass asks for more than the rule). */
+  clearanceNm?: number;
   /** Per copper layer id: active flag and preferred direction (Freerouting `autoroute_settings`). */
   layers?: Record<string, { active?: boolean; preferredDirection?: 'horizontal' | 'vertical' }>;
 }
@@ -135,7 +137,8 @@ export function emitDsn(design: PcbDesign, opts: DsnOptions): string {
   const bpts = [...boundary.outer, boundary.outer[0]!];
   out.push(`    (boundary\n      (path pcb 0 ${bpts.map((p) => `${um(p.x)} ${umY(p.y)}`).join('  ')})\n    )`);
   out.push(`    (via ${q(viaName)})`);
-  out.push(`    (rule\n      (width ${um(rules.trackWidthNm)})\n      (clearance ${um(rules.clearanceNm)})\n      (clearance ${um(Math.min(rules.clearanceNm, 50_000))} (type smd_smd))\n    )`);
+  const clearance = opts.clearanceNm ?? rules.clearanceNm;
+  out.push(`    (rule\n      (width ${um(rules.trackWidthNm)})\n      (clearance ${um(clearance)})\n      (clearance ${um(Math.min(clearance, 50_000))} (type smd_smd))\n    )`);
   if (opts.layers && Object.keys(opts.layers).length) {
     // layer-preference constraints as Freerouting's own per-layer autoroute settings
     const rulesOut = copper.map((l) => {
@@ -195,7 +198,7 @@ export function emitDsn(design: PcbDesign, opts: DsnOptions): string {
   for (const n of routable) {
     out.push(`    (net ${tok(n.name)}\n      (pins ${n.padIds.map((id) => refOfPad.get(id)).filter(Boolean).map((r) => tok(r!)).join(' ')})\n    )`);
   }
-  out.push(`    (class kicad_default ${routable.map((n) => tok(n.name)).join(' ')}\n      (circuit\n        (use_via ${q(viaName)})\n      )\n      (rule\n        (width ${um(opts.trackWidthNm ?? rules.trackWidthNm)})\n        (clearance ${um(rules.clearanceNm)})\n      )\n    )`);
+  out.push(`    (class kicad_default ${routable.map((n) => tok(n.name)).join(' ')}\n      (circuit\n        (use_via ${q(viaName)})\n      )\n      (rule\n        (width ${um(opts.trackWidthNm ?? rules.trackWidthNm)})\n        (clearance ${um(opts.clearanceNm ?? rules.clearanceNm)})\n      )\n    )`);
   out.push('  )');
   // wiring: protected existing copper
   out.push('  (wiring');

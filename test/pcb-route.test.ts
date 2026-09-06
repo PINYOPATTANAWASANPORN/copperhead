@@ -156,7 +156,7 @@ describe('staged routing plan (§9.5)', () => {
     design.board.rules.netClasses['Power'] = { trackWidthNm: mm(0.5) };
     gnd.netClass = 'Power';
     const plan = defaultStagedPlan(design, { engineIds: ['router-freerouting', 'router-kicad-tools-astar'], criticalNetNames: [other.name], layerPreferences: [{ layerId: 'B.Cu', mode: 'vertical' }] });
-    expect(plan.stages.map((s) => s.name)).toEqual(['power', 'critical', 'bulk']);
+    expect(plan.stages.map((s) => s.name)).toEqual(['power', 'critical', 'bulk']); // no clearance given: no generous pass
     const power = design.nets.filter((n) => n.padIds.length >= 2 && isPowerNet(n, design)).map((n) => n.id);
     expect(power).toContain(gnd.id);
     expect(plan.stages[0]!.netIds).toEqual(power);
@@ -195,14 +195,19 @@ describe('staged routing plan (§9.5)', () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-staged-'));
     try {
       const res = await routeBoard({ repoRoot: ROOT, boardPath: path.join(GOLDEN, 'completion', 'board.kicad_pcb'), runDir: path.join(dir, 'run'), routers: ['router-reference'], mode: 'staged', policy: { network: 'none', allowHarnessEngines: true, denyLicenses: [] }, limits: { engineSeconds: 240, wallSeconds: 240 } });
-      expect(res.plan!.stages.map((s) => s.name)).toEqual(['power', 'bulk']);
-      expect(res.invocations.map((i) => i.stage!.name)).toEqual(['power', 'bulk']);
+      // the bulk routes generous first (1.5x the rule) and re-routes what is owed at the rule
+      expect(res.plan!.stages.map((s) => s.name)).toEqual(['power', 'bulk-generous', 'bulk']);
+      expect(res.plan!.stages[1]!.strategy.clearanceNm).toBe(Math.round(res.candidates[0]!.design.board.rules.clearanceNm * 1.5));
+      expect(res.invocations.map((i) => i.stage!.name)).toEqual(['power', 'bulk-generous', 'bulk']);
       expect(res.candidates).toHaveLength(1);
       expect(res.outcome.status).toBe('PASS');
       expect(res.candidates[0]!.verify.metrics.completion_rate).toBe(1);
       const power = res.invocations[0]!.result!;
       expect(power.segments.length).toBeGreaterThan(0);
-      expect(res.invocations[1]!.stage!.carried!.segments).toHaveLength(power.segments.length);
+      const final = res.invocations[res.invocations.length - 1]!;
+      expect(final.stage!.final).toBe(true);
+      expect(final.stage!.carried!.segments.length).toBeGreaterThanOrEqual(power.segments.length);
+      expect(res.candidates[0]!.verify.metrics.completion_rate).toBe(1);
       // no piece of copper twice: an engine that echoes preserved wires must not double the composite
       const segs = res.candidates[0]!.design.routing.segments;
       const keys = new Set(segs.map((s) => `${s.netId}|${s.layer}|${[`${s.a.x},${s.a.y}`, `${s.b.x},${s.b.y}`].sort().join('|')}|${s.width}`));

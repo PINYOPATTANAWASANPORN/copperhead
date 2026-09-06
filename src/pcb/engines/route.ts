@@ -114,7 +114,7 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
   const mode = opts.mode ?? 'single';
   const layers = opts.layerPreferences?.length ? Object.fromEntries(opts.layerPreferences.map((p) => [p.layerId, p.mode === 'off' ? { active: false } : p.mode === 'any' ? { active: true } : { active: true, preferredDirection: p.mode }])) : undefined;
   const strategy: RoutingStrategy = { ...(layers ? { layers } : {}), ...(opts.strategy ?? {}) };
-  const plan = mode === 'staged' ? defaultStagedPlan(design, { engineIds: engines.map((e) => e.manifest.id), netIds, ...(opts.criticalNetNames ? { criticalNetNames: opts.criticalNetNames } : {}), ...(opts.layerPreferences ? { layerPreferences: opts.layerPreferences } : {}) }) : undefined;
+  const plan = mode === 'staged' ? defaultStagedPlan(design, { engineIds: engines.map((e) => e.manifest.id), netIds, clearanceNm: design.board.rules.clearanceNm, ...(opts.strategy?.noGenerous ? { noGenerous: true } : {}), ...(opts.criticalNetNames ? { criticalNetNames: opts.criticalNetNames } : {}), ...(opts.layerPreferences ? { layerPreferences: opts.layerPreferences } : {}) }) : undefined;
   if (plan) {
     await writeFile(path.join(run.root, 'plan.json'), JSON.stringify(plan, null, 2), 'utf8');
     for (const st of plan.stages) log(`stage ${st.name}: ${st.netIds ? `${st.netIds.length} net(s)` : 'every owed net'} via ${st.engineIds.join(st.race ? ' | ' : ', ')}${st.strategy.trackWidthNm ? ` at ${st.strategy.trackWidthNm / 1e6} mm` : ''}`);

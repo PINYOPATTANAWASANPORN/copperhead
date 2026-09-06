@@ -6,6 +6,7 @@
  * code). The rest are copperhead's own.
  */
 import type { PcbDesign } from '../ir/types.js';
+import { capsule, distance as polyDistance } from '../ir/geometry.js';
 import type { VerifyResult } from './index.js';
 
 export interface RoutingMetricsInput {
@@ -74,6 +75,7 @@ export function routingMetrics(input: RoutingMetricsInput): Record<string, numbe
     via_count: design.routing.vias.length,
     bend_count: bends,
     acute_angle_count: acute,
+    ...clearanceMargin(design),
     layer_transition_count: design.routing.vias.length,
     runtime_s: input.runtimeSeconds ?? 0,
     peak_memory_mb: input.peakMemoryMb ?? 0,
@@ -134,4 +136,41 @@ export function placementMetrics(input: { design: PcbDesign; verify: VerifyResul
     component_count: design.components.length,
     runtime_s: input.runtimeSeconds ?? 0,
   };
+}
+
+/**
+ * Margin: the smallest copper-to-copper gap between different nets (segment to segment and segment to pad, same layer),
+ * as a ratio to the rule, and the share of segments that sit within 10 % of the rule. Engines route at the rule
+ * unless asked otherwise; these say how much air the candidate left.
+ */
+export function clearanceMargin(design: PcbDesign): { clearance_min_ratio: number; tight_segment_share: number } {
+  const rule = design.board.rules.clearanceNm || 1;
+  const segs = design.routing.segments;
+  if (!segs.length) return { clearance_min_ratio: 1, tight_segment_share: 0 };
+  const pads = design.components.flatMap((c) => c.pads.map((p) => ({ netId: p.netId, layers: p.layers, poly: p.copper, at: p.at })));
+  const caps = segs.map((s) => ({ s, poly: capsule(s.a, s.b, s.width), cx: (s.a.x + s.b.x) / 2, cy: (s.a.y + s.b.y) / 2, r: Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y) / 2 + s.width }));
+  let min = Number.POSITIVE_INFINITY;
+  let tight = 0;
+  const near = rule * 1.1;
+  for (let i = 0; i < caps.length; i++) {
+    const a = caps[i]!;
+    let best = Number.POSITIVE_INFINITY;
+    for (let j = 0; j < caps.length; j++) {
+      if (i === j) continue;
+      const b = caps[j]!;
+      if (a.s.netId === b.s.netId || a.s.layer !== b.s.layer) continue;
+      if (Math.hypot(a.cx - b.cx, a.cy - b.cy) > a.r + b.r + rule * 4) continue; // cannot be closer than 4 rules
+      best = Math.min(best, polyDistance(a.poly, b.poly));
+      if (best <= near) break;
+    }
+    if (best > near) for (const p of pads) {
+      if (p.netId === a.s.netId || !p.layers.includes(a.s.layer)) continue;
+      if (Math.hypot(a.cx - p.at.x, a.cy - p.at.y) > a.r + rule * 6) continue;
+      best = Math.min(best, polyDistance(a.poly, p.poly));
+      if (best <= near) break;
+    }
+    if (best < min) min = best;
+    if (best <= near) tight++;
+  }
+  return { clearance_min_ratio: Number.isFinite(min) ? Math.round((min / rule) * 1000) / 1000 : 1, tight_segment_share: Math.round((tight / segs.length) * 1000) / 1000 };
 }

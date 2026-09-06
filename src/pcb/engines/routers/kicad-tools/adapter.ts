@@ -58,7 +58,7 @@ export class KicadToolsRouter implements RouterPlugin {
       boardPath = path.join(ctx.workDir, 'board-netcodes.kicad_pcb');
       await writeFile(boardPath, toCodeDialect(await readFile(ctx.boardPath, 'utf8'), design), 'utf8');
     }
-    const args = ['route', boardPath, '-o', outPath, '--strategy', strategy, '--trace-width', nmToMm(rules.trackWidthNm), '--clearance', nmToMm(rules.clearanceNm), '--via-drill', nmToMm(rules.viaDrillNm), '--via-diameter', nmToMm(rules.viaDiameterNm), '--timeout', String(Math.max(10, job.limits.wallSeconds - 5)), '--skip-drc', '--layers', '2'];
+    const args = ['route', boardPath, '-o', outPath, '--strategy', strategy, '--trace-width', nmToMm(rules.trackWidthNm), '--clearance', nmToMm(typeof job.strategy.clearanceNm === 'number' ? job.strategy.clearanceNm : rules.clearanceNm), '--via-drill', nmToMm(rules.viaDrillNm), '--via-diameter', nmToMm(rules.viaDiameterNm), '--timeout', String(Math.max(10, job.limits.wallSeconds - 5)), '--skip-drc', '--layers', '2'];
     if (job.scope.preserveExistingRoutes) args.push('--preserve-existing');
     if (job.scope.netIds) {
       const names = design.nets.filter((n) => job.scope.netIds!.includes(n.id)).map((n) => n.name);

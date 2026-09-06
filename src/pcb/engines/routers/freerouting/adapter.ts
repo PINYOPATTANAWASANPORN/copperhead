@@ -119,6 +119,7 @@ export class FreeroutingRouter implements RouterPlugin {
       preserveExistingRoutes: job.scope.preserveExistingRoutes,
       edgeClearanceNm: design.board.rules.copperEdgeClearanceNm,
       ...(typeof job.strategy.trackWidthNm === 'number' ? { trackWidthNm: job.strategy.trackWidthNm } : {}),
+      ...(typeof job.strategy.clearanceNm === 'number' ? { clearanceNm: job.strategy.clearanceNm } : {}),
       ...(job.strategy.layers && typeof job.strategy.layers === 'object' ? { layers: job.strategy.layers } : {}),
     });
     await writeFile(dsnPath, dsn, 'utf8');

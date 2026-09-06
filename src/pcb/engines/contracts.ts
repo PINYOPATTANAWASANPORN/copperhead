@@ -131,6 +131,8 @@ export interface RoutingStrategy {
   passes?: number;
   /** Width for every net in the job's scope, overriding the class width (staged power routing). */
   trackWidthNm?: number;
+  /** Clearance to route to when larger than the rule: margin the engine would not leave on its own. */
+  clearanceNm?: number;
   /** Per copper layer id: layer-preference constraints mapped onto the engine's layer settings. */
   layers?: Record<string, LayerStrategy>;
   /** Engine-specific knobs, validated by the adapter (e.g. kct strategy). */

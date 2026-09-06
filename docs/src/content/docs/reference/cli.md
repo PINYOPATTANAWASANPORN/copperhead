@@ -211,7 +211,7 @@ copperhead pcb render [board] [--out <svg>] [--plain] [--scale <n>]
 | `route` option | Description |
 | --- | --- |
 | `--routers <ids>` | Engine ids in preference order. Built in: `router-freerouting` (GPL, out of process, needs a JRE 25 and the jar), `router-kicad-tools` (MIT, needs `kct`), `router-reference` (harness fixtures only). |
-| `--mode <mode>` | `single` (first eligible engine), `race` and `ensemble` (every eligible engine, best candidate wins), `staged` (power and ground first at their class width, then `--critical-nets`, then the bulk by race). |
+| `--mode <mode>` | `single` (first eligible engine), `race` and `ensemble` (every eligible engine, best candidate wins), `staged` (power and ground first at their class width, then `--critical-nets`, then the bulk by race; every stage but the last asks the engines for 1.5× the clearance rule, at most 0.5 mm, and the last stage routes what is still owed at the rule, so tracks keep margin wherever there is room). |
 | `--nets <names>` | Route only these nets; every other net's copper stays and acts as an obstacle. |
 | `--layer-pref <specs>` | `F.Cu=horizontal,B.Cu=vertical`, or `<layer>=any` and `<layer>=off`; mapped onto the engine's own layer settings. |
 | `--preserve` | Keep the copper already on the board instead of ripping it up. |

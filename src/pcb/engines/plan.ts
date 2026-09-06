@@ -32,6 +32,10 @@ export interface LayerPreference {
 
 export interface PlanOptions {
   engineIds: string[];
+  /** The board's clearance rule; with it the bulk stage routes generous first (1.5x, at most 0.5 mm) and re-routes what is owed at the rule. */
+  clearanceNm?: number;
+  /** Turn the generous-first pass off. */
+  noGenerous?: boolean;
   /** Nets the intent (or the user) marked critical, by name. */
   criticalNetNames?: string[];
   layerPreferences?: LayerPreference[];
@@ -71,15 +75,22 @@ export function defaultStagedPlan(design: PcbDesign, opts: PlanOptions): StagedP
   }
   const layers = layerStrategy(opts.layerPreferences);
   const base: RoutingStrategy = layers ? { layers } : {};
+  // margin costs nothing where there is room: every stage but the last routes at 1.5x the rule (at most 0.5 mm);
+  // the last stage routes whatever is still owed at the rule itself
+  const generous = opts.clearanceNm && !opts.noGenerous ? Math.min(Math.round(opts.clearanceNm * 1.5), Math.max(opts.clearanceNm, 500_000)) : null;
+  const roomy: RoutingStrategy = generous && generous > (opts.clearanceNm ?? 0) ? { ...base, clearanceNm: generous } : base;
   const stages: RoutingStage[] = [];
   const first = opts.engineIds.slice(0, 1);
   if (power.length) {
     // width: the widest class among the power nets (physics-compiler or user classes land in netClasses)
     const widths = power.map((id) => design.board.rules.netClasses[design.nets.find((n) => n.id === id)!.netClass]?.trackWidthNm).filter((w): w is number => typeof w === 'number');
     const trackWidthNm = widths.length ? Math.max(...widths) : undefined;
-    stages.push({ name: 'power', engineIds: first, netIds: power, strategy: { ...base, ...(trackWidthNm ? { trackWidthNm } : {}) }, race: false });
+    stages.push({ name: 'power', engineIds: first, netIds: power, strategy: { ...roomy, ...(trackWidthNm ? { trackWidthNm } : {}) }, race: false });
   }
-  if (crit.length) stages.push({ name: 'critical', engineIds: first, netIds: crit, strategy: base, race: false });
-  if (bulk.length || !stages.length) stages.push({ name: 'bulk', engineIds: opts.engineIds, netIds: null, strategy: base, race: opts.engineIds.length > 1 });
+  if (crit.length) stages.push({ name: 'critical', engineIds: first, netIds: crit, strategy: roomy, race: false });
+  if (bulk.length || !stages.length) {
+    if (roomy !== base) stages.push({ name: 'bulk-generous', engineIds: opts.engineIds, netIds: null, strategy: roomy, race: opts.engineIds.length > 1 });
+    stages.push({ name: 'bulk', engineIds: opts.engineIds, netIds: null, strategy: base, race: opts.engineIds.length > 1 });
+  }
   return { stages, classification: { power, critical: crit, bulk } };
 }
