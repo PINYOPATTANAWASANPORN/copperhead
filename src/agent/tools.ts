@@ -90,6 +90,25 @@ function markTouched(ctx: RunContext, rel: string): void {
   }
 }
 
+
+/** The pcb_layout / pcb_repair tools: the closed loop on the configured board, applied, with the evidence recorded. */
+async function runLayoutTool(ctx: RunContext, opts: { place: boolean; budgetSeconds?: number }): Promise<string> {
+  if (!ctx.config.board) return 'no board configured';
+  const boardPath = path.join(ctx.repoRoot, ctx.config.board);
+  if (!existsSync(boardPath)) return `board not found: ${ctx.config.board}`;
+  const { layoutBoard } = await import('../pcb/agent/orchestrate.js');
+  const runDir = path.join(ctx.repoRoot, '.copperhead', 'runs', ctx.runId, opts.place ? 'layout' : 'repair');
+  const res = await layoutBoard({ repoRoot: ctx.repoRoot, config: ctx.config, boardPath, runDir, place: opts.place, ...(opts.budgetSeconds ? { budgetSeconds: opts.budgetSeconds } : {}), apply: true, provider: null });
+  if (res.applied) {
+    markTouched(ctx, ctx.config.board);
+    markTouched(ctx, path.join(ctx.config.docs, 'LAYOUT.md'));
+    ctx.lastDrc = res.routing?.candidates.find((c) => c.engineId === res.routing?.ranking.selected)?.drc ?? ctx.lastDrc;
+  }
+  const lines = [`${res.outcome.status}: ${res.outcome.summary}`, ...res.outcome.detail.slice(0, 12).map((d) => `  ${d}`), `run: ${path.relative(ctx.repoRoot, res.runDir)}${res.applied ? `; board and docs/LAYOUT.md updated` : '; board unchanged'}`];
+  if (res.outcome.status === 'HOLD') lines.push('HOLD: a human decision is needed before this can proceed; report it and stop.');
+  return lines.join('\n');
+}
+
 export const TOOLS: ToolDef[] = [
   {
     schema: {
@@ -256,6 +275,17 @@ export const TOOLS: ToolDef[] = [
         const head = (await readFile(abs, 'utf8')).slice(0, 400);
         if (isEngineAuthoredSchematic(head)) {
           return `refused: ${rel} is engine-drafted from ${defaultIntentPath(rel)}. Revise the intent (edit_file on the intent JSON) and call draft_schematic to regenerate the sheet; direct geometry edits would be lost on the next re-draft.`;
+        }
+      }
+      // A board the layout harness routed carries the harness's generator tag:
+      // its copper and zones are engine-owned and re-verified against the
+      // evidence, so a hand edit to them is refused (RFC 11 §12; ADR 0009).
+      // Placement edits (an `(at …)` line) stay allowed: the model moves parts.
+      if (rel.endsWith('.kicad_pcb') && existsSync(abs)) {
+        const head = (await readFile(abs, 'utf8')).slice(0, 600);
+        const touchesCopper = /\((segment|arc|via|zone)\b/.test(String(args.old_string ?? '')) || /\((segment|arc|via|zone)\b/.test(String(args.new_string ?? ''));
+        if (/\(generator "copperhead-pcb"\)/.test(head) && touchesCopper) {
+          return `refused: ${rel} was routed by the layout harness; its copper and zones are engine-owned and verified against the evidence in docs/LAYOUT.md. Move parts with edit_file on their (at …) lines and call pcb_repair (or pcb_layout) to route again; do not edit segments, arcs, vias, or zones by hand.`;
         }
       }
       // Text edits can corrupt an s-expression file in ways the editor cannot
@@ -632,6 +662,37 @@ export const TOOLS: ToolDef[] = [
       const layout = Object.values(res.registry).filter((c) => c.class).length;
       return `${layout} layout constraint(s) in .copperhead/constraints.json; ${res.blocks.length} block(s); ${res.holds.length} hold(s)${res.holds.length ? `:\n${res.holds.map((h) => `  HOLD ${h}`).join('\n')}` : ''}\nreport: .copperhead/runs/${ctx.runId}/intent-report.md\n\n${res.report}`;
     },
+  },
+  {
+    schema: {
+      name: 'pcb_layout',
+      description:
+        'Lay the configured board out through the layout harness (RFC 11 §12): place with the staged plan and the wrapped placers, route with the wrapped routers, verify every candidate independently, repair within the budget, write the result over the board and the evidence into docs/LAYOUT.md. You never route or place yourself. Requires a validated change proposal.',
+      parameters: {
+        type: 'object',
+        properties: {
+          place: { type: 'boolean', description: 'run placement (default true); false routes the board as placed' },
+          budget_seconds: { type: 'number', description: 'engine-second and wall-clock budget (default: pcb.budgetSeconds or 600)' },
+        },
+      },
+    },
+    requiresUnlock: true,
+    handler: async (ctx, args) => runLayoutTool(ctx, { place: args.place !== false, ...(typeof args.budget_seconds === 'number' ? { budgetSeconds: args.budget_seconds } : {}) }),
+  },
+  {
+    schema: {
+      name: 'pcb_repair',
+      description:
+        'Repair the configured board\'s layout after you moved parts: route again through the wrapped routers with the repair loop, verify, and refresh the evidence in docs/LAYOUT.md. Placement is kept as it stands. Requires a validated change proposal.',
+      parameters: {
+        type: 'object',
+        properties: {
+          budget_seconds: { type: 'number' },
+        },
+      },
+    },
+    requiresUnlock: true,
+    handler: async (ctx, args) => runLayoutTool(ctx, { place: false, ...(typeof args.budget_seconds === 'number' ? { budgetSeconds: args.budget_seconds } : {}) }),
   },
   {
     schema: {

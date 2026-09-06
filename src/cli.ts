@@ -551,6 +551,54 @@ pcbGroup
     }
   });
 pcbGroup
+  .command('layout')
+  .description('the closed loop: place, route, verify, repair within a budget, record the evidence (RFC 11 §12); the model appears only in the repair planner')
+  .option('--board <path>', 'board (default: the configured board)')
+  .option('--no-place', 'route the board as placed')
+  .option('--no-route', 'place only')
+  .option('--budget-seconds <n>', 'engine-second and wall-clock budget for the whole loop (default: config or 600)')
+  .option('--max-repair-cycles <n>', 'repair cycles after the first pass (default: config maxRepairCycles or 3)')
+  .option('--model <model>', 'model for the repair planner; without one a deterministic policy picks the action')
+  .option('--seed <n>', 'seed for seeded engines', '0')
+  .option('--allow-harness-engines', 'let the reference placer and router compete (harness fixtures only)', false)
+  .option('--apply', 'write the result over the board file and record the evidence in docs/LAYOUT.md', false)
+  .option('--run-dir <path>', 'where to write the run (default: .copperhead/runs/<ts>/layout)')
+  .action(async (opts: { board?: string; place: boolean; route: boolean; budgetSeconds?: string; maxRepairCycles?: string; model?: string; seed: string; allowHarnessEngines: boolean; apply: boolean; runDir?: string }) => {
+    const repo = repoOf(program.opts());
+    const json = Boolean(program.opts().json);
+    try {
+      const { boardPath, config } = await pcbBoard(repo, opts.board);
+      const path = await import('node:path');
+      const { layoutBoard } = await import('./pcb/agent/orchestrate.js');
+      const pcb = config.pcb ?? {};
+      let provider = null;
+      if (opts.model) {
+        const { makeProvider } = await import('./agent/loop.js');
+        const { resolveCompatSettings } = await import('./config.js');
+        provider = await makeProvider(opts.model, false, resolveCompatSettings(config));
+      }
+      const runDir = opts.runDir ? path.resolve(repo, opts.runDir) : path.join(repo, '.copperhead', 'runs', new Date().toISOString().replace(/[:.]/g, '-'), 'layout');
+      const res = await layoutBoard({
+        repoRoot: repo, config, boardPath, runDir, place: opts.place, route: opts.route, ...(opts.budgetSeconds ? { budgetSeconds: Number(opts.budgetSeconds) } : {}), ...(opts.maxRepairCycles ? { maxRepairCycles: Number(opts.maxRepairCycles) } : {}), seed: Number(opts.seed), provider,
+        policy: { network: pcb.allowRemoteEngines ? 'required' : 'optional', allowHarnessEngines: opts.allowHarnessEngines || (pcb.allowHarnessEngines ?? false), denyLicenses: [] }, apply: opts.apply,
+        ...(opts.allowHarnessEngines ? { probeRouter: 'router-reference' } : {}),
+        log: json ? () => {} : (l) => console.error(l),
+      });
+      if (provider) await provider.close?.();
+      if (json) console.log(JSON.stringify({ ...res.outcome, diagnostics: res.outcome.diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message })), runDir: path.relative(repo, res.runDir), applied: res.applied, cycles: res.cycles, holds: res.holds, evidence: res.evidence ? { status: res.evidence.status, selected: res.evidence.selected, boardHash: res.evidence.boardHash } : null }, null, 2));
+      else {
+        console.log(`${res.outcome.status}: ${res.outcome.summary}`);
+        for (const d of res.outcome.detail) console.log(`  ${d}`);
+        console.log(`  run: ${path.relative(repo, res.runDir)}${res.applied ? `; applied to ${path.relative(repo, boardPath)}, evidence in ${path.join(config.docs, 'LAYOUT.md')}` : ''}`);
+      }
+      const { EXIT_CODE } = await import('./pcb/ir/status.js');
+      process.exit(EXIT_CODE[res.outcome.status]);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+pcbGroup
   .command('verify')
   .description('verify one board file: pre-flight, geometry, connectivity, return path, KiCad DRC')
   .argument('[board]', 'board file (default: the configured board)')

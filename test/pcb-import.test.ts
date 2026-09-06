@@ -117,8 +117,9 @@ describe('golden microboards import cleanly', () => {
     expect(design.source.contentHash).toHaveLength(64);
   });
 
-  it('keepout: the rule area becomes a keepout with its prohibitions', async () => {
-    const { design } = importBoard({ boardText: await readFile(path.join(GOLDEN, 'keepout', 'board.kicad_pcb'), 'utf8'), boardPath: 'k', now: 't' });
+  it('keepout: a rule area becomes a keepout with its prohibitions', async () => {
+    // the golden keepout board now carries its ring as intent; this fixture is the earlier rule-area version
+    const { design } = importBoard({ boardText: await readFile(path.join(HERE, 'fixtures', 'pcb', 'keepout-rule-area.kicad_pcb'), 'utf8'), boardPath: 'k', now: 't' });
     expect(design.board.keepouts).toHaveLength(1);
     expect(design.board.keepouts[0]!.prohibits.sort()).toEqual(['copper', 'footprints', 'pads', 'tracks', 'vias']);
     expect(design.routing.zones[0]!.isKeepout).toBe(true);

@@ -1,0 +1,256 @@
+/**
+ * The closed loop (RFC 11 §12, implementation spec §9 and §11): place, route,
+ * verify, repair within a budget, record. `pcb layout` and the pipeline call
+ * this; the model appears only through the repair planner's one JSON-validated
+ * turn per cycle, and never places or routes anything itself.
+ */
+import { readFile, writeFile, mkdir, copyFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import type { CopperheadConfig } from '../../config.js';
+import type { Provider } from '../../agent/types.js';
+import { placeBoard, defaultPlacerRegistry, type PlaceRun } from '../engines/place.js';
+import { routeBoard, defaultRegistry as defaultRouterRegistry, type RouteRun } from '../engines/route.js';
+import { EngineRegistry, type EnginePolicy } from '../engines/registry.js';
+import type { Outcome, LayoutStatus } from '../ir/status.js';
+import type { Diagnostic } from '../verify/diagnostic.js';
+import { importBoard } from '../ir/kicad/import.js';
+import { applyCandidate } from '../ir/kicad/export.js';
+import { deriveBlocks } from '../intent/blocks.js';
+import { loadConstraints } from '../intent/load.js';
+import { readCache, applicable, toStageInputs } from '../intent/references.js';
+import { evidenceFromRun, recordEvidence } from '../layout-stage.js';
+import type { LayoutEvidence, ContractVerdict } from '../evidence.js';
+import { planRepair } from './repair/planner.js';
+import type { RepairAction } from './repair/catalog.js';
+
+export interface LayoutOptions {
+  repoRoot: string;
+  config: CopperheadConfig;
+  boardPath: string;
+  runDir: string;
+  /** Skip placement (route the board as placed). */
+  place?: boolean;
+  /** Skip routing (place only). */
+  route?: boolean;
+  budgetSeconds?: number;
+  maxRepairCycles?: number;
+  seed?: number;
+  provider?: Provider | null;
+  policy?: EnginePolicy;
+  placerRegistry?: EngineRegistry;
+  routerRegistry?: EngineRegistry;
+  probeRouter?: string;
+  /** Write the result over the board file when it ends PASS or PARTIAL. */
+  apply?: boolean;
+  log?: (line: string) => void;
+}
+
+export interface LayoutCycle {
+  n: number;
+  action: RepairAction | null;
+  status: LayoutStatus;
+  summary: string;
+  errors: number;
+  owed: number;
+  seconds: number;
+}
+
+export interface LayoutResult {
+  outcome: Outcome<Diagnostic>;
+  runDir: string;
+  /** The board text of the selected result (the working board after the last cycle). */
+  boardPath: string;
+  applied: boolean;
+  evidence: LayoutEvidence | null;
+  verdict: ContractVerdict | null;
+  cycles: LayoutCycle[];
+  placement: PlaceRun | null;
+  routing: RouteRun | null;
+  holds: string[];
+}
+
+function nowStamp(): string {
+  return new Date().toISOString().replace(/[:.]/g, '-');
+}
+
+export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
+  const log = opts.log ?? (() => {});
+  const t0 = Date.now();
+  const pcb = opts.config.pcb ?? {};
+  const budget = opts.budgetSeconds ?? pcb.budgetSeconds ?? 600;
+  const maxCycles = opts.maxRepairCycles ?? opts.config.maxRepairCycles ?? 3;
+  const policy: EnginePolicy = opts.policy ?? { network: pcb.allowRemoteEngines ? 'required' : 'optional', allowHarnessEngines: pcb.allowHarnessEngines ?? false, denyLicenses: [] };
+  const placers = opts.placerRegistry ?? defaultPlacerRegistry(opts.repoRoot);
+  const routers = opts.routerRegistry ?? defaultRouterRegistry(opts.repoRoot);
+  const routerIds = pcb.routers ?? routers.list('router').map((e) => e.manifest.id);
+  await mkdir(opts.runDir, { recursive: true });
+  // the working board: a copy the cycles write to; the user's file changes only on apply
+  const work = path.join(opts.runDir, 'board.kicad_pcb');
+  await copyFile(opts.boardPath, work);
+  const proSrc = opts.boardPath.replace(/\.kicad_pcb$/, '.kicad_pro');
+  if (existsSync(proSrc)) await copyFile(proSrc, work.replace(/\.kicad_pcb$/, '.kicad_pro'));
+  const docsDir = path.join(opts.repoRoot, opts.config.docs);
+  const holds: string[] = [];
+  const cycles: LayoutCycle[] = [];
+  const history: RepairAction[] = [];
+  let placement: PlaceRun | null = null;
+  let routing: RouteRun | null = null;
+  let lastRoutingSeconds = 0, lastPlacementSeconds = 0;
+  let routeStrategy: Record<string, string | number | boolean> = {};
+  let routeOrder: string[] | null = null;
+  let routerPick: string[] | null = null;
+  let ripUp: string[] | null = null;
+  // whole seconds: the limits land in the snapshot, whose canonical form holds integers only
+  const remaining = () => ({ engineSeconds: Math.max(0, Math.floor(budget - (Date.now() - t0) / 1000)), wallSeconds: Math.max(0, Math.floor(budget - (Date.now() - t0) / 1000)) });
+
+  // intent: the board's own rules plus the intent file; blocks from the docs; approved reference blocks
+  const first = importBoard({ boardText: await readFile(work, 'utf8'), boardPath: work });
+  const loaded = await loadConstraints(first.design, opts.boardPath, { intentPath: pcb.intentPath ?? null, docsDir, repoRoot: opts.repoRoot });
+  holds.push(...loaded.holds);
+  const subsystems = path.join(docsDir, 'SUBSYSTEMS.md');
+  const schematicIntentPath = opts.config.schematic ? path.join(path.dirname(path.join(opts.repoRoot, opts.config.schematic)), 'schematic.intent.json') : null;
+  const blocks = deriveBlocks({ design: first.design, subsystemsMd: existsSync(subsystems) ? await readFile(subsystems, 'utf8') : null, schematicIntent: schematicIntentPath && existsSync(schematicIntentPath) ? JSON.parse(await readFile(schematicIntentPath, 'utf8')) : null });
+  const refs = applicable((await readCache(opts.repoRoot)).filter((b) => blocks.some((k) => k.anchor === b.target.anchorId)));
+  const reuse = refs.map((b) => toStageInputs(b).reuse);
+  const refAttached = refs.flatMap((b) => toStageInputs(b).attached);
+  if (holds.length) {
+    const outcome: Outcome<Diagnostic> = { status: 'HOLD', summary: `intent holds: ${holds[0]}${holds.length > 1 ? ` (+${holds.length - 1})` : ''}`, detail: holds, diagnostics: [] };
+    await writeFile(path.join(opts.runDir, 'outcome.json'), JSON.stringify(outcome, null, 2), 'utf8');
+    return { outcome, runDir: opts.runDir, boardPath: work, applied: false, evidence: null, verdict: null, cycles, placement: null, routing: null, holds };
+  }
+
+  const runPlacement = async (n: number, moveGroup?: { refs: string[]; dx: number; dy: number }): Promise<Outcome<Diagnostic>> => {
+    const t = Date.now();
+    if (moveGroup) {
+      // a planner move: apply it to the working board first, then let the plan re-place the rest with those parts held
+      const d = importBoard({ boardText: await readFile(work, 'utf8'), boardPath: work }).design;
+      const moved = d.components.filter((c) => moveGroup.refs.includes(c.reference)).map((c) => ({ id: c.id, at: { x: c.at.x + moveGroup.dx, y: c.at.y + moveGroup.dy }, rotation: c.rotation, side: c.attributes.side }));
+      await writeFile(work, applyCandidate(await readFile(work, 'utf8'), d, { placement: moved }).text, 'utf8');
+    }
+    placement = await placeBoard({
+      repoRoot: opts.repoRoot, boardPath: work, runDir: path.join(opts.runDir, `cycle-${n}`, 'placement'), ...(pcb.placers ? { placers: pcb.placers } : {}), mode: pcb.mode === 'staged' || !pcb.mode ? 'ensemble' : pcb.mode, seed: opts.seed ?? 0,
+      limits: { engineSeconds: Math.max(10, Math.floor(remaining().engineSeconds / 2)), wallSeconds: Math.max(10, Math.floor(remaining().wallSeconds / 2)) }, policy, registry: placers, probe: { ...(opts.probeRouter ? { routerId: opts.probeRouter } : {}), registry: routers, budgetSeconds: Math.min(120, Math.max(10, Math.floor(remaining().engineSeconds / 4))) },
+      blocks, ...(reuse.length ? { reuse } : {}), ...(refAttached.length ? { attached: [...refAttached] } : {}), docsDir, intentPath: pcb.intentPath ?? null,
+      ...(moveGroup ? { movableReferences: importBoard({ boardText: await readFile(work, 'utf8'), boardPath: work }).design.components.filter((c) => !moveGroup.refs.includes(c.reference)).map((c) => c.reference) } : {}),
+      log: (l) => log(`  place: ${l}`),
+    });
+    lastPlacementSeconds = (Date.now() - t) / 1000;
+    const sel = placement.ranking.selected ? placement.candidates.find((c) => c.engineId === placement!.ranking.selected) : undefined;
+    if (sel && (placement.outcome.status === 'PASS' || placement.outcome.status === 'PARTIAL')) await copyFile(sel.pcbPath, work);
+    return placement.outcome;
+  };
+
+  const runRouting = async (n: number): Promise<Outcome<Diagnostic>> => {
+    const t = Date.now();
+    routing = await routeBoard({
+      repoRoot: opts.repoRoot, boardPath: work, runDir: path.join(opts.runDir, `cycle-${n}`, 'routing'), routers: routerPick ?? routerIds, mode: 'staged', seed: opts.seed ?? 0,
+      limits: { engineSeconds: Math.max(10, remaining().engineSeconds), wallSeconds: Math.max(10, remaining().wallSeconds) }, policy, registry: routers, strategy: routeStrategy,
+      ...(routeOrder ? { criticalNetNames: routeOrder } : {}), ...(ripUp ? { netNames: ripUp, preserveExistingRoutes: true } : {}), ...(pcb.maxParallelEngines ? { maxParallel: pcb.maxParallelEngines } : {}),
+      log: (l) => log(`  route: ${l}`),
+    });
+    lastRoutingSeconds = (Date.now() - t) / 1000;
+    const sel = routing.ranking.selected ? routing.candidates.find((c) => c.engineId === routing!.ranking.selected) : undefined;
+    if (sel && (routing.outcome.status === 'PASS' || routing.outcome.status === 'PARTIAL')) await copyFile(sel.pcbPath, work);
+    return routing.outcome;
+  };
+
+  // cycle 0: place, route
+  let outcome: Outcome<Diagnostic> = { status: 'PARTIAL', summary: 'nothing ran', detail: [], diagnostics: [] };
+  const record = (n: number, action: RepairAction | null, o: Outcome<Diagnostic>, t: number) => {
+    const owed = o.diagnostics.filter((d) => d.code === 'conn.unrouted').length;
+    cycles.push({ n, action, status: o.status, summary: o.summary, errors: o.diagnostics.filter((d) => d.severity === 'error').length, owed, seconds: (Date.now() - t) / 1000 });
+    log(`cycle ${n}${action ? ` (${action.type})` : ''}: ${o.status}: ${o.summary}`);
+  };
+  const tc = Date.now();
+  if (opts.place !== false) {
+    outcome = await runPlacement(0);
+    if (outcome.status === 'REFUSE' || outcome.status === 'HOLD' || outcome.status === 'UNSUPPORTED' || outcome.status === 'INVALID_OUTPUT') {
+      record(0, null, outcome, tc);
+      return finish(outcome);
+    }
+  }
+  if (opts.route !== false) outcome = await runRouting(0);
+  record(0, null, outcome, tc);
+
+  // repair cycles
+  for (let n = 1; n <= maxCycles && outcome.status !== 'PASS'; n++) {
+    if (outcome.status === 'HOLD' || outcome.status === 'REFUSE' || outcome.status === 'UNSUPPORTED' || outcome.status === 'INVALID_OUTPUT') break;
+    const left = remaining();
+    if (left.engineSeconds < 10) {
+      log(`budget exhausted after cycle ${n - 1}`);
+      break;
+    }
+    // plan over the selected candidate's full diagnostics: owed connections are info-severity and the outcome drops them
+    const selectedDiags = ((routing as RouteRun | null)?.candidates.find((c) => c.engineId === (routing as RouteRun | null)?.ranking.selected) ?? (placement as PlaceRun | null)?.candidates.find((c) => c.engineId === (placement as PlaceRun | null)?.ranking.selected))?.verify.diagnostics ?? outcome.diagnostics;
+    const plan = await planRepair({ diagnostics: selectedDiags, ranking: (routing as RouteRun | null)?.ranking ?? (placement as PlaceRun | null)?.ranking ?? null, budgetRemaining: left, last: { routingSeconds: lastRoutingSeconds, placementSeconds: lastPlacementSeconds }, history, routers: routerIds, provider: opts.provider ?? null });
+    if (!plan.action) {
+      log(`no repair action: ${plan.reason}`);
+      break;
+    }
+    const a = plan.action;
+    history.push(a);
+    log(`repair ${n}: ${a.type} (${plan.fromModel ? 'model' : 'policy'}): ${a.reason}`);
+    if (a.type === 'request-user-action') {
+      outcome = { status: 'HOLD', summary: `a hard constraint cannot be met here: ${a.reason}`, detail: [String(a.parameters.question ?? a.reason), ...outcome.detail], diagnostics: outcome.diagnostics };
+      record(n, a, outcome, Date.now());
+      break;
+    }
+    const tn = Date.now();
+    routeOrder = null; ripUp = null;
+    switch (a.type) {
+      case 'tune-router': routeStrategy = { ...routeStrategy, ...(typeof a.parameters.passes === 'number' ? { passes: a.parameters.passes } : {}), ...(typeof a.parameters.strategy === 'string' ? { strategy: a.parameters.strategy } : {}) }; break;
+      case 'select-router': routerPick = [String(a.parameters.routerId)]; break;
+      case 'change-net-priority': routeOrder = Array.isArray(a.parameters.nets) ? (a.parameters.nets as string[]) : null; break;
+      case 'rip-up-nets': ripUp = Array.isArray(a.parameters.nets) ? (a.parameters.nets as string[]) : null; break;
+      case 'use-ranked-candidate': {
+        const r: RouteRun | PlaceRun | null = (routing as RouteRun | null) ?? (placement as PlaceRun | null);
+        const next = r?.ranking.candidates.filter((c) => c.eligible)[Number(a.parameters.rank ?? 2) - 1];
+        const cand = next ? r!.candidates.find((c) => c.engineId === next.id) : undefined;
+        if (cand) {
+          await copyFile(cand.pcbPath, work);
+          outcome = { ...outcome, status: (cand.verify.metrics.unrouted_count ?? 0) > 0 ? 'PARTIAL' : 'PASS', summary: `${next!.id} taken from the ranking`, diagnostics: cand.verify.diagnostics.filter((d) => d.severity !== 'info') };
+        }
+        record(n, a, outcome, tn);
+        continue;
+      }
+      case 'move-group': case 'rotate-component': case 'resize-region': {
+        const refs = Array.isArray(a.parameters.refs) ? (a.parameters.refs as string[]) : typeof a.parameters.ref === 'string' ? [a.parameters.ref] : [];
+        const dx = Math.round(Number(a.parameters.dx_mm ?? 0) * 1e6), dy = Math.round(Number(a.parameters.dy_mm ?? 0) * 1e6);
+        outcome = await runPlacement(n, refs.length ? { refs, dx, dy } : undefined);
+        if (outcome.status === 'PASS' || outcome.status === 'PARTIAL') outcome = await runRouting(n);
+        record(n, a, outcome, tn);
+        continue;
+      }
+    }
+    outcome = await runRouting(n);
+    record(n, a, outcome, tn);
+  }
+  return finish(outcome);
+
+  async function finish(o: Outcome<Diagnostic>): Promise<LayoutResult> {
+    let applied = false;
+    let evidence: LayoutEvidence | null = null;
+    let verdict: ContractVerdict | null = null;
+    const finalRouting = routing as RouteRun | null;
+    if (finalRouting) {
+      // the evidence describes the routing run that produced the working board; the board hash is the working board's (or the user's, after apply)
+      const target = opts.apply && (o.status === 'PASS' || o.status === 'PARTIAL') ? opts.boardPath : work;
+      if (target === opts.boardPath) {
+        await copyFile(work, opts.boardPath);
+        applied = true;
+      }
+      const routingWithOutcome: RouteRun = { ...finalRouting, outcome: o };
+      evidence = await evidenceFromRun(opts.repoRoot, target, routingWithOutcome);
+      evidence.runDir = path.relative(opts.repoRoot, opts.runDir);
+      if (applied) verdict = await recordEvidence(opts.repoRoot, opts.config.docs, target, evidence);
+      else await writeFile(path.join(opts.runDir, 'evidence.json'), JSON.stringify(evidence, null, 2), 'utf8');
+    }
+    const detail = [...o.detail, ...cycles.map((c) => `cycle ${c.n}${c.action ? ` ${c.action.type}` : ''}: ${c.status}, ${c.errors} error(s), ${c.owed} owed, ${c.seconds.toFixed(1)} s`)];
+    const outcome: Outcome<Diagnostic> = { ...o, detail };
+    await writeFile(path.join(opts.runDir, 'outcome.json'), JSON.stringify({ ...outcome, diagnostics: outcome.diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message, entityReferences: d.entityReferences })), cycles }, null, 2), 'utf8');
+    return { outcome, runDir: opts.runDir, boardPath: work, applied, evidence, verdict, cycles, placement: placement as PlaceRun | null, routing: finalRouting, holds };
+  }
+}
+
+export { nowStamp };
