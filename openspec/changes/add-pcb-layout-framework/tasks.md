@@ -36,7 +36,14 @@
 
 ## 4. Checkpoint
 
-- [ ] 4.1 Publish the B1 evidence and decide, in a recorded ADR, whether Phase 3 proceeds now or the routing harness alone ships in `create` stage 5 (populate, DRC, wrapped routing with evidence, model moves parts); reconcile with the validation plan — B1 published (`bench/reports/B1-2026-09-06.md`); ADR 0009 proposes routing-first then Phase 3, awaiting the owner's decision
+- [x] 4.1 Publish the B1 evidence and decide, in a recorded ADR, whether Phase 3 proceeds now or the routing harness alone ships in `create` stage 5 (populate, DRC, wrapped routing with evidence, model moves parts); reconcile with the validation plan — B1 published (`bench/reports/B1-2026-09-06.md`); ADR 0009 proposes routing-first then Phase 3, accepted 2026-09-06: routing ships first (group 4b), then Phase 3
+
+## 4b. Phase 2b: routing in `create` and `check` (ADR 0009)
+
+- [ ] 4b.1 Completion contract for layout evidence: `outcome.status ∈ {PASS, PARTIAL}`, `snapshot.hash === hashDesign(import(board))`, evidence markers in `docs/LAYOUT.md` naming the run directory, selected engine, and metrics
+- [ ] 4b.2 `create` stage 5: after population, verify the board (pre-flight and placement gates), route it through `routeBoard` with the configured engines and budget, apply the selected candidate, render the evidence summary ("Board as routed" block with the diagnostics and metrics), and hand the model only the placed-parts moves on a gate failure; no model call routes
+- [ ] 4b.3 `check`: when `docs/LAYOUT.md` carries the evidence markers, run pre-flight, geometry, connectivity, return path, and KiCad DRC on the committed board and print the layout track; no engine, no model, no network (AC-17.5 guard extended)
+- [ ] 4b.4 Docs (`create`, `check`, `LAYOUT.md`), tests for the contract and both surfaces; Phase 4's `check` task (7.x) reduced to the intent checkers
 
 ## 5. Phase 3: placement harness
 

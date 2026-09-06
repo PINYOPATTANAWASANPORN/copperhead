@@ -1,6 +1,6 @@
 # ADR 0009: Phase 2 checkpoint — ship the routing harness first, then Phase 3
 
-**Status:** Proposed (2026-09-06), pending the change owner's confirmation
+**Status:** Accepted (2026-09-06)
 **RFC:** 11 §13.5 (B1), §14.2 (checkpoint after Phase 2), Appendix B
 
 ## Evidence

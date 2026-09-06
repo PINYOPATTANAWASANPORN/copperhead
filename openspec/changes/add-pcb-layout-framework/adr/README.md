@@ -14,4 +14,4 @@ One file per decision RFC 11 leaves to the implementation (its Appendix C.2 and 
 | [0008](0008-engine-roster.md) | The v1 engine roster and each wrapper's invocation, from live runs | §8.2, §9.2 |
 | [0009](0009-phase-2-checkpoint.md) | Phase 2 checkpoint: ship the routing harness in `create`/`check` first, then Phase 3 | §13.5, §14.2, Appendix B |
 
-Status values: Proposed, Accepted, Superseded. 0001 to 0008 were accepted by the change owner on 2026-09-06; 0009 is proposed and awaits the owner's decision at the Phase 2 checkpoint.
+Status values: Proposed, Accepted, Superseded. All nine were accepted by the change owner on 2026-09-06; 0009 records the Phase 2 checkpoint decision (routing ships in `create`/`check` before Phase 3).
