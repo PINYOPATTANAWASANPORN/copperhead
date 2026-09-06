@@ -57,12 +57,12 @@
 
 ## 6. Phase 4: intent
 
-- [ ] 6.1 Layout constraint classes in `src/memory/constraints.ts` and `record_constraint` (additive fields); registry documentation in the generated `.copperhead/README.md`
+- [x] 6.1 Layout constraint classes in `src/memory/constraints.ts` and `record_constraint` (additive fields); registry documentation in the generated `.copperhead/README.md`
 - [x] 6.2 ECAD ingestion on import (`source: ecad_rules`, re-derived every import, `HOLD` on contradiction)
-- [ ] 6.3 Intent language (§7.3) parser; intent compiler with block and role identification through the fact base, provenance, approval, and `HOLD`; refdes-to-id resolution
-- [ ] 6.4 Physics compiler: IPC-2152-compatible current-width where data exists, advisory otherwise; impedance `HOLD` without stackup; stackup class accepted but pinned to one two-layer profile
+- [x] 6.3 Intent language (§7.3) parser; intent compiler with block and role identification through the fact base, provenance, approval, and `HOLD`; refdes-to-id resolution (`src/pcb/agent/intent/compiler.ts`; the fact base is BOM.md plus `.copperhead/datasheets/*.txt|md`; `pcb infer-intent --model` runs the two model steps, the `pcb_infer_intent` tool is deterministic because the agent is the model)
+- [x] 6.4 Physics compiler (IPC-2221 generic formula vendored as `vendor/ipc/current-width.json`; the IPC-2152 tables are not redistributable): IPC-2152-compatible current-width where data exists, advisory otherwise; impedance `HOLD` without stackup; stackup class accepted but pinned to one two-layer profile
 - [ ] 6.4a Reference layout retrieval, network sources: the `datasheet` source (rule extraction from the cached datasheet, figure reading by one model call with capped confidence) and online design search through the part-research `web_search` client with shallow clones under `var/refs/`; `pcb_find_references` tool and `--refresh-references` / `--approve-reference` on `pcb layout`; transcript network log
-- [ ] 6.5 Intent checker for fixed, edge, orientation, attachment, group (spread against budget, region containment), region, separation, keepout (done; orientation is declared-but-not-evaluated, info severity); layout track in `check` runs it (done); `pcb_infer_intent` tool and `copperhead pcb infer-intent` land with the compiler (6.3)
+- [x] 6.5 Intent checker for fixed, edge, orientation, attachment, group (spread against budget, region containment), region, separation, keepout (orientation is declared-but-not-evaluated, info severity); `pcb_infer_intent` tool; `copperhead pcb infer-intent`; layout track in `check` (AC-17.14)
 - [ ] 6.6 Track E (intent) and track F (refusal) in the bench with the curated microboard categories of §13.3
 - [ ] 6.7 Exit: B3 report (≥90% of applicable hard intent constraints pass; no geometry-invalid candidate marked complete)
 

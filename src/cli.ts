@@ -501,6 +501,56 @@ pcbGroup
     }
   });
 pcbGroup
+  .command('infer-intent')
+  .description('compile layout intent (RFC 11 §7.4): blocks, the intent file, the board\'s own rules, and (with a model) roles and datasheet-derived rules, merged into .copperhead/constraints.json with an intent report')
+  .option('--board <path>', 'board (default: the configured board)')
+  .option('--model <model>', 'model for the two model steps (roles, derived rules); without one the compile is deterministic')
+  .option('--intent <path>', 'intent file (default: pcb.intentPath or docs/LAYOUT.intent.yaml)')
+  .option('--run-dir <path>', 'where intent-report.md goes (default: .copperhead/runs/<ts>/intent)')
+  .option('--dry-run', 'print the report, write nothing', false)
+  .action(async (opts: { board?: string; model?: string; intent?: string; runDir?: string; dryRun: boolean }) => {
+    const repo = repoOf(program.opts());
+    const json = Boolean(program.opts().json);
+    try {
+      const { boardPath, config } = await pcbBoard(repo, opts.board);
+      const path = await import('node:path');
+      const { readFile } = await import('node:fs/promises');
+      const { existsSync } = await import('node:fs');
+      const { importBoard } = await import('./pcb/ir/kicad/import.js');
+      const { compileIntent, cachedDatasheets } = await import('./pcb/agent/intent/compiler.js');
+      const { loadConstraints: loadRegistry, saveConstraints } = await import('./memory/constraints.js');
+      const read = async (p: string) => (existsSync(p) ? readFile(p, 'utf8') : Promise.resolve(null));
+      const intentPath = opts.intent ? path.resolve(repo, opts.intent) : path.join(repo, config.pcb?.intentPath ?? path.join(config.docs, 'LAYOUT.intent.yaml'));
+      const schematicIntentPath = config.schematic ? path.join(path.dirname(path.join(repo, config.schematic)), 'schematic.intent.json') : null;
+      const runDir = opts.runDir ? path.resolve(repo, opts.runDir) : path.join(repo, '.copperhead', 'runs', new Date().toISOString().replace(/[:.]/g, '-'), 'intent');
+      let provider = null;
+      if (opts.model) {
+        const { makeProvider } = await import('./agent/loop.js');
+        const { resolveCompatSettings } = await import('./config.js');
+        provider = await makeProvider(opts.model, false, resolveCompatSettings(config));
+      }
+      const { design } = importBoard({ boardText: await readFile(boardPath, 'utf8'), boardPath });
+      const res = await compileIntent({
+        repoRoot: repo, design, intentText: await read(intentPath), subsystemsMd: await read(path.join(repo, config.docs, 'SUBSYSTEMS.md')),
+        schematicIntent: schematicIntentPath && existsSync(schematicIntentPath) ? JSON.parse(await readFile(schematicIntentPath, 'utf8')) : null,
+        bomMd: await read(path.join(repo, config.docs, 'BOM.md')), datasheets: await cachedDatasheets(repo), registry: await loadRegistry(repo), provider, ...(opts.dryRun ? {} : { runDir }),
+      });
+      if (provider) await provider.close?.();
+      if (!opts.dryRun) await saveConstraints(repo, res.registry);
+      const layout = Object.entries(res.registry).filter(([, c]) => c.class);
+      if (json) console.log(JSON.stringify({ status: res.holds.length ? 'HOLD' : 'PASS', constraints: layout.length, blocks: res.blocks.map((b) => ({ id: b.id, members: b.members.length, region: !!b.region })), roles: res.roles, holds: res.holds, rejected: res.rejected, runDir: opts.dryRun ? null : path.relative(repo, runDir), written: !opts.dryRun }, null, 2));
+      else {
+        console.log(res.report);
+        if (!opts.dryRun) console.log(`\nwrote ${layout.length} layout constraint(s) to .copperhead/constraints.json; report in ${path.relative(repo, runDir)}/intent-report.md`);
+      }
+      const { EXIT_CODE } = await import('./pcb/ir/status.js');
+      process.exit(res.holds.length ? EXIT_CODE.HOLD : 0);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+pcbGroup
   .command('verify')
   .description('verify one board file: pre-flight, geometry, connectivity, return path, KiCad DRC')
   .argument('[board]', 'board file (default: the configured board)')

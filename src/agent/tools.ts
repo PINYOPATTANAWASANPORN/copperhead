@@ -594,6 +594,47 @@ export const TOOLS: ToolDef[] = [
   },
   {
     schema: {
+      name: 'pcb_infer_intent',
+      description:
+        'Compile layout intent for the configured board (RFC 11 §7.4): functional blocks from docs/SUBSYSTEMS.md and schematic.intent.json, the explicit intent file, and the board\'s own rules, merged by authority into .copperhead/constraints.json with an intent-report.md in the run. Deterministic (you are the model: write the intent YAML yourself). Pass intent_yaml to write docs/LAYOUT.intent.yaml first.',
+      parameters: {
+        type: 'object',
+        properties: {
+          intent_yaml: { type: 'string', description: 'intent in the §7.3 language to write to the intent file before compiling' },
+        },
+      },
+    },
+    requiresUnlock: false,
+    handler: async (ctx, args) => {
+      if (!ctx.config.board) return 'no board configured';
+      const boardPath = path.join(ctx.repoRoot, ctx.config.board);
+      if (!existsSync(boardPath)) return `board not found: ${ctx.config.board}`;
+      const { importBoard } = await import('../pcb/ir/kicad/import.js');
+      const { compileIntent } = await import('../pcb/agent/intent/compiler.js');
+      const { loadConstraints: loadRegistry, saveConstraints } = await import('../memory/constraints.js');
+      const intentPath = path.join(ctx.repoRoot, ctx.config.pcb?.intentPath ?? path.join(ctx.config.docs, 'LAYOUT.intent.yaml'));
+      if (typeof args.intent_yaml === 'string' && args.intent_yaml.trim()) {
+        await mkdir(path.dirname(intentPath), { recursive: true });
+        await writeFile(intentPath, args.intent_yaml, 'utf8');
+        markTouched(ctx, path.relative(ctx.repoRoot, intentPath));
+      }
+      const read = async (p: string) => (existsSync(p) ? readFile(p, 'utf8') : Promise.resolve(null));
+      const schematicIntentPath = ctx.config.schematic ? path.join(path.dirname(path.join(ctx.repoRoot, ctx.config.schematic)), 'schematic.intent.json') : null;
+      const { design } = importBoard({ boardText: await readFile(boardPath, 'utf8'), boardPath });
+      const res = await compileIntent({
+        repoRoot: ctx.repoRoot, design, intentText: await read(intentPath), subsystemsMd: await read(path.join(ctx.repoRoot, ctx.config.docs, 'SUBSYSTEMS.md')),
+        schematicIntent: schematicIntentPath && existsSync(schematicIntentPath) ? JSON.parse(await readFile(schematicIntentPath, 'utf8')) : null,
+        bomMd: await read(path.join(ctx.repoRoot, ctx.config.docs, 'BOM.md')), registry: await loadRegistry(ctx.repoRoot), provider: null,
+        runDir: path.join(ctx.repoRoot, '.copperhead', 'runs', ctx.runId),
+      });
+      await saveConstraints(ctx.repoRoot, res.registry);
+      markTouched(ctx, '.copperhead/constraints.json');
+      const layout = Object.values(res.registry).filter((c) => c.class).length;
+      return `${layout} layout constraint(s) in .copperhead/constraints.json; ${res.blocks.length} block(s); ${res.holds.length} hold(s)${res.holds.length ? `:\n${res.holds.map((h) => `  HOLD ${h}`).join('\n')}` : ''}\nreport: .copperhead/runs/${ctx.runId}/intent-report.md\n\n${res.report}`;
+    },
+  },
+  {
+    schema: {
       name: 'check_drift',
       description: 'Compare BOM.md/PINOUT.md tables against the parsed schematic. Clears the drift obligation when clean.',
       parameters: { type: 'object', properties: {}, required: [] },
@@ -633,6 +674,12 @@ export const TOOLS: ToolDef[] = [
           value: { type: 'string' },
           source: { type: 'string', description: 'doc/spec location that states this' },
           affects: { type: 'array', items: { type: 'string' } },
+          class: { type: 'string', enum: ['mechanical', 'relative', 'electrical-layout', 'functional', 'thermal', 'emc', 'manufacturing', 'routing', 'stackup'], description: 'layout constraint class (RFC 11 §7.2); with it the entry is a layout claim the intent checker validates' },
+          severity: { type: 'string', enum: ['hard', 'soft', 'advisory'] },
+          scope: { type: 'object', description: '{ refs?, roles?, nets?, pins? } the constraint applies to' },
+          parameters: { type: 'object', description: 'class-specific values with units in the key, e.g. max_distance_nm' },
+          priority: { type: 'number', description: 'higher wins among equals (default 50)' },
+          confidence: { type: 'number', description: '0..1 (default 1 for a stated requirement)' },
         },
         required: ['key', 'source', 'affects'],
       },
@@ -640,6 +687,9 @@ export const TOOLS: ToolDef[] = [
     requiresUnlock: true,
     handler: async (ctx, args) => {
       const key = str(args, 'key');
+      const layout = args.class
+        ? { class: args.class as 'mechanical', severity: (args.severity as 'hard' | 'soft' | 'advisory') ?? 'hard', scope: (args.scope as Record<string, string[]>) ?? {}, parameters: (args.parameters as Record<string, number | string | boolean | string[]>) ?? {}, priority: typeof args.priority === 'number' ? args.priority : 50, confidence: typeof args.confidence === 'number' ? args.confidence : 1 }
+        : {};
       const affects = (args.affects as string[]) ?? [];
       // An affects item whose target artifact is not built yet (no schematic or
       // board configured, no BOM.md) has nothing to revisit; opening an
@@ -662,6 +712,7 @@ export const TOOLS: ToolDef[] = [
         source: str(args, 'source'),
         affects,
         ...(deferred.length ? { deferred } : {}),
+        ...layout,
       });
       ctx.ledger.onConstraintChange(key, openNow);
       ctx.ledger.clear('constraint-dual-write', key);
