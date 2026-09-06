@@ -370,9 +370,10 @@ pcbGroup
   .option('--no-probe', 'skip the routability probe on each candidate')
   .option('--probe-router <id>', 'router for the probe', 'router-freerouting')
   .option('--allow-harness-engines', 'let the reference placer and router compete (harness fixtures only)', false)
+  .option('--blocks', 'staged plan: derive functional blocks from docs/SUBSYSTEMS.md and schematic.intent.json, place each block anchor in its signal-flow slot first', false)
   .option('--apply', 'write the selected candidate over the board file', false)
   .option('--run-dir <path>', 'where to write the run (default: .copperhead/runs/<ts>/placement)')
-  .action(async (opts: { board?: string; placers?: string; mode?: string; movable?: string; seed: string; budgetSeconds?: string; probe: boolean; probeRouter: string; allowHarnessEngines: boolean; apply: boolean; runDir?: string }) => {
+  .action(async (opts: { board?: string; placers?: string; mode?: string; movable?: string; seed: string; budgetSeconds?: string; probe: boolean; probeRouter: string; allowHarnessEngines: boolean; blocks: boolean; apply: boolean; runDir?: string }) => {
     const repo = repoOf(program.opts());
     const json = Boolean(program.opts().json);
     try {
@@ -385,10 +386,23 @@ pcbGroup
       const runDir = opts.runDir ? path.resolve(repo, opts.runDir) : path.join(repo, '.copperhead', 'runs', new Date().toISOString().replace(/[:.]/g, '-'), 'placement');
       const placers = opts.placers?.split(',').map((s) => s.trim()).filter(Boolean) ?? pcb.placers;
       const mode = (opts.mode ?? (pcb.mode === 'staged' ? 'single' : pcb.mode) ?? 'single') as 'single' | 'race' | 'ensemble';
+      let blocks;
+      if (opts.blocks) {
+        const { readFile } = await import('node:fs/promises');
+        const { existsSync } = await import('node:fs');
+        const { importBoard } = await import('./pcb/ir/kicad/import.js');
+        const { deriveBlocks } = await import('./pcb/intent/blocks.js');
+        const subsystems = path.join(repo, config.docs, 'SUBSYSTEMS.md');
+        const intentPath = config.schematic ? path.join(path.dirname(path.join(repo, config.schematic)), 'schematic.intent.json') : null;
+        const { design } = importBoard({ boardText: await readFile(boardPath, 'utf8'), boardPath });
+        blocks = deriveBlocks({ design, subsystemsMd: existsSync(subsystems) ? await readFile(subsystems, 'utf8') : null, schematicIntent: intentPath && existsSync(intentPath) ? JSON.parse(await readFile(intentPath, 'utf8')) : null });
+        if (!json) for (const b of blocks) console.error(`block ${b.id}: ${b.members.length} part(s), anchor ${b.anchor ? design.components.find((c) => c.id === b.anchor)!.reference : 'none'}, region ${b.region ? 'assigned' : 'none'}${b.notes.length ? ` (${b.notes.join('; ')})` : ''}`);
+      }
       const res = await placeBoard({
         repoRoot: repo, boardPath, runDir, ...(placers ? { placers } : {}), mode, ...(opts.movable ? { movableReferences: opts.movable.split(',').map((s) => s.trim()) } : {}), seed: Number(opts.seed), limits: { engineSeconds: budget, wallSeconds: budget }, ...(pcb.profile ? { profile: pcb.profile } : {}), ...(pcb.maxParallelEngines ? { maxParallel: pcb.maxParallelEngines } : {}),
         policy: { network: pcb.allowRemoteEngines ? 'required' : 'optional', allowHarnessEngines: opts.allowHarnessEngines || (pcb.allowHarnessEngines ?? false), denyLicenses: [] },
         probe: opts.probe ? { routerId: opts.probeRouter } : false,
+        ...(blocks ? { blocks } : {}),
         log: json ? () => {} : (l) => console.error(l),
       });
       if (opts.apply) {
@@ -398,7 +412,7 @@ pcbGroup
           res.outcome.detail.push(`applied ${res.ranking.selected} to ${path.relative(repo, boardPath)}`);
         } else res.outcome.detail.push('nothing applied; the board is unchanged');
       }
-      if (json) console.log(JSON.stringify({ ...res.outcome, diagnostics: res.outcome.diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message })), runDir: res.runDir, ranking: res.ranking, ineligible: res.ineligible, movable: res.movableIds.length }, null, 2));
+      if (json) console.log(JSON.stringify({ ...res.outcome, diagnostics: res.outcome.diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message })), runDir: res.runDir, ranking: res.ranking, ineligible: res.ineligible, movable: res.movableIds.length, ...(res.plan ? { plan: { stages: res.plan.stages.map((st) => ({ name: st.name, engineId: st.engineId, parts: st.componentIds.length })), blocks: res.plan.blocks.map((b) => ({ id: b.id, members: b.members.length, region: !!b.region })) } } : {}) }, null, 2));
       else {
         console.log(`${res.outcome.status}: ${res.outcome.summary}`);
         for (const d of res.outcome.detail) console.log(`  ${d}`);

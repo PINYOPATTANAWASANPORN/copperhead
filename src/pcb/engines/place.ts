@@ -29,6 +29,9 @@ import { FixedPlacer, FIXED_PLACER_MANIFEST } from './placers/fixed/adapter.js';
 import { ReferencePlacer, REFERENCE_PLACER_MANIFEST } from './placers/reference/adapter.js';
 import { PyplacerPlacer, PYPLACER_MANIFEST } from './placers/pyplacer/adapter.js';
 import { KicadToolsPlacer, KCT_PHYSICS_MANIFEST, KCT_EVOLUTIONARY_MANIFEST } from './placers/kicad-tools/adapter.js';
+import { AnchorsPlacer, ANCHORS_PLACER_MANIFEST } from './placers/anchors/adapter.js';
+import { applyCandidate } from '../ir/kicad/export.js';
+import type { Block } from '../intent/blocks.js';
 
 export interface PlaceOptions {
   repoRoot: string;
@@ -50,7 +53,18 @@ export interface PlaceOptions {
   noKicad?: boolean;
   /** Routability probe per candidate (spec §5.3); false to skip. */
   probe?: { routerId?: string; budgetSeconds?: number; registry?: EngineRegistry } | false;
+  /**
+   * Functional blocks: turns the run into the staged plan (RFC 11 §8.5): locked
+   * parts stay, each block's anchor is placed at its region centroid first and
+   * locked, then the wrapped placers place the remainder.
+   */
+  blocks?: Block[];
   log?: (line: string) => void;
+}
+
+export interface PlacementPlan {
+  stages: { name: string; engineId: string; componentIds: string[] }[];
+  blocks: Block[];
 }
 
 export interface PlaceRun {
@@ -61,6 +75,7 @@ export interface PlaceRun {
   candidates: MaterializedCandidate[];
   ineligible: { engineId: string; reasons: string[] }[];
   movableIds: string[];
+  plan?: PlacementPlan;
 }
 
 /** The built-in placers, in preference order: kct physics, pyplacer, kct evolutionary, the fixed control, the harness reference. */
@@ -76,9 +91,9 @@ export function defaultPlacerRegistry(repoRoot: string): EngineRegistry {
 
 export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
   const log = opts.log ?? (() => {});
-  const text = await readFile(opts.boardPath, 'utf8');
   const projectPath = opts.projectPath ?? (existsSync(opts.boardPath.replace(/\.kicad_pcb$/, '.kicad_pro')) ? opts.boardPath.replace(/\.kicad_pcb$/, '.kicad_pro') : undefined);
   const projectText = projectPath ? await readFile(projectPath, 'utf8') : undefined;
+  let text = await readFile(opts.boardPath, 'utf8');
   let kicadVersion = 'unknown';
   if (!opts.noKicad) {
     try {
@@ -87,14 +102,32 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
       kicadVersion = 'unknown';
     }
   }
-  const { design, warnings } = importBoard({ boardText: text, boardPath: path.relative(opts.repoRoot, opts.boardPath), ...(projectText ? { projectText, projectPath: path.relative(opts.repoRoot, projectPath!) } : {}), kicadVersion, ...(opts.profile ? { fabricationProfile: opts.profile } : {}) });
-  for (const w of warnings) log(`import: ${w}`);
-  const profile = loadProfile(design.board.fabricationProfile);
+  const imported = importBoard({ boardText: text, boardPath: path.relative(opts.repoRoot, opts.boardPath), ...(projectText ? { projectText, projectPath: path.relative(opts.repoRoot, projectPath!) } : {}), kicadVersion, ...(opts.profile ? { fabricationProfile: opts.profile } : {}) });
+  for (const w of imported.warnings) log(`import: ${w}`);
+  const profile = loadProfile(imported.design.board.fabricationProfile);
   const scoring = loadScoringProfile(opts.scoring ?? 'default-placement-2-layer');
   const wantedRefs = opts.movableReferences ? new Set(opts.movableReferences) : null;
-  const movableIds = design.components.filter((c) => !c.attributes.locked && (!wantedRefs || wantedRefs.has(c.reference))).map((c) => c.id);
-  const snapshot = makeSnapshot(design, { kind: 'placement', movableComponentIds: movableIds }, { seed: opts.seed ?? 0, limits: { ...DEFAULT_LIMITS, ...opts.limits } });
+  let design = imported.design;
+  let movableIds = design.components.filter((c) => !c.attributes.locked && (!wantedRefs || wantedRefs.has(c.reference))).map((c) => c.id);
   await mkdir(opts.runDir, { recursive: true });
+  let plan: PlacementPlan | undefined;
+  if (opts.blocks?.length) {
+    // staged plan, stages 1 to 3: locked parts stay; anchors go to their region centroids and are locked for the wrapped placer
+    const lockedIds = design.components.filter((c) => c.attributes.locked).map((c) => c.id);
+    const anchorsPlacer = new AnchorsPlacer();
+    const preSnapshot = makeSnapshot(design, { kind: 'placement', movableComponentIds: movableIds }, { seed: opts.seed ?? 0, limits: { ...DEFAULT_LIMITS, ...opts.limits } });
+    const anchors = await anchorsPlacer.place({ runId: 'anchors', snapshot: preSnapshot, movableComponentIds: movableIds, constraints: opts.blocks.map((block) => ({ kind: 'functional.group', block })), objectives: [], seed: opts.seed ?? 0, limits: preSnapshot.limits }, { workDir: opts.runDir, boardPath: opts.boardPath, log });
+    if (anchors.placements.length) {
+      text = applyCandidate(text, design, { placement: anchors.placements }).text;
+      design = importBoard({ boardText: text, boardPath: path.relative(opts.repoRoot, opts.boardPath), ...(projectText ? { projectText, projectPath: path.relative(opts.repoRoot, projectPath!) } : {}), kicadVersion, ...(opts.profile ? { fabricationProfile: opts.profile } : {}) }).design;
+    }
+    const anchorIds = new Set(anchors.placements.map((p) => p.id));
+    movableIds = movableIds.filter((id) => !anchorIds.has(id));
+    plan = { stages: [{ name: 'fixed', engineId: 'placer-fixed', componentIds: lockedIds }, { name: 'anchors', engineId: ANCHORS_PLACER_MANIFEST.id, componentIds: [...anchorIds] }, { name: 'attach', engineId: 'placer-attach', componentIds: [] }, { name: 'bulk', engineId: (opts.placers ?? ['*']).join('|'), componentIds: movableIds }], blocks: opts.blocks };
+    await writeFile(path.join(opts.runDir, 'plan.json'), JSON.stringify(plan, null, 2), 'utf8');
+    log(`staged plan: ${anchorIds.size} anchor(s) placed at their region centroids, ${movableIds.length} part(s) left to the placers`);
+  }
+  const snapshot = makeSnapshot(design, { kind: 'placement', movableComponentIds: movableIds }, { seed: opts.seed ?? 0, limits: { ...DEFAULT_LIMITS, ...opts.limits } });
   const run = await writeRunDir(opts.runDir, snapshot, [opts.boardPath, ...(projectPath ? [projectPath] : [])]);
   const registry = opts.registry ?? defaultPlacerRegistry(opts.repoRoot);
   const wanted = opts.placers ?? registry.list('placer').map((e) => e.manifest.id);
@@ -108,12 +141,12 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
     const ranking = rank([], scoring);
     await writeFile(path.join(run.root, 'ranking.json'), JSON.stringify(ranking, null, 2), 'utf8');
     await writeFile(path.join(run.root, 'outcome.json'), JSON.stringify(slim(outcome), null, 2), 'utf8');
-    return { outcome, runDir: run.root, ranking, invocations: [], candidates: [], ineligible: unknown, movableIds };
+    return { outcome, runDir: run.root, ranking, invocations: [], candidates: [], ineligible: unknown, movableIds, ...(plan ? { plan } : {}) };
   }
   const budget = new Budget(snapshot.limits.engineSeconds, snapshot.limits.wallSeconds);
   const res = await runPlacement({
     run, sourceText: text, design, ...(projectText ? { projectText } : {}), snapshotFileHash: run.fileHash, snapshot, budget, engines, mode: opts.mode ?? 'single', policy: opts.policy ?? DEFAULT_POLICY, ...(opts.maxParallel ? { maxParallel: opts.maxParallel } : {}),
-    job: { movableComponentIds: movableIds, constraints: [], objectives: [], seed: opts.seed ?? 0, limits: snapshot.limits },
+    job: { movableComponentIds: movableIds, constraints: (opts.blocks ?? []).map((block) => ({ kind: 'functional.group', block })), objectives: [], seed: opts.seed ?? 0, limits: snapshot.limits },
     log,
   });
   const hasCopper = design.routing.segments.length + design.routing.arcs.length + design.routing.vias.length > 0;
@@ -149,7 +182,7 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
   await writeFile(path.join(run.root, 'ranking.json'), JSON.stringify(ranking, null, 2), 'utf8');
   const outcome = outcomeOf(res.invocations, candidates, ranking, [...unknown, ...res.ineligible]);
   await writeFile(path.join(run.root, 'outcome.json'), JSON.stringify(slim(outcome), null, 2), 'utf8');
-  return { outcome, runDir: run.root, ranking, invocations: res.invocations, candidates, ineligible: [...unknown, ...res.ineligible], movableIds };
+  return { outcome, runDir: run.root, ranking, invocations: res.invocations, candidates, ineligible: [...unknown, ...res.ineligible], movableIds, ...(plan ? { plan } : {}) };
 }
 
 function slim(o: Outcome<Diagnostic>): unknown {
