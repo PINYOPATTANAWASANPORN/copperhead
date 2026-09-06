@@ -424,9 +424,10 @@ pcbGroup
       const projectText = existsSync(proPath) ? await readFile(proPath, 'utf8') : undefined;
       const text = await readFile(boardPath, 'utf8');
       const { design } = importBoard({ boardText: text, boardPath, ...(projectText ? { projectText } : {}) });
-      const diagnostics = opts.plain ? [] : verifyDesign({ design, fills: extractFills(text) }).diagnostics;
+      const plain = opts.plain || Boolean(program.opts().plain); // the global --plain (log style) swallows the flag when it precedes the subcommand
+      const diagnostics = plain ? [] : verifyDesign({ design, fills: extractFills(text) }).diagnostics;
       const out = opts.out ? path.resolve(repo, opts.out) : boardPath.replace(/\.kicad_pcb$/, '.svg');
-      await writeFile(out, renderSvg(design, { diagnostics, scale: Number(opts.scale), legend: !opts.plain }), 'utf8');
+      await writeFile(out, renderSvg(design, { diagnostics, scale: Number(opts.scale), legend: !plain }), 'utf8');
       if (Boolean(program.opts().json)) console.log(JSON.stringify({ out, diagnostics: diagnostics.filter((d) => d.severity !== 'info').length }));
       else console.log(out);
     } catch (err) {
