@@ -16,6 +16,8 @@ import { rank } from '../src/pcb/verify/scoring.js';
 import { DEFAULT_LOW_SPEED_2_LAYER } from '../src/pcb/verify/profiles/scoring/index.js';
 import { routingMetrics, owedBaseline } from '../src/pcb/verify/metrics.js';
 import { routeBoard, defaultRegistry } from '../src/pcb/engines/route.js';
+import { defaultStagedPlan, isPowerNet } from '../src/pcb/engines/plan.js';
+import { emitDsn } from '../src/pcb/engines/routers/freerouting/dsn.js';
 import { importBoard } from '../src/pcb/ir/kicad/import.js';
 import { verifyDesign } from '../src/pcb/verify/index.js';
 import { mmToNm } from '../src/pcb/ir/units.js';
@@ -139,6 +141,69 @@ describe('copperhead pcb CLI', () => {
       const score = await execa('npx', [...cli, 'pcb', 'score', runDir], { cwd: ROOT, reject: false });
       expect(score.exitCode, score.stderr).toBe(0);
       expect(JSON.parse(score.stdout).selected).toBe('router-reference');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 600_000);
+});
+
+describe('staged routing plan (§9.5)', () => {
+  it('routes power first at the class width, then critical, then the bulk by race', async () => {
+    const pcb = path.join(GOLDEN, 'completion', 'board.kicad_pcb');
+    const { design } = importBoard({ boardText: await readFile(pcb, 'utf8'), boardPath: pcb, now: 't' });
+    const gnd = design.nets.find((n) => n.name === 'GND')!;
+    const other = design.nets.find((n) => n.name !== 'GND' && n.padIds.length >= 2)!;
+    design.board.rules.netClasses['Power'] = { trackWidthNm: mm(0.5) };
+    gnd.netClass = 'Power';
+    const plan = defaultStagedPlan(design, { engineIds: ['router-freerouting', 'router-kicad-tools-astar'], criticalNetNames: [other.name], layerPreferences: [{ layerId: 'B.Cu', mode: 'vertical' }] });
+    expect(plan.stages.map((s) => s.name)).toEqual(['power', 'critical', 'bulk']);
+    const power = design.nets.filter((n) => n.padIds.length >= 2 && isPowerNet(n, design)).map((n) => n.id);
+    expect(power).toContain(gnd.id);
+    expect(plan.stages[0]!.netIds).toEqual(power);
+    expect(plan.stages[0]!.strategy.trackWidthNm).toBe(mm(0.5));
+    expect(plan.stages[0]!.race).toBe(false);
+    expect(plan.stages[1]!.netIds).toEqual([other.id]);
+    expect(plan.stages[2]!.netIds).toBeNull();
+    expect(plan.stages[2]!.race).toBe(true);
+    expect(plan.stages[2]!.engineIds).toHaveLength(2);
+    expect(plan.stages[2]!.strategy.layers).toEqual({ 'B.Cu': { active: true, preferredDirection: 'vertical' } });
+    expect(plan.classification.bulk).not.toContain(gnd.id);
+  });
+  it('recognises power by class, by name, and by pour', async () => {
+    const pcb = path.join(GOLDEN, 'completion', 'board.kicad_pcb');
+    const { design } = importBoard({ boardText: await readFile(pcb, 'utf8'), boardPath: pcb, now: 't' });
+    const mk = (name: string, netClass = 'Default') => ({ id: name, code: 9, name, padIds: ['a', 'b'], netClass });
+    for (const n of ['GND', 'AGND', 'VCC', 'VDD_3V3', '+3V3', '3V3', '+5V', '12V', 'VBUS', 'VIN', '-12V']) expect(isPowerNet(mk(n), design), n).toBe(true);
+    for (const n of ['SDA', 'Net-(U1-Pad3)', 'LED_K', 'D+', 'CLK']) expect(isPowerNet(mk(n), design), n).toBe(false);
+    expect(isPowerNet(mk('X', 'pwr_rail'), design)).toBe(true);
+    const zone = { id: 'z', netId: 'X', layers: ['B.Cu'], outline: { outer: [], holes: [] }, priority: 0, clearanceNm: 0, thermal: null, isKeepout: false, fills: [] };
+    const zoned = { ...design, routing: { ...design.routing, zones: [zone] } } as unknown as typeof design;
+    expect(isPowerNet(mk('X'), zoned)).toBe(true);
+  });
+  it('layer preferences and the stage width land in the DSN as Freerouting settings', async () => {
+    const pcb = path.join(GOLDEN, 'completion', 'board.kicad_pcb');
+    const { design } = importBoard({ boardText: await readFile(pcb, 'utf8'), boardPath: pcb, now: 't' });
+    const dsn = emitDsn(design, { boardName: 'b', edgeClearanceNm: mm(0.3), trackWidthNm: mm(0.5), layers: { 'F.Cu': { active: true, preferredDirection: 'horizontal' }, 'B.Cu': { active: false } } });
+    expect(dsn).toMatch(/\(autoroute_settings/);
+    expect(dsn).toMatch(/\(layer_rule F\.Cu\s+\(active on\)\s+\(preferred_direction horizontal\)/);
+    expect(dsn).toMatch(/\(layer_rule B\.Cu\s+\(active off\)/);
+    expect(dsn).toMatch(/\(class kicad_default[^]*?\(width 500\)/);
+    expect(emitDsn(design, { boardName: 'b', edgeClearanceNm: 0 })).not.toMatch(/autoroute_settings/);
+  });
+  it('a staged run carries the power copper into the bulk stage and yields one candidate per final branch', async () => {
+    if (!(await haveKicad())) return;
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-staged-'));
+    try {
+      const res = await routeBoard({ repoRoot: ROOT, boardPath: path.join(GOLDEN, 'completion', 'board.kicad_pcb'), runDir: path.join(dir, 'run'), routers: ['router-reference'], mode: 'staged', policy: { network: 'none', allowHarnessEngines: true, denyLicenses: [] }, limits: { engineSeconds: 240, wallSeconds: 240 } });
+      expect(res.plan!.stages.map((s) => s.name)).toEqual(['power', 'bulk']);
+      expect(res.invocations.map((i) => i.stage!.name)).toEqual(['power', 'bulk']);
+      expect(res.candidates).toHaveLength(1);
+      expect(res.outcome.status).toBe('PASS');
+      expect(res.candidates[0]!.verify.metrics.completion_rate).toBe(1);
+      const power = res.invocations[0]!.result!;
+      expect(power.segments.length).toBeGreaterThan(0);
+      expect(res.invocations[1]!.stage!.carried!.segments).toHaveLength(power.segments.length);
+      expect(existsSync(path.join(res.runDir, 'plan.json'))).toBe(true);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

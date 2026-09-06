@@ -1213,6 +1213,23 @@
     },
     "RoutingStrategy": {
       "type": "object",
+      "properties": {
+        "passes": {
+          "type": "number",
+          "description": "Autorouter passes (Freerouting `-mp`)."
+        },
+        "trackWidthNm": {
+          "type": "number",
+          "description": "Width for every net in the job's scope, overriding the class width (staged power routing)."
+        },
+        "layers": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/LayerStrategy"
+          },
+          "description": "Per copper layer id: layer-preference constraints mapped onto the engine's layer settings."
+        }
+      },
       "additionalProperties": {
         "anyOf": [
           {
@@ -1226,10 +1243,33 @@
           },
           {
             "not": {}
+          },
+          {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/definitions/LayerStrategy"
+            }
           }
         ],
-        "description": "Engine-specific knobs, validated by the adapter (e.g. Freerouting passes, kct strategy)."
+        "description": "Engine-specific knobs, validated by the adapter (e.g. kct strategy)."
       }
+    },
+    "LayerStrategy": {
+      "type": "object",
+      "properties": {
+        "active": {
+          "type": "boolean",
+          "description": "false = no new tracks on this layer."
+        },
+        "preferredDirection": {
+          "type": "string",
+          "enum": [
+            "horizontal",
+            "vertical"
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "WeightedObjective": {
       "type": "object",

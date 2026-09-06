@@ -21,6 +21,7 @@ import { EngineRegistry, DEFAULT_POLICY, type EnginePolicy } from './registry.js
 import { runRouting, type ExecutionMode, type Invocation } from './runner.js';
 import { Budget } from './budget.js';
 import { materialize, candidateFromRouting, type MaterializedCandidate } from './candidates.js';
+import { defaultStagedPlan, type LayerPreference, type StagedPlan } from './plan.js';
 import type { RoutingResult, RoutingStrategy } from './contracts.js';
 import { ReferenceRouter, REFERENCE_ROUTER_MANIFEST } from './routers/reference/adapter.js';
 import { FreeroutingRouter, FREEROUTING_MANIFEST } from './routers/freerouting/adapter.js';
@@ -38,6 +39,10 @@ export interface RouteOptions {
   netNames?: string[];
   preserveExistingRoutes?: boolean;
   strategy?: RoutingStrategy;
+  /** staged mode: nets routed after power and before the bulk, by name. */
+  criticalNetNames?: string[];
+  /** Layer-preference constraints, mapped onto the engines' layer settings. */
+  layerPreferences?: LayerPreference[];
   seed?: number;
   limits?: Partial<ResourceLimits>;
   profile?: string;
@@ -56,6 +61,8 @@ export interface RouteRun {
   invocations: Invocation<RoutingResult>[];
   candidates: MaterializedCandidate[];
   ineligible: { engineId: string; reasons: string[] }[];
+  /** staged mode only. */
+  plan?: StagedPlan;
 }
 
 /** The built-in routers, registered in preference order. */
@@ -92,9 +99,18 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
   const wanted = opts.routers ?? registry.list('router').map((e) => e.manifest.id);
   const engines = wanted.map((id) => registry.get(id)).filter((e): e is NonNullable<typeof e> => !!e);
   const budget = new Budget(snapshot.limits.engineSeconds, snapshot.limits.wallSeconds);
+  const mode = opts.mode ?? 'single';
+  const layers = opts.layerPreferences?.length ? Object.fromEntries(opts.layerPreferences.map((p) => [p.layerId, p.mode === 'off' ? { active: false } : p.mode === 'any' ? { active: true } : { active: true, preferredDirection: p.mode }])) : undefined;
+  const strategy: RoutingStrategy = { ...(layers ? { layers } : {}), ...(opts.strategy ?? {}) };
+  const plan = mode === 'staged' ? defaultStagedPlan(design, { engineIds: engines.map((e) => e.manifest.id), netIds, ...(opts.criticalNetNames ? { criticalNetNames: opts.criticalNetNames } : {}), ...(opts.layerPreferences ? { layerPreferences: opts.layerPreferences } : {}) }) : undefined;
+  if (plan) {
+    await writeFile(path.join(run.root, 'plan.json'), JSON.stringify(plan, null, 2), 'utf8');
+    for (const st of plan.stages) log(`stage ${st.name}: ${st.netIds ? `${st.netIds.length} net(s)` : 'every owed net'} via ${st.engineIds.join(st.race ? ' | ' : ', ')}${st.strategy.trackWidthNm ? ` at ${st.strategy.trackWidthNm / 1e6} mm` : ''}`);
+  }
   const res = await runRouting({
-    run, sourceText: text, design, ...(projectText ? { projectText } : {}), snapshotFileHash: run.fileHash, snapshot, budget, engines, mode: opts.mode ?? 'single', ...(opts.policy ? { policy: opts.policy } : { policy: DEFAULT_POLICY }), ...(opts.maxParallel ? { maxParallel: opts.maxParallel } : {}),
-    job: { scope: { netIds, region: null, preserveExistingRoutes: opts.preserveExistingRoutes ?? false }, strategy: opts.strategy ?? {}, hardConstraints: [], objectives: [], seed: opts.seed ?? 0, limits: snapshot.limits },
+    run, sourceText: text, design, ...(projectText ? { projectText } : {}), snapshotFileHash: run.fileHash, snapshot, budget, engines, mode, ...(opts.policy ? { policy: opts.policy } : { policy: DEFAULT_POLICY }), ...(opts.maxParallel ? { maxParallel: opts.maxParallel } : {}),
+    job: { scope: { netIds, region: null, preserveExistingRoutes: opts.preserveExistingRoutes ?? false }, strategy: { ...strategy, ...(opts.strategy ?? {}) }, hardConstraints: [], objectives: [], seed: opts.seed ?? 0, limits: snapshot.limits },
+    ...(plan ? { stages: plan.stages.map((st) => ({ ...st, strategy: { ...strategy, ...st.strategy } })) } : {}),
     log,
   });
   const candidates: MaterializedCandidate[] = [];
@@ -102,9 +118,15 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
   for (const inv of res.invocations) {
     if (!inv.result || inv.snapshotViolation) continue;
     if (inv.result.status === 'failed' || inv.result.status === 'unsupported') continue;
-    const cand = await materialize(inv, candidateFromRouting(inv.result, opts.preserveExistingRoutes ?? false, design), { sourceText: text, design, ...(projectText ? { projectText } : {}), profile, kicadVersion, ...(opts.noKicad ? { noKicad: true } : {}) });
+    if (inv.stage && !inv.stage.final) continue; // intermediate stages are not candidates; their copper rides in the final branches
+    // a staged branch is the union of the carried stages and its own copper
+    const carried = inv.stage?.carried;
+    const result: RoutingResult = carried ? { ...inv.result, segments: [...carried.segments, ...inv.result.segments], arcs: [...carried.arcs, ...inv.result.arcs], vias: [...carried.vias, ...inv.result.vias] } : inv.result;
+    const preserve = (opts.preserveExistingRoutes ?? false) || !!inv.stage;
+    const cand = await materialize(inv, candidateFromRouting(result, preserve, design), { sourceText: text, design, ...(projectText ? { projectText } : {}), profile, kicadVersion, ...(opts.noKicad ? { noKicad: true } : {}) });
     candidates.push(cand);
-    const metrics = routingMetrics({ design: cand.design, verify: cand.verify, baseline: design, runtimeSeconds: inv.result.runtime.wallSeconds });
+    const wall = res.invocations.filter((x) => x === inv || (x.stage && !x.stage.final)).reduce((a, x) => a + (x.result?.runtime.wallSeconds ?? 0), 0);
+    const metrics = routingMetrics({ design: cand.design, verify: cand.verify, baseline: design, runtimeSeconds: wall });
     await writeFile(path.join(inv.workDir, 'metrics.json'), JSON.stringify(metrics, null, 2), 'utf8');
     const gates = cand.verify.gates;
     scored.push({ id: inv.engineId, metrics, gatesPassed: gates.preflight.passed && gates.routing.passed, gateFailures: [...gates.preflight.failures, ...gates.routing.failures].map((d) => d.code) });
@@ -113,7 +135,7 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
   await writeFile(path.join(run.root, 'ranking.json'), JSON.stringify(ranking, null, 2), 'utf8');
   const outcome = outcomeOf(res.invocations, candidates, ranking, res.ineligible);
   await writeFile(path.join(run.root, 'outcome.json'), JSON.stringify({ ...outcome, diagnostics: outcome.diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message, entityReferences: d.entityReferences })) }, null, 2), 'utf8');
-  return { outcome, runDir: run.root, ranking, invocations: res.invocations, candidates, ineligible: res.ineligible };
+  return { outcome, runDir: run.root, ranking, invocations: res.invocations, candidates, ineligible: res.ineligible, ...(plan ? { plan } : {}) };
 }
 
 function outcomeOf(invocations: Invocation<RoutingResult>[], candidates: MaterializedCandidate[], ranking: Ranking, ineligible: { engineId: string; reasons: string[] }[]): Outcome<Diagnostic> {

@@ -9,7 +9,7 @@
 import { mkdir, writeFile, appendFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { BoardSnapshot } from '../ir/snapshot.js';
-import { verifySnapshotIntact, type RunDir } from '../ir/snapshot.js';
+import { verifySnapshotIntact, makeSnapshot, type RunDir } from '../ir/snapshot.js';
 import { EngineError } from '../ir/status.js';
 import type { PcbDesign } from '../ir/types.js';
 import { applyCandidate } from '../ir/kicad/export.js';
@@ -29,6 +29,8 @@ export interface Invocation<TResult> {
   provenance: EngineProvenance;
   /** Set when the snapshot changed under the engine (INVALID_OUTPUT). */
   snapshotViolation: string | null;
+  /** staged mode: which stage produced this invocation; a final branch also carries the copper of the earlier stages. */
+  stage?: { index: number; name: string; final: boolean; carried?: { segments: RoutingResult['segments']; arcs: RoutingResult['arcs']; vias: RoutingResult['vias'] } };
 }
 
 export interface RunOptions {
@@ -135,8 +137,8 @@ export interface RoutingRunOptions extends RunOptions {
   engines: RegisteredEngine[];
   mode: ExecutionMode;
   job: Omit<RoutingJob, 'runId' | 'snapshot'>;
-  /** staged: ordered steps; each routes its net scope with its engine, preserving the copper so far. */
-  stages?: { engineId: string; netIds: string[] | null; strategy?: RoutingJob['strategy'] }[];
+  /** staged: ordered steps; each routes its net scope, preserving the copper so far. A racing stage fans out one branch per engine. */
+  stages?: { name: string; engineIds: string[]; netIds: string[] | null; strategy?: RoutingJob['strategy']; race?: boolean }[];
   shape?: Partial<JobShape>;
 }
 
@@ -153,27 +155,51 @@ export async function runRouting(opts: RoutingRunOptions): Promise<RoutingRun> {
   const mk = (i: number, extra: Partial<RoutingJob> = {}): RoutingJob => ({ runId: `${path.basename(opts.run.root)}-${i}`, snapshot: opts.snapshot, ...opts.job, ...extra });
   const invocations: Invocation<RoutingResult>[] = [];
   if (opts.mode === 'staged') {
+    const { importBoard } = await import('../ir/kicad/import.js');
     let design = opts.design;
     let text = opts.sourceText;
-    let preserved = new Set<string>();
-    for (const [i, step] of (opts.stages ?? []).entries()) {
-      const engine = usable.find((e) => e.manifest.id === step.engineId);
-      if (!engine) {
-        ineligible.push({ engineId: step.engineId, reasons: ['not eligible for this stage'] });
+    let snapshot = opts.snapshot;
+    const carried: NonNullable<NonNullable<Invocation<RoutingResult>['stage']>['carried']> = { segments: [], arcs: [], vias: [] };
+    const stages = opts.stages ?? [];
+    let ordinal = 0;
+    for (const [i, step] of stages.entries()) {
+      const engines = step.engineIds.map((id) => usable.find((e) => e.manifest.id === id)).filter((e): e is RegisteredEngine => !!e);
+      for (const id of step.engineIds) if (!engines.some((e) => e.manifest.id === id) && !ineligible.some((x) => x.engineId === id)) ineligible.push({ engineId: id, reasons: [`not eligible for stage ${step.name}`] });
+      if (!engines.length) {
+        opts.log?.(`stage ${step.name}: no eligible engine, skipped`);
         continue;
       }
-      const job = mk(i, { scope: { netIds: step.netIds, region: null, preserveExistingRoutes: true }, ...(step.strategy ? { strategy: step.strategy } : {}) });
-      const inv = await invoke(opts, engine, i, job, text, (p, j, c) => p.route(j, c));
-      invocations.push(inv);
-      if (inv.result && inv.result.status !== 'failed' && inv.result.status !== 'unsupported') {
-        const routing = { segments: [...design.routing.segments, ...inv.result.segments], arcs: [...design.routing.arcs, ...inv.result.arcs], vias: [...design.routing.vias, ...inv.result.vias] };
-        for (const s of routing.segments) if (s.id) preserved.add(s.id);
-        for (const v of routing.vias) if (v.id) preserved.add(v.id);
-        text = applyCandidate(text, design, { routing: { ...routing, preserveIds: preserved } }).text;
-        const { importBoard } = await import('../ir/kicad/import.js');
-        design = importBoard({ boardText: text, boardPath: design.source.files.board, ...(opts.projectText ? { projectText: opts.projectText } : {}), now: design.source.importedAt }).design;
-        preserved = new Set([...design.routing.segments.map((s) => s.id), ...design.routing.vias.map((v) => v.id)]);
+      const final = i === stages.length - 1;
+      const chosen = step.race ? engines : engines.slice(0, 1);
+      const stageSnapshot = snapshot;
+      const job = (extra: Partial<RoutingJob>) => mk(ordinal, { snapshot: stageSnapshot, scope: { netIds: step.netIds, region: null, preserveExistingRoutes: true }, ...(step.strategy ? { strategy: step.strategy } : {}), ...extra });
+      const snapshotText = text;
+      const carriedNow = { segments: [...carried.segments], arcs: [...carried.arcs], vias: [...carried.vias] };
+      const tasks = chosen.map((engine) => {
+        const n = ordinal++;
+        return async () => {
+          const inv = await invoke(opts, engine, n, job({ runId: `${path.basename(opts.run.root)}-${n}` }), snapshotText, (p, j, c) => p.route(j, c));
+          inv.stage = { index: i, name: step.name, final, ...(final ? { carried: carriedNow } : {}) };
+          return inv;
+        };
+      });
+      const got = await parallel(tasks, step.race ? (opts.maxParallel ?? 2) : 1);
+      invocations.push(...got);
+      if (final) break;
+      // carry the first successful branch's copper into the next stage
+      const ok = got.find((inv) => inv.result && inv.result.status !== 'failed' && inv.result.status !== 'unsupported' && !inv.snapshotViolation);
+      if (!ok?.result) {
+        opts.log?.(`stage ${step.name}: no engine produced copper; the next stage routes its nets too`);
+        continue;
       }
+      const routing = { segments: [...design.routing.segments, ...ok.result.segments], arcs: [...design.routing.arcs, ...ok.result.arcs], vias: [...design.routing.vias, ...ok.result.vias] };
+      const preserved = new Set<string>([...design.routing.segments.map((s) => s.id), ...design.routing.arcs.map((a) => a.id), ...design.routing.vias.map((v) => v.id)]);
+      text = applyCandidate(text, design, { routing: { ...routing, preserveIds: preserved } }).text;
+      design = importBoard({ boardText: text, boardPath: design.source.files.board, ...(opts.projectText ? { projectText: opts.projectText } : {}), now: design.source.importedAt }).design;
+      carried.segments.push(...ok.result.segments);
+      carried.arcs.push(...ok.result.arcs);
+      carried.vias.push(...ok.result.vias);
+      snapshot = makeSnapshot(design, { kind: 'routing', netIds: opts.snapshot.scope.kind === 'routing' ? opts.snapshot.scope.netIds : null, region: null, preserveExistingRoutes: true }, { seed: opts.snapshot.seed, limits: opts.snapshot.limits });
     }
     return { mode: opts.mode, invocations, ineligible };
   }

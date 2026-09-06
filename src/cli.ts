@@ -302,7 +302,9 @@ pcbGroup
   .description('route the board with local engines, verify every candidate, and select one')
   .option('--board <path>', 'board to route (default: the configured board)')
   .option('--routers <ids>', 'comma-separated engine ids in preference order (default: config or every built-in router)')
-  .option('--mode <mode>', 'single | race | ensemble (default: config or single)')
+  .option('--mode <mode>', 'single | race | ensemble | staged (default: config or single)')
+  .option('--critical-nets <names>', 'staged mode: comma-separated nets routed after power and before the bulk')
+  .option('--layer-pref <specs>', 'comma-separated <layer>=<horizontal|vertical|any|off>, e.g. F.Cu=horizontal,B.Cu=vertical')
   .option('--nets <names>', 'comma-separated net names to route (default: all)')
   .option('--preserve', 'keep the copper already on the board', false)
   .option('--seed <n>', 'seed for seeded engines', '0')
@@ -310,7 +312,7 @@ pcbGroup
   .option('--allow-harness-engines', 'let the reference router compete (harness fixtures only)', false)
   .option('--apply', 'write the selected candidate over the board file', false)
   .option('--run-dir <path>', 'where to write the run (default: .copperhead/runs/<ts>/layout)')
-  .action(async (opts: { board?: string; routers?: string; mode?: string; nets?: string; preserve: boolean; seed: string; budgetSeconds?: string; allowHarnessEngines: boolean; apply: boolean; runDir?: string }) => {
+  .action(async (opts: { board?: string; routers?: string; mode?: string; nets?: string; criticalNets?: string; layerPref?: string; preserve: boolean; seed: string; budgetSeconds?: string; allowHarnessEngines: boolean; apply: boolean; runDir?: string }) => {
     const repo = repoOf(program.opts());
     const json = Boolean(program.opts().json);
     try {
@@ -322,9 +324,14 @@ pcbGroup
       const budget = Number(opts.budgetSeconds ?? pcb.budgetSeconds ?? 600);
       const runDir = opts.runDir ? path.resolve(repo, opts.runDir) : path.join(repo, '.copperhead', 'runs', new Date().toISOString().replace(/[:.]/g, '-'), 'layout');
       const routers = opts.routers?.split(',').map((s) => s.trim()).filter(Boolean) ?? pcb.routers;
-      const mode = (opts.mode ?? pcb.mode ?? 'single') as 'single' | 'race' | 'ensemble';
+      const mode = (opts.mode ?? pcb.mode ?? 'single') as 'single' | 'race' | 'ensemble' | 'staged';
+      const layerPreferences = (opts.layerPref ?? '').split(',').map((s) => s.trim()).filter(Boolean).map((spec) => {
+        const [layerId, m] = spec.split('=');
+        if (!layerId || !['horizontal', 'vertical', 'any', 'off'].includes(m ?? '')) throw new Error(`--layer-pref: expected <layer>=<horizontal|vertical|any|off>, got "${spec}"`);
+        return { layerId, mode: m as 'horizontal' | 'vertical' | 'any' | 'off' };
+      });
       const res = await routeBoard({
-        repoRoot: repo, boardPath, runDir, ...(routers ? { routers } : {}), mode, ...(opts.nets ? { netNames: opts.nets.split(',').map((s) => s.trim()) } : {}), preserveExistingRoutes: opts.preserve, seed: Number(opts.seed), limits: { engineSeconds: budget, wallSeconds: budget }, ...(pcb.profile ? { profile: pcb.profile } : {}), ...(pcb.scoring ? { scoring: pcb.scoring } : {}), ...(pcb.maxParallelEngines ? { maxParallel: pcb.maxParallelEngines } : {}),
+        repoRoot: repo, boardPath, runDir, ...(routers ? { routers } : {}), mode, ...(opts.nets ? { netNames: opts.nets.split(',').map((s) => s.trim()) } : {}), ...(opts.criticalNets ? { criticalNetNames: opts.criticalNets.split(',').map((s) => s.trim()) } : {}), ...(layerPreferences.length ? { layerPreferences } : {}), preserveExistingRoutes: opts.preserve, seed: Number(opts.seed), limits: { engineSeconds: budget, wallSeconds: budget }, ...(pcb.profile ? { profile: pcb.profile } : {}), ...(pcb.scoring ? { scoring: pcb.scoring } : {}), ...(pcb.maxParallelEngines ? { maxParallel: pcb.maxParallelEngines } : {}),
         policy: { network: pcb.allowRemoteEngines ? 'required' : 'optional', allowHarnessEngines: opts.allowHarnessEngines, denyLicenses: [] },
         log: json ? () => {} : (l) => console.error(l),
       });

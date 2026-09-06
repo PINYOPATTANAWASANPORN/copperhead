@@ -120,9 +120,21 @@ export interface PlacementResult {
   provenance: EngineProvenance;
 }
 
+export interface LayerStrategy {
+  /** false = no new tracks on this layer. */
+  active?: boolean;
+  preferredDirection?: 'horizontal' | 'vertical';
+}
+
 export interface RoutingStrategy {
-  /** Engine-specific knobs, validated by the adapter (e.g. Freerouting passes, kct strategy). */
-  [key: string]: string | number | boolean | undefined;
+  /** Autorouter passes (Freerouting `-mp`). */
+  passes?: number;
+  /** Width for every net in the job's scope, overriding the class width (staged power routing). */
+  trackWidthNm?: number;
+  /** Per copper layer id: layer-preference constraints mapped onto the engine's layer settings. */
+  layers?: Record<string, LayerStrategy>;
+  /** Engine-specific knobs, validated by the adapter (e.g. kct strategy). */
+  [key: string]: string | number | boolean | undefined | Record<string, LayerStrategy>;
 }
 
 export interface RoutingJob {

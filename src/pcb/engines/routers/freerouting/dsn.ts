@@ -22,6 +22,10 @@ export interface DsnOptions {
   preserveExistingRoutes?: boolean;
   /** Copper-to-edge inset for the boundary (nm). */
   edgeClearanceNm: number;
+  /** Width for every routable net in scope, overriding the class width (staged power routing). */
+  trackWidthNm?: number;
+  /** Per copper layer id: active flag and preferred direction (Freerouting `autoroute_settings`). */
+  layers?: Record<string, { active?: boolean; preferredDirection?: 'horizontal' | 'vertical' }>;
 }
 
 const um = (nm: number): string => String(Math.round(nm / 1000));
@@ -111,6 +115,15 @@ export function emitDsn(design: PcbDesign, opts: DsnOptions): string {
   out.push(`    (boundary\n      (path pcb 0 ${bpts.map((p) => `${um(p.x)} ${umY(p.y)}`).join('  ')})\n    )`);
   out.push(`    (via ${q(viaName)})`);
   out.push(`    (rule\n      (width ${um(rules.trackWidthNm)})\n      (clearance ${um(rules.clearanceNm)})\n      (clearance ${um(Math.min(rules.clearanceNm, 50_000))} (type smd_smd))\n    )`);
+  if (opts.layers && Object.keys(opts.layers).length) {
+    // layer-preference constraints as Freerouting's own per-layer autoroute settings
+    const rulesOut = copper.map((l) => {
+      const pref = opts.layers![l] ?? {};
+      const dir = pref.preferredDirection ?? (copper.indexOf(l) % 2 === 0 ? 'horizontal' : 'vertical');
+      return `      (layer_rule ${tok(l)}\n        (active ${pref.active === false ? 'off' : 'on'})\n        (preferred_direction ${dir})\n        (preferred_direction_trace_costs 1.0)\n        (against_preferred_direction_trace_costs ${pref.preferredDirection ? '3.0' : '2.5'})\n      )`;
+    });
+    out.push(`    (autoroute_settings\n      (fanout off)\n      (autoroute on)\n      (postroute on)\n      (vias on)\n      (via_costs 50)\n      (plane_via_costs 5)\n      (start_ripup_costs 100)\n      (start_pass_no 1)\n${rulesOut.join('\n')}\n    )`);
+  }
   out.push('  )');
   // placement
   out.push('  (placement');
@@ -161,7 +174,7 @@ export function emitDsn(design: PcbDesign, opts: DsnOptions): string {
   for (const n of routable) {
     out.push(`    (net ${tok(n.name)}\n      (pins ${n.padIds.map((id) => refOfPad.get(id)).filter(Boolean).map((r) => tok(r!)).join(' ')})\n    )`);
   }
-  out.push(`    (class kicad_default ${routable.map((n) => tok(n.name)).join(' ')}\n      (circuit\n        (use_via ${q(viaName)})\n      )\n      (rule\n        (width ${um(rules.trackWidthNm)})\n        (clearance ${um(rules.clearanceNm)})\n      )\n    )`);
+  out.push(`    (class kicad_default ${routable.map((n) => tok(n.name)).join(' ')}\n      (circuit\n        (use_via ${q(viaName)})\n      )\n      (rule\n        (width ${um(opts.trackWidthNm ?? rules.trackWidthNm)})\n        (clearance ${um(rules.clearanceNm)})\n      )\n    )`);
   out.push('  )');
   // wiring: protected existing copper
   out.push('  (wiring');

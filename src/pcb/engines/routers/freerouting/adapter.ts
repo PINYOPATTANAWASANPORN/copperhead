@@ -116,6 +116,8 @@ export class FreeroutingRouter implements RouterPlugin {
       netIds: job.scope.netIds ? new Set(job.scope.netIds) : null,
       preserveExistingRoutes: job.scope.preserveExistingRoutes,
       edgeClearanceNm: design.board.rules.copperEdgeClearanceNm,
+      ...(typeof job.strategy.trackWidthNm === 'number' ? { trackWidthNm: job.strategy.trackWidthNm } : {}),
+      ...(job.strategy.layers && typeof job.strategy.layers === 'object' ? { layers: job.strategy.layers } : {}),
     });
     await writeFile(dsnPath, dsn, 'utf8');
     const passes = Number(job.strategy.passes ?? this.opts.passes ?? 20);
