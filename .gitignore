@@ -16,3 +16,4 @@ manual-tests/runs/
 # benchmark corpora and runs (bench/corpora/*.sh fetch them)
 bench/var/
 bench/golden/*/*.kicad_prl
+*.lck
