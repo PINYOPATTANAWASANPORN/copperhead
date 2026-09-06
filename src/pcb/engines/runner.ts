@@ -196,13 +196,16 @@ export async function runRouting(opts: RoutingRunOptions): Promise<RoutingRun> {
       // a rip-up run drops the board's existing copper at the first stage; later stages build on what the earlier ones routed
       const keepExisting = i > 0 || opts.job.scope.preserveExistingRoutes;
       const base = keepExisting ? design.routing : { segments: [], arcs: [], vias: [] };
-      const routing = { segments: [...base.segments, ...ok.result.segments], arcs: [...base.arcs, ...ok.result.arcs], vias: [...base.vias, ...ok.result.vias] };
+      // an engine that was told to preserve the existing copper echoes it back (Freerouting re-emits every wire in the session):
+      // the composite keeps one copy of each piece of copper
+      const routing = dedupeCopper({ segments: [...base.segments, ...ok.result.segments], arcs: [...base.arcs, ...ok.result.arcs], vias: [...base.vias, ...ok.result.vias] });
       const preserved = new Set<string>(keepExisting ? [...design.routing.segments.map((s) => s.id), ...design.routing.arcs.map((a) => a.id), ...design.routing.vias.map((v) => v.id)] : []);
       text = applyCandidate(text, design, { routing: { ...routing, preserveIds: preserved } }).text;
       design = importBoard({ boardText: text, boardPath: design.source.files.board, ...(opts.projectText ? { projectText: opts.projectText } : {}), now: design.source.importedAt }).design;
-      carried.segments.push(...ok.result.segments);
-      carried.arcs.push(...ok.result.arcs);
-      carried.vias.push(...ok.result.vias);
+      const fresh = dedupeCopper({ segments: [...carried.segments, ...ok.result.segments], arcs: [...carried.arcs, ...ok.result.arcs], vias: [...carried.vias, ...ok.result.vias] });
+      carried.segments.splice(0, carried.segments.length, ...fresh.segments);
+      carried.arcs.splice(0, carried.arcs.length, ...fresh.arcs);
+      carried.vias.splice(0, carried.vias.length, ...fresh.vias);
       snapshot = makeSnapshot(design, { kind: 'routing', netIds: opts.snapshot.scope.kind === 'routing' ? opts.snapshot.scope.netIds : null, region: null, preserveExistingRoutes: true }, { seed: opts.snapshot.seed, limits: opts.snapshot.limits });
     }
     return { mode: opts.mode, invocations, ineligible };
@@ -240,4 +243,31 @@ export async function runPlacement(opts: PlacementRunOptions): Promise<{ mode: E
   const tasks = chosen.map((engine, i) => () => invoke(opts, engine, i, { runId: `${path.basename(opts.run.root)}-${i}`, snapshot: opts.snapshot, ...opts.job }, opts.sourceText, (p, j, c) => p.place(j, c)));
   const invocations = await parallel(tasks, opts.mode === 'single' ? 1 : (opts.maxParallel ?? 2));
   return { mode: opts.mode, invocations, ineligible };
+}
+
+/** One copy of each piece of copper, by geometry: layer, endpoints (either way round), width, and net. */
+export function dedupeCopper<T extends { segments: { netId: string; layer: string; a: { x: number; y: number }; b: { x: number; y: number }; width: number }[]; arcs: { netId: string; layer: string; a: { x: number; y: number }; mid: { x: number; y: number }; b: { x: number; y: number }; width: number }[]; vias: { netId: string; at: { x: number; y: number }; size: number }[] }>(r: T): T {
+  const seen = new Set<string>();
+  const key = (...parts: (string | number)[]) => parts.join('|');
+  const segments = r.segments.filter((s) => {
+    const ends = [`${s.a.x},${s.a.y}`, `${s.b.x},${s.b.y}`].sort();
+    const k = key('s', s.netId, s.layer, ends[0]!, ends[1]!, s.width);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const arcs = r.arcs.filter((a) => {
+    const ends = [`${a.a.x},${a.a.y}`, `${a.b.x},${a.b.y}`].sort();
+    const k = key('a', a.netId, a.layer, ends[0]!, ends[1]!, `${a.mid.x},${a.mid.y}`, a.width);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const vias = r.vias.filter((v) => {
+    const k = key('v', v.netId, `${v.at.x},${v.at.y}`, v.size);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return { ...r, segments, arcs, vias };
 }

@@ -19,7 +19,7 @@ import { rank, type Ranking } from '../verify/scoring.js';
 import { verifyDesign } from '../verify/index.js';
 import type { Diagnostic } from '../verify/diagnostic.js';
 import { EngineRegistry, DEFAULT_POLICY, type EnginePolicy } from './registry.js';
-import { runRouting, type ExecutionMode, type Invocation } from './runner.js';
+import { runRouting, dedupeCopper, type ExecutionMode, type Invocation } from './runner.js';
 import { Budget } from './budget.js';
 import { materialize, candidateFromRouting, type MaterializedCandidate } from './candidates.js';
 import { defaultStagedPlan, type LayerPreference, type StagedPlan } from './plan.js';
@@ -133,7 +133,7 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
     if (inv.stage && !inv.stage.final) continue; // intermediate stages are not candidates; their copper rides in the final branches
     // a staged branch is the union of the carried stages and its own copper
     const carried = inv.stage?.carried;
-    const result: RoutingResult = carried ? { ...inv.result, segments: [...carried.segments, ...inv.result.segments], arcs: [...carried.arcs, ...inv.result.arcs], vias: [...carried.vias, ...inv.result.vias] } : inv.result;
+    const result: RoutingResult = carried ? { ...inv.result, ...dedupeCopper({ segments: [...carried.segments, ...inv.result.segments], arcs: [...carried.arcs, ...inv.result.arcs], vias: [...carried.vias, ...inv.result.vias] }) } : inv.result;
     // staged branches already carry the earlier stages' copper in the composite result; the board's original copper is kept only when asked
     const preserve = opts.preserveExistingRoutes ?? false;
     const cand = await materialize(inv, candidateFromRouting(result, preserve, design), { sourceText: text, design, ...(projectText ? { projectText } : {}), profile, kicadVersion, ...(opts.noKicad ? { noKicad: true } : {}) });

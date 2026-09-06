@@ -203,6 +203,10 @@ describe('staged routing plan (§9.5)', () => {
       const power = res.invocations[0]!.result!;
       expect(power.segments.length).toBeGreaterThan(0);
       expect(res.invocations[1]!.stage!.carried!.segments).toHaveLength(power.segments.length);
+      // no piece of copper twice: an engine that echoes preserved wires must not double the composite
+      const segs = res.candidates[0]!.design.routing.segments;
+      const keys = new Set(segs.map((s) => `${s.netId}|${s.layer}|${[`${s.a.x},${s.a.y}`, `${s.b.x},${s.b.y}`].sort().join('|')}|${s.width}`));
+      expect(keys.size).toBe(segs.length);
       expect(existsSync(path.join(res.runDir, 'plan.json'))).toBe(true);
     } finally {
       await rm(dir, { recursive: true, force: true });
