@@ -154,6 +154,13 @@ export async function runRouting(opts: RoutingRunOptions): Promise<RoutingRun> {
   });
   const mk = (i: number, extra: Partial<RoutingJob> = {}): RoutingJob => ({ runId: `${path.basename(opts.run.root)}-${i}`, snapshot: opts.snapshot, ...opts.job, ...extra });
   const invocations: Invocation<RoutingResult>[] = [];
+  /** An engine the run's budget can no longer afford is recorded, not started. */
+  const skipped = (engine: RegisteredEngine): Invocation<RoutingResult> => ({ engineId: engine.manifest.id, manifest: engine.manifest, workDir: '', result: null, error: { kind: 'timeout', message: 'budget exhausted before start' }, provenance: { engineId: engine.manifest.id, engineVersion: engine.manifest.version, adapterVersion: engine.manifest.adapterVersion, seed: opts.job.seed, startedAt: '', finishedAt: '' }, snapshotViolation: null });
+  /** Each invocation's limits are the job's, clamped to what the run's budget still holds: five engines in a staged run must not each take the whole budget (B4). */
+  const clamped = (): RoutingJob['limits'] => {
+    const r = opts.budget.remaining;
+    return { ...opts.job.limits, engineSeconds: Math.max(1, Math.min(opts.job.limits.engineSeconds, Math.floor(r.engineSeconds))), wallSeconds: Math.max(1, Math.min(opts.job.limits.wallSeconds, Math.floor(r.wallSeconds))) };
+  };
   if (opts.mode === 'staged') {
     const { importBoard } = await import('../ir/kicad/import.js');
     let design = opts.design;
@@ -179,7 +186,10 @@ export async function runRouting(opts: RoutingRunOptions): Promise<RoutingRun> {
       const tasks = chosen.map((engine) => {
         const n = ordinal++;
         return async () => {
-          const inv = await invoke(opts, engine, n, job({ runId: `${path.basename(opts.run.root)}-${n}` }), snapshotText, (p, j, c) => p.route(j, c));
+          const inv = opts.budget.affords({ engineSeconds: 1, wallSeconds: 1 })
+            ? await invoke(opts, engine, n, job({ runId: `${path.basename(opts.run.root)}-${n}`, limits: clamped() }), snapshotText, (p, j, c) => p.route(j, c))
+            : skipped(engine);
+          if (!inv.workDir) opts.log?.(`stage ${step.name}: ${engine.manifest.id} not started, the budget is spent`);
           inv.stage = { index: i, name: step.name, final, ...(final ? { carried: carriedNow } : {}) };
           return inv;
         };
@@ -212,10 +222,8 @@ export async function runRouting(opts: RoutingRunOptions): Promise<RoutingRun> {
   }
   const chosen = opts.mode === 'single' ? usable.slice(0, 1) : usable;
   const tasks = chosen.map((engine, i) => async () => {
-    if (!opts.budget.affords({ engineSeconds: 1, wallSeconds: 1 })) {
-      return { engineId: engine.manifest.id, manifest: engine.manifest, workDir: '', result: null, error: { kind: 'timeout', message: 'budget exhausted before start' }, provenance: { engineId: engine.manifest.id, engineVersion: engine.manifest.version, adapterVersion: engine.manifest.adapterVersion, seed: opts.job.seed, startedAt: '', finishedAt: '' }, snapshotViolation: null } satisfies Invocation<RoutingResult>;
-    }
-    return invoke(opts, engine, i, mk(i), opts.sourceText, (p, j, c) => p.route(j, c));
+    if (!opts.budget.affords({ engineSeconds: 1, wallSeconds: 1 })) return skipped(engine);
+    return invoke(opts, engine, i, mk(i, { limits: clamped() }), opts.sourceText, (p, j, c) => p.route(j, c));
   });
   invocations.push(...(await parallel(tasks, opts.mode === 'race' || opts.mode === 'ensemble' ? (opts.maxParallel ?? 2) : 1)));
   return { mode: opts.mode, invocations, ineligible };

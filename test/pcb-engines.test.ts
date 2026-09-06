@@ -122,6 +122,47 @@ fs.writeFileSync(out, JSON.stringify({ status: 'complete', segments: [], arcs: [
   }, 60_000);
 });
 
+describe('the run budget bounds a staged run', () => {
+  it('clamps each invocation to what remains and records, not starts, an engine the budget cannot afford', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-staged-budget-'));
+    try {
+      const pcb = path.join(GOLDEN, 'completion', 'board.kicad_pcb');
+      const text = await readFile(pcb, 'utf8');
+      const { design } = importBoard({ boardText: text, boardPath: pcb, now: 't' });
+      // a router that takes 1.2 s and reports it, on a run with a 2 s wall budget
+      class SlowRouter extends ReferenceRouter {
+        override async route(job: Parameters<ReferenceRouter['route']>[0], ctx: Parameters<ReferenceRouter['route']>[1]) {
+          await new Promise((r) => setTimeout(r, 1200));
+          const res = await super.route(job, ctx);
+          return { ...res, runtime: { wallSeconds: 1.2, engineSeconds: 1.2 } };
+        }
+      }
+      const registry = new EngineRegistry();
+      registry.register(new SlowRouter(), { ...REFERENCE_ROUTER_MANIFEST, id: 'router-slow' });
+      const snapshot = makeSnapshot(design, { kind: 'routing', netIds: null, region: null, preserveExistingRoutes: false });
+      const run = await writeRunDir(path.join(dir, 'run'), snapshot, [pcb]);
+      const res = await runRouting({
+        run, sourceText: text, design, snapshotFileHash: run.fileHash, snapshot, budget: new Budget(60, 2),
+        engines: registry.list('router'), mode: 'staged', policy: { network: 'none', allowHarnessEngines: true, denyLicenses: [] },
+        job: { scope: { netIds: null, region: null, preserveExistingRoutes: false }, strategy: {}, hardConstraints: [], objectives: [], seed: 1, limits: { engineSeconds: 60, wallSeconds: 60, memoryMb: 512 } },
+        stages: [{ name: 'first', engineIds: ['router-slow'], netIds: null }, { name: 'second', engineIds: ['router-slow'], netIds: null }, { name: 'third', engineIds: ['router-slow'], netIds: null }],
+      });
+      expect(res.invocations).toHaveLength(3);
+      const [first, second, third] = res.invocations;
+      expect(first!.error).toBeNull();
+      const job1 = JSON.parse(await readFile(path.join(first!.workDir, 'job.json'), 'utf8'));
+      expect(job1.limits.wallSeconds).toBeLessThanOrEqual(2); // the job asked for 60, the run holds 2
+      expect(job1.limits.engineSeconds).toBe(60);
+      // 1.2 s used of 2: the second may still start with what is left, the third may not
+      if (second!.workDir) expect(JSON.parse(await readFile(path.join(second!.workDir, 'job.json'), 'utf8')).limits.wallSeconds).toBeLessThanOrEqual(1);
+      expect(third!.error).toMatchObject({ kind: 'timeout', message: 'budget exhausted before start' });
+      expect(third!.stage).toMatchObject({ name: 'third', final: true });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
+
 describe('reference router end to end', () => {
   it('routes the completion board, and the candidate verifies through KiCad DRC', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-route-'));
