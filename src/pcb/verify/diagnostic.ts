@@ -74,7 +74,8 @@ export const CODES: Record<string, CodeInfo> = {
   'conn.dangling': { category: 'connectivity', severity: 'warning', gate: 'none', summary: 'track or via touches nothing else' },
   'drc.*': { category: 'drc', severity: 'error', gate: 'routing', summary: 'a KiCad DRC violation, gated by the profile\'s critical list' },
   'drc.kct.*': { category: 'drc', severity: 'warning', gate: 'none', summary: 'a kicad-tools check finding, advisory beside KiCad' },
-  'preflight.courtyard': { category: 'preflight', severity: 'error', gate: 'preflight', summary: 'a footprint has no courtyard, so overlap cannot be checked' },
+  // a warning by default (KiCad's own default for missing_courtyard is ignore): overlap falls back to pad extents; a project's rule_severities can raise it
+  'preflight.courtyard': { category: 'preflight', severity: 'warning', gate: 'preflight', summary: 'a footprint has no courtyard, so overlap is checked on pad extents only' },
   'preflight.outline': { category: 'preflight', severity: 'error', gate: 'preflight', summary: 'the board has no single closed outline' },
   'preflight.annular': { category: 'preflight', severity: 'error', gate: 'preflight', summary: 'through-hole pad annular ring below the profile minimum' },
   'preflight.parity': { category: 'preflight', severity: 'error', gate: 'preflight', summary: 'board and schematic disagree' },
