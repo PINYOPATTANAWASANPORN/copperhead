@@ -408,8 +408,9 @@ pcbGroup
   .argument('[board]', 'board file (default: the configured board)')
   .option('--out <path>', 'output .svg (default: beside the board)')
   .option('--plain', 'no diagnostics, no legend (thumbnail mode)', false)
+  .option('--no-legend', 'keep the diagnostic markers on the board but drop the legend under it')
   .option('--scale <n>', 'pixels per millimetre', '14')
-  .action(async (board: string | undefined, opts: { out?: string; plain: boolean; scale: string }) => {
+  .action(async (board: string | undefined, opts: { out?: string; plain: boolean; legend: boolean; scale: string }) => {
     const repo = repoOf(program.opts());
     try {
       const { boardPath } = await pcbBoard(repo, board);
@@ -427,7 +428,7 @@ pcbGroup
       const plain = opts.plain || Boolean(program.opts().plain); // the global --plain (log style) swallows the flag when it precedes the subcommand
       const diagnostics = plain ? [] : verifyDesign({ design, fills: extractFills(text) }).diagnostics;
       const out = opts.out ? path.resolve(repo, opts.out) : boardPath.replace(/\.kicad_pcb$/, '.svg');
-      await writeFile(out, renderSvg(design, { diagnostics, scale: Number(opts.scale), legend: !plain }), 'utf8');
+      await writeFile(out, renderSvg(design, { diagnostics, scale: Number(opts.scale), legend: !plain && opts.legend !== false }), 'utf8');
       if (Boolean(program.opts().json)) console.log(JSON.stringify({ out, diagnostics: diagnostics.filter((d) => d.severity !== 'info').length }));
       else console.log(out);
     } catch (err) {

@@ -5,7 +5,7 @@
 
 ## Decision
 
-`bench/` in this repository, sharing the IR, adapter, checkers, and engine runner as ordinary imports, until the schemas of ADR 0005 have gone one release without a breaking change. Corpora are never committed; `bench/var/` holds clones and runs and is git-ignored. Milestone reports are committed under `bench/reports/`. A second binary, `copperhead-bench`, is declared in `package.json` and built with the rest.
+`bench/` in this repository, sharing the IR, adapter, checkers, and engine runner as ordinary imports, until the schemas of ADR 0005 have gone one release without a breaking change. Corpora are never committed; `bench/var/` holds clones and runs and is git-ignored. Milestone reports are committed under `bench/reports/`. A second binary, `copperbench`, is declared in `package.json` and built with the rest.
 
 ## Consequences
 

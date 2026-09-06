@@ -239,7 +239,7 @@ export async function runSuite(opts: BenchOptions): Promise<{ report: BenchRepor
     benchmarkVersion: BENCHMARK_VERSION, suite: suite.suite, corpus: suite.corpus, ...(suite.commit ? { corpusCommit: suite.commit } : {}), track, startedAt, finishedAt,
     harness: { copperhead: pkg.version, commit: await gitCommit(opts.repoRoot), kicad, node: process.version, platform: `${os.platform()} ${os.arch()}` },
     engines, scoring: scoring.id, mode, seeds, budgetSeconds,
-    reproduce: `copperhead-bench run ${path.relative(opts.repoRoot, opts.suitePath)} --routers ${routers.join(',')} --mode ${mode} --seeds ${seeds.join(',')} --budget-seconds ${budgetSeconds}${opts.allowHarnessEngines ? ' --allow-harness-engines' : ''}${opts.boards ? ` --boards ${opts.boards.join(',')}` : ''}`,
+    reproduce: `copperbench run ${path.relative(opts.repoRoot, opts.suitePath)} --routers ${routers.join(',')} --mode ${mode} --seeds ${seeds.join(',')} --budget-seconds ${budgetSeconds}${opts.allowHarnessEngines ? ' --allow-harness-engines' : ''}${opts.boards ? ` --boards ${opts.boards.join(',')}` : ''}`,
     boards,
     summary: {
       boards: new Set(boards.map((b) => b.id)).size, runs: boards.length, byStatus,

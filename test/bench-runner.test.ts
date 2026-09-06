@@ -1,5 +1,5 @@
 /**
- * copperhead-bench (implementation spec §12.4; RFC 11 §13.4, B0): the runner
+ * copperbench (implementation spec §12.4; RFC 11 §13.4, B0): the runner
  * goes through routeBoard, writes the record, two runs of one suite compare
  * byte-identical on the stable metric set, and compare refuses across
  * benchmark versions. Reference router, so the live cases skip without kicad-cli.
@@ -71,7 +71,7 @@ describe('compare and report', () => {
 describe('runSuite (B0: byte-stable harness)', () => {
   it('runs two golden cases through routeBoard, writes the record, and repeats identically', async () => {
     if (!(await haveKicad())) return;
-    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-bench-'));
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperbench-'));
     try {
       const base = { repoRoot: ROOT, suitePath: path.join(ROOT, 'bench/suites/microboards.json'), routers: ['router-reference'], mode: 'single' as const, boards: ['completion', 'short'], budgetSeconds: 120, allowHarnessEngines: true };
       const one = await runSuite({ ...base, outDir: path.join(dir, 'one') });
@@ -83,7 +83,7 @@ describe('runSuite (B0: byte-stable harness)', () => {
       expect(one.report.summary.selectionRegretTotal).toBe(0);
       expect(one.report.summary.invalidOverValidCount).toBe(0);
       expect(one.report.summary.meanOverheadSeconds).toBeGreaterThan(0);
-      expect(one.report.reproduce).toMatch(/^copperhead-bench run bench\/suites\/microboards\.json --routers router-reference/);
+      expect(one.report.reproduce).toMatch(/^copperbench run bench\/suites\/microboards\.json --routers router-reference/);
       const c = compareReports(one.report, two.report);
       expect(c.identicalMetrics, JSON.stringify(c.boards)).toBe(true);
       // the candidate boards are identical too, up to the uuids KiCad regenerates when it saves the refilled board
@@ -94,9 +94,9 @@ describe('runSuite (B0: byte-stable harness)', () => {
     }
   }, 600_000);
 
-  it('the copperhead-bench CLI runs, compares, and re-renders', async () => {
+  it('the copperbench CLI runs, compares, and re-renders', async () => {
     if (!(await haveKicad())) return;
-    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-benchcli-'));
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperbenchcli-'));
     try {
       const cli = ['tsx', 'src/bench/cli.ts', '--repo', ROOT];
       const run = await execa('npx', [...cli, '--json', 'run', 'bench/suites/microboards.json', '--routers', 'router-reference', '--allow-harness-engines', '--mode', 'single', '--boards', 'clearance', '--budget-seconds', '60', '--out', path.join(dir, 'a')], { cwd: ROOT, reject: false });

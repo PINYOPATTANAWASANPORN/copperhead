@@ -68,7 +68,7 @@ src/pcb/
 engines/                   out-of-process wrapper material (not TS)
   pyplacer/                                   (vendored at a pinned commit, one patch)
   README.md                                   (kicad-tools and Freerouting are user-installed: `kct`, jar)
-bench/                     P2+  copperhead-bench
+bench/                     P2+  copperbench
   golden/                  microboards with expected diagnostics
   suites/                  suite definitions (JSON)
   corpora/                 acquisition scripts, never the boards
@@ -583,7 +583,7 @@ export type RepairActionType =
 
 Exit codes per 2. `--json` prints `outcome.json` merged with `{ runDir, ranking }`. `import`, `verify`, `score`, `place`, and `route` are LLM-free and network-free; `place` and `route` refuse any engine with `networkRequirement: required`.
 
-`copperhead-bench` is a second bin in `package.json` (`src/bench/cli.ts`, built to `dist/bench/cli.js`): `run --track <e|d|f|a|b|c> --suite <name> [--engines …] [--seeds …]`, `compare <a> <b>`, `report <dir>`.
+`copperbench` is a second bin in `package.json` (`src/bench/cli.ts`, built to `dist/bench/cli.js`): `run --track <e|d|f|a|b|c> --suite <name> [--engines …] [--seeds …]`, `compare <a> <b>`, `report <dir>`.
 
 ### 11.2 Config (`.copperhead/config.json`, `pcb` block)
 
@@ -660,7 +660,7 @@ Ten boards, each hand-authored in KiCad 10 and committed with its project file, 
 - Engine-gated (`COPPERHEAD_TEST_FREEROUTING=1` with jar and JRE; `COPPERHEAD_TEST_KICAD_TOOLS=1` with `kct`; `COPPERHEAD_TEST_PYPLACER=1`): each wrapper end to end on the synthetic board and one microboard, asserting the result schema, provenance fields, and that the source snapshot is untouched.
 - Oracle (`COPPERHEAD_TEST_PCBNEW=1`): DSN emitter versus `pcbnew.ExportSpecctraDSN` (placement records, boundary extents, image pin counts, net pin sets); zone fill versus `pcbnew.ZONE_FILLER`.
 - Guards (always): import direction (1); `check` module graph never reaches `src/pcb/engines/routers|placers` or `src/pcb/agent`; the network guard of `test/init-check.test.ts` extended to `pcb verify` and `pcb score`; every manifest in `engines/` validates; every schema in `schemas/pcb/` matches its generator output.
-- Bench (nightly, not in the default `npm test`): `copperhead-bench run --suite microboards --track e,a,b` with the reference engines; the B-milestone reports are regenerated and diffed.
+- Bench (nightly, not in the default `npm test`): `copperbench run --suite microboards --track e,a,b` with the reference engines; the B-milestone reports are regenerated and diffed.
 
 ## 14. Phase map
 

@@ -4,7 +4,7 @@ Implements [RFC 11: The Copperhead PCB Layout Generation Standard](https://githu
 
 ## Why
 
-The board half of `create` has a deterministic front end (`src/kicad/board.ts`: netlist export, footprint resolution, shelf-packed placement, pad nets, load probe) and nothing behind it: stage 5 asks the model to nudge `(at X Y)` lines and leaves routing to "a human or specialist tool", and a board with zero copper reaches stage 6 and produces gerbers (#252, #227). The two attempts at closing that gap so far, PR #253 and an in-house connectivity-aware placer, both put copperhead in the engine business, which is the one place it has no advantage and every neighbour already competes (§4.1). RFC 11 settles the division: **copperhead owns the harness** (canonical IR, constraint registry, intent compiler, orchestration, independent verification, scoring, provenance, repair loop) and **wraps engines** (FreeRouting, kicad-tools, pyplacer, later OrthoRoute and commercial routers) behind one fail-closed plugin contract, with `copperhead-bench` as the evidence that decides what ships. This change is the v1 of that framework: the layout backend for `copperhead create`, the layout track of `check`, and the benchmark.
+The board half of `create` has a deterministic front end (`src/kicad/board.ts`: netlist export, footprint resolution, shelf-packed placement, pad nets, load probe) and nothing behind it: stage 5 asks the model to nudge `(at X Y)` lines and leaves routing to "a human or specialist tool", and a board with zero copper reaches stage 6 and produces gerbers (#252, #227). The two attempts at closing that gap so far, PR #253 and an in-house connectivity-aware placer, both put copperhead in the engine business, which is the one place it has no advantage and every neighbour already competes (§4.1). RFC 11 settles the division: **copperhead owns the harness** (canonical IR, constraint registry, intent compiler, orchestration, independent verification, scoring, provenance, repair loop) and **wraps engines** (FreeRouting, kicad-tools, pyplacer, later OrthoRoute and commercial routers) behind one fail-closed plugin contract, with `copperbench` as the evidence that decides what ships. This change is the v1 of that framework: the layout backend for `copperhead create`, the layout track of `check`, and the benchmark.
 
 ## What Changes
 
@@ -16,8 +16,8 @@ The board half of `create` has a deterministic front end (`src/kicad/board.ts`: 
 - **Reference layout retrieval** (§8.6): before placement, search manufacturer reference designs (through the datasheet cache and RFC 4 patterns), existing native-CAD designs (local corpora and online), and RFC 1 teardowns for blocks that match each subsystem's anchor; rank by similarity; cache with license and provenance; apply permissive blocks automatically and hold copyleft or unknown ones for approval; feed `placer-layout-reuse` and the attachment stage.
 - **Scoring and selection** (§11): PCBWorld's eight routing metrics adopted verbatim plus placement metrics; lexicographic gates then a Pareto frontier with a weighted profile picking a default.
 - **The repair loop** (§12): permitted and prohibited LLM actions, the bounded repair catalog, engine-second budgets, and the eight terminal statuses used identically by CLI, tools, bench, and evidence.
-- **`copperhead-bench`** (§13, §13.5): tracks E/D/F/A/B/C, the dataset composition, the experiment protocol, and milestones B0–B4 as the acceptance evidence.
-- **Surfaces** (§14.3, §13.5.2): `copperhead pcb import|infer-intent|place|route|verify|score|layout`, `copperhead-bench run|compare|report`; `create` stage 5 calls `pcb layout` and ships the evidence bundle as `## Draft quality`; `check` gains the layout track; `do "<layout change>"` uses the repair loop with the existing board as preserved geometry.
+- **`copperbench`** (§13, §13.5): tracks E/D/F/A/B/C, the dataset composition, the experiment protocol, and milestones B0–B4 as the acceptance evidence.
+- **Surfaces** (§14.3, §13.5.2): `copperhead pcb import|infer-intent|place|route|verify|score|layout`, `copperbench run|compare|report`; `create` stage 5 calls `pcb layout` and ships the evidence bundle as `## Draft quality`; `check` gains the layout track; `do "<layout change>"` uses the repair loop with the existing board as preserved geometry.
 - Binary acceptance criteria carry the AC-17.x family and are merged into SPEC.md on archive.
 
 ## Capabilities
@@ -30,11 +30,11 @@ The board half of `create` has a deterministic front end (`src/kicad/board.ts`: 
 - `pcb-layout-intent`: the layout constraint classes in the registry, ECAD ingestion, intent language, intent compiler behaviour, physics compiler.
 - `pcb-scoring`: placement and routing metrics, the ranking policy, optimization profiles, comparability rules.
 - `pcb-repair-loop`: permitted and prohibited LLM actions, the repair catalog, engine-second budgets, stop conditions, terminal statuses.
-- `copperhead-bench`: tracks, datasets, protocol, experiment records, reports, milestones.
+- `copperbench`: tracks, datasets, protocol, experiment records, reports, milestones.
 
 ### Modified Capabilities
 
-- `cli-surface`: the `pcb` command group and the `copperhead-bench` binary; `check` gains the layout track under the same zero-LLM, zero-network contract.
+- `cli-surface`: the `pcb` command group and the `copperbench` binary; `check` gains the layout track under the same zero-LLM, zero-network contract.
 - `create-pipeline`: the layout-draft stage calls the framework and its completion contract becomes the evidence bundle.
 - `agent-core`: the tool list gains the framework's tools (intent, layout, repair) and structurally lacks any tool that could emit copper; `do` on a board uses the repair loop.
 

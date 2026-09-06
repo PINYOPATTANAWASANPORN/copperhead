@@ -9,11 +9,11 @@
 - **WHEN** `copperhead pcb verify candidate.kicad_pcb` runs under the network guard
 - **THEN** it exits with the candidate's status, writes diagnostics, and opens no connection
 
-### Requirement: `copperhead-bench` binary
-`copperhead-bench run --track <track> --suite <suite>`, `compare <run-a> <run-b>`, and `report <dir>` SHALL implement the bench protocol and emit JSON and HTML reports.
+### Requirement: `copperbench` binary
+`copperbench run --track <track> --suite <suite>`, `compare <run-a> <run-b>`, and `report <dir>` SHALL implement the bench protocol and emit JSON and HTML reports.
 
 #### Scenario: Compare two runs
-- **WHEN** `copperhead-bench compare` is given two run directories of the same benchmark version
+- **WHEN** `copperbench compare` is given two run directories of the same benchmark version
 - **THEN** it reports per-board metric deltas and refuses with a named reason when the versions differ
 
 ## MODIFIED Requirements

@@ -1,9 +1,9 @@
-# copperhead-bench — Delta Spec
+# copperbench — Delta Spec
 
 ## ADDED Requirements
 
 ### Requirement: Tracks and datasets
-`copperhead-bench` SHALL run tracks E (intent compliance), D (repair), F (refusal), A (placement only), B (routing only, PCBWorld protocol unchanged), and C (end to end) over the datasets of RFC §13.2: curated microboards, reference boards, a PCBWorld subset, a Cypress subset where licensed, synthetic stress cases, refusal cases, and every production-discovered regression. It SHALL absorb the verification metrics of the foundation-model plan.
+`copperbench` SHALL run tracks E (intent compliance), D (repair), F (refusal), A (placement only), B (routing only, PCBWorld protocol unchanged), and C (end to end) over the datasets of RFC §13.2: curated microboards, reference boards, a PCBWorld subset, a Cypress subset where licensed, synthetic stress cases, refusal cases, and every production-discovered regression. It SHALL absorb the verification metrics of the foundation-model plan.
 
 #### Scenario: Refusal track scores explicit status (AC-17.11)
 - **WHEN** track F runs a board whose correct outcome is `HOLD`

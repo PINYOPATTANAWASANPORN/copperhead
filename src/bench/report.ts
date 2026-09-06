@@ -38,7 +38,7 @@ function boardRow(b: BoardRecord): string {
 export function renderHtml(r: BenchReport): string {
   const s = r.summary;
   const status = Object.entries(s.byStatus).map(([k, v]) => `${k} ${v}`).join(' · ');
-  return `<!doctype html><meta charset="utf-8"><title>copperhead-bench · ${esc(r.suite)}</title>
+  return `<!doctype html><meta charset="utf-8"><title>copperbench · ${esc(r.suite)}</title>
 <style>
 body{font:14px/1.45 system-ui,sans-serif;margin:24px;color:#222;background:#fafafa}h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:24px 0 8px}
 table{border-collapse:collapse;width:100%;background:#fff}th,td{border:1px solid #ddd;padding:6px 8px;vertical-align:top;text-align:left}th{background:#f0f0f0;font-weight:600}
@@ -46,7 +46,7 @@ td.num{text-align:right;white-space:nowrap}td.status{min-width:220px}td.board{mi
 .s-PASS td:first-child{border-left:4px solid #1a7f37}.s-PARTIAL td:first-child{border-left:4px solid #b26b00}.s-REFUSE td:first-child,.s-ENGINE_ERROR td:first-child,.s-INVALID_OUTPUT td:first-child{border-left:4px solid #b42318}
 .kv{display:grid;grid-template-columns:max-content 1fr;gap:2px 16px}.kv div:nth-child(odd){color:#555}code{background:#eee;padding:1px 4px;border-radius:3px}
 </style>
-<h1>copperhead-bench · ${esc(r.suite)} · track ${esc(r.track)}</h1>
+<h1>copperbench · ${esc(r.suite)} · track ${esc(r.track)}</h1>
 <div class="muted">${esc(r.startedAt)} → ${esc(r.finishedAt)} · benchmark version ${esc(r.benchmarkVersion)}</div>
 <h2>Summary</h2>
 <div class="kv">

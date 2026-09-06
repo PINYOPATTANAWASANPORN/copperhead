@@ -17,7 +17,7 @@ Repairs SHALL be chosen from the catalog of RFC §12.3 (change net priority, sel
 - **THEN** the planner cannot select it and the run terminates `TIMEOUT` with the estimate recorded
 
 ### Requirement: Terminal statuses
-Every run SHALL terminate with exactly one of `PASS`, `PARTIAL`, `HOLD`, `REFUSE`, `UNSUPPORTED`, `TIMEOUT`, `ENGINE_ERROR`, `INVALID_OUTPUT`, with the RFC §12.5 meanings, used identically by the CLI, the agent tools, `copperhead-bench`, and the evidence bundle. `PARTIAL` SHALL list the remaining work explicitly.
+Every run SHALL terminate with exactly one of `PASS`, `PARTIAL`, `HOLD`, `REFUSE`, `UNSUPPORTED`, `TIMEOUT`, `ENGINE_ERROR`, `INVALID_OUTPUT`, with the RFC §12.5 meanings, used identically by the CLI, the agent tools, `copperbench`, and the evidence bundle. `PARTIAL` SHALL list the remaining work explicitly.
 
 #### Scenario: Statuses agree across surfaces
 - **WHEN** the same snapshot is run through `copperhead pcb layout`, the `pcb_layout` tool, and a bench track

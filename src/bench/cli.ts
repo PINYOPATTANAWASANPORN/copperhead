@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `copperhead-bench run|compare|report` (implementation spec §12.4).
+ * `copperbench run|compare|report` (implementation spec §12.4).
  */
 import { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
@@ -9,7 +9,7 @@ import { runSuite, writeReport, type BenchReport } from './runner.js';
 import { compareReports } from './compare.js';
 
 const program = new Command();
-program.name('copperhead-bench').description('run, compare, and report copperhead layout benchmarks').option('--repo <path>', 'repository root', process.cwd()).option('--json', 'machine-readable output', false);
+program.name('copperbench').description('run, compare, and report copperhead layout benchmarks').option('--repo <path>', 'repository root', process.cwd()).option('--json', 'machine-readable output', false);
 
 program
   .command('run')

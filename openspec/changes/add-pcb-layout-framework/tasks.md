@@ -30,7 +30,7 @@
 - [x] 3.4 `router-kicad-tools-astar` wrapper; `router-reference` grid router marked `harnessOnly`
 - [x] 3.5 `src/pcb/verify/scoring.ts`: PCBWorld's eight routing metrics verbatim plus the §11.2 additions; the two-layer return-path checker and metrics (pour fragments and largest share, bottom-layer signal length, pour crossings, stitching); lexicographic gates and Pareto frontier; `default-low-speed-2-layer` profile weighting return-path metrics ahead of wirelength
 - [x] 3.5a Default staged routing plan (§9.5): power and ground first at physics-compiler or user widths with pours preserved, critical nets next, bulk by race; layer-preference constraints mapped to Freerouting's layer settings
-- [x] 3.6 `bench/`: runner over golden microboards (grow to 40) and the 20-board PCBWorld qualification subset; JSON and HTML reports with the §13.4 record; `copperhead-bench run|compare|report`
+- [x] 3.6 `bench/`: runner over golden microboards (grow to 40) and the 20-board PCBWorld qualification subset; JSON and HTML reports with the §13.4 record; `copperbench run|compare|report`
 - [x] 3.7 `copperhead pcb import|route|verify|score`; `check` module-graph guard extended to `src/pcb/engines/` and `src/pcb/agent/` (AC-17.5)
 - [ ] 3.8 Exit: B0 report (byte-stable harness, AC-17.12) and B1 report (selection regret zero, invalid-over-valid zero, overhead measured) published under `bench/reports/`
 
