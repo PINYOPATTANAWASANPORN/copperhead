@@ -289,11 +289,14 @@ function outcomeOf(invocations: Invocation<PlacementResult>[], candidates: Mater
   }
   if (!invocations.length) return { status: 'UNSUPPORTED', summary: 'no eligible placement engine', detail, diagnostics: [] };
   if (invocations.some((i) => i.snapshotViolation)) return { status: 'INVALID_OUTPUT', summary: 'an engine modified its input snapshot', detail, diagnostics: [] };
-  if (invocations.every((i) => i.error?.kind === 'timeout')) return { status: 'TIMEOUT', summary: 'every engine ran out of budget', detail, diagnostics: [] };
-  if (invocations.every((i) => i.error && (i.error.kind === 'no-binary' || i.error.kind === 'no-runtime' || i.error.kind === 'runtime-too-old'))) {
-    return { status: 'UNSUPPORTED', summary: `no placement engine is installed (${invocations.map((i) => `${i.engineId}: ${i.error!.kind}`).join(', ')})`, detail, diagnostics: [] };
+  const failedKind = (i: Invocation<PlacementResult>): string | null => (i.error ? i.error.kind : i.result && (i.result.status === 'failed' || i.result.status === 'unsupported') ? i.result.status : null);
+  if (!candidates.length) {
+    if (invocations.every((i) => failedKind(i) === 'timeout')) return { status: 'TIMEOUT', summary: 'every engine ran out of budget', detail, diagnostics: [] };
+    if (invocations.every((i) => ['no-binary', 'no-runtime', 'runtime-too-old'].includes(failedKind(i) ?? ''))) {
+      return { status: 'UNSUPPORTED', summary: `no placement engine is installed (${invocations.map((i) => `${i.engineId}: ${failedKind(i)}`).join(', ')})`, detail, diagnostics: [] };
+    }
+    if (invocations.every((i) => failedKind(i))) return { status: 'ENGINE_ERROR', summary: `no engine produced a candidate (${invocations.map((i) => `${i.engineId}: ${failedKind(i)}`).join(', ')})`, detail, diagnostics: [] };
   }
-  if (invocations.every((i) => i.error)) return { status: 'ENGINE_ERROR', summary: `no engine produced a candidate (${invocations.map((i) => `${i.engineId}: ${i.error!.kind}`).join(', ')})`, detail, diagnostics: [] };
   const worst = candidates[0];
   for (const c of ranking.candidates) detail.push(`${c.id}: ${c.reason}`);
   return { status: 'PARTIAL', summary: 'every candidate failed a hard gate; the board is unchanged', detail, diagnostics: worst ? worst.verify.diagnostics.filter((d) => d.severity === 'error') : [] };

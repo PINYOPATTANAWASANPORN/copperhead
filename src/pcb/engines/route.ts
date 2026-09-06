@@ -169,12 +169,18 @@ function outcomeOf(invocations: Invocation<RoutingResult>[], candidates: Materia
   }
   if (!invocations.length) return { status: 'UNSUPPORTED', summary: 'no eligible routing engine', detail, diagnostics: [] };
   if (invocations.some((i) => i.snapshotViolation)) return { status: 'INVALID_OUTPUT', summary: 'an engine modified its input snapshot', detail, diagnostics: [] };
-  if (invocations.every((i) => i.error?.kind === 'timeout')) return { status: 'TIMEOUT', summary: 'every engine ran out of budget', detail, diagnostics: [] };
-  // nothing installed is a capability gap, not an engine crash: the board is unroutable here, and the fix lines say what to install
-  if (invocations.every((i) => i.error && (i.error.kind === 'no-binary' || i.error.kind === 'no-runtime' || i.error.kind === 'runtime-too-old'))) {
-    return { status: 'UNSUPPORTED', summary: `no routing engine is installed (${invocations.map((i) => `${i.engineId}: ${i.error!.kind}`).join(', ')})`, detail, diagnostics: [] };
+  // the verdict rests on the invocations that could have produced a candidate: the final branches of a staged run, every one otherwise;
+  // an engine that returned no copper ('failed') counts as an engine failure
+  const finals = invocations.filter((i) => !i.stage || i.stage.final);
+  const failedKind = (i: Invocation<RoutingResult>): string | null => (i.error ? i.error.kind : i.result && (i.result.status === 'failed' || i.result.status === 'unsupported') ? i.result.status : null);
+  if (!candidates.length && finals.length) {
+    if (finals.every((i) => failedKind(i) === 'timeout')) return { status: 'TIMEOUT', summary: 'every engine ran out of budget', detail, diagnostics: [] };
+    // nothing installed is a capability gap, not an engine crash: the board is unroutable here, and the fix lines say what to install
+    if (finals.every((i) => ['no-binary', 'no-runtime', 'runtime-too-old'].includes(failedKind(i) ?? ''))) {
+      return { status: 'UNSUPPORTED', summary: `no routing engine is installed (${finals.map((i) => `${i.engineId}: ${failedKind(i)}`).join(', ')})`, detail, diagnostics: [] };
+    }
+    if (finals.every((i) => failedKind(i))) return { status: 'ENGINE_ERROR', summary: `no engine produced a candidate (${finals.map((i) => `${i.engineId}: ${failedKind(i)}`).join(', ')})`, detail, diagnostics: [] };
   }
-  if (invocations.every((i) => i.error)) return { status: 'ENGINE_ERROR', summary: `no engine produced a candidate (${invocations.map((i) => `${i.engineId}: ${i.error!.kind}`).join(', ')})`, detail, diagnostics: [] };
   // candidates exist but none passed the gates
   const worst = candidates[0];
   for (const c of ranking.candidates) detail.push(`${c.id}: ${c.reason}`);
