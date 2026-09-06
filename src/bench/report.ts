@@ -33,7 +33,7 @@ export function summaryCsv(report: BenchReport): string {
 
 function boardRow(b: BoardRecord, METRICS: string[]): string {
   const sel = b.candidates.find((c) => c.id === b.selected);
-  const cands = b.candidates.map((c) => `<li class="${c.eligible ? 'ok' : 'bad'}">${esc(c.id)} · rank ${c.rank} · score ${c.score.toFixed(3)}${c.gateFailures.length ? ` · ${esc(c.gateFailures.join(', '))}` : ''}</li>`).join('');
+  const cands = b.candidates.map((c) => `<li class="${c.eligible ? 'ok' : 'bad'}">${esc(c.id)} · rank ${c.rank} · score ${c.score === null || c.score === undefined ? '—' : c.score.toFixed(3)}${c.gateFailures.length ? ` · ${esc(c.gateFailures.join(', '))}` : ''}</li>`).join('');
   const inel = b.ineligible.map((i) => `<li class="muted">${esc(i.engineId)}: ${esc(i.reasons.join('; '))}</li>`).join('');
   const errs = b.errors.map((e) => `<li class="bad">${esc(e)}</li>`).join('');
   const cyc = b.cycles?.length ? `<li>cycles: ${esc(b.cycles.map((c) => `${c.n}${c.action ? ` ${c.action}` : ''} → ${c.status} (${c.errors} err, ${c.owed} owed, ${c.seconds.toFixed(0)} s)`).join('; '))}</li>` : '';
