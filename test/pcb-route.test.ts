@@ -16,6 +16,7 @@ import { rank } from '../src/pcb/verify/scoring.js';
 import { DEFAULT_LOW_SPEED_2_LAYER } from '../src/pcb/verify/profiles/scoring/index.js';
 import { routingMetrics, owedBaseline } from '../src/pcb/verify/metrics.js';
 import { routeBoard, defaultRegistry } from '../src/pcb/engines/route.js';
+import { ReferenceRouter, REFERENCE_ROUTER_MANIFEST } from '../src/pcb/engines/routers/reference/adapter.js';
 import { defaultStagedPlan, isPowerNet } from '../src/pcb/engines/plan.js';
 import { emitDsn } from '../src/pcb/engines/routers/freerouting/dsn.js';
 import { importBoard } from '../src/pcb/ir/kicad/import.js';
@@ -190,6 +191,34 @@ describe('staged routing plan (§9.5)', () => {
     expect(dsn).toMatch(/\(class kicad_default[^]*?\(width 500\)/);
     expect(emitDsn(design, { boardName: 'b', edgeClearanceNm: 0 })).not.toMatch(/autoroute_settings/);
   });
+  it('a staged run the budget cuts short is judged on the last stage that routed, not thrown away (B4)', async () => {
+    if (!(await haveKicad())) return;
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-staged-cut-'));
+    try {
+      // a router that takes 1.2 s per stage, on a 2 s wall budget: the power stage runs, the bulk stages cannot start
+      class SlowRouter extends ReferenceRouter {
+        override async route(job: Parameters<ReferenceRouter['route']>[0], ctx: Parameters<ReferenceRouter['route']>[1]) {
+          await new Promise((r) => setTimeout(r, 1200));
+          const res = await super.route(job, ctx);
+          return { ...res, runtime: { wallSeconds: 1.2, engineSeconds: 1.2 } };
+        }
+      }
+      const reg = defaultRegistry(ROOT);
+      reg.register(new SlowRouter(), { ...REFERENCE_ROUTER_MANIFEST, id: 'router-slow' });
+      const res = await routeBoard({ repoRoot: ROOT, boardPath: path.join(GOLDEN, 'completion', 'board.kicad_pcb'), runDir: path.join(dir, 'run'), routers: ['router-slow'], mode: 'staged', registry: reg, policy: { network: 'none', allowHarnessEngines: true, denyLicenses: [] }, limits: { engineSeconds: 60, wallSeconds: 2 } });
+      expect(res.invocations.map((i) => i.stage!.name)).toEqual(['power', 'bulk-generous', 'bulk']);
+      expect(res.invocations[0]!.error).toBeNull();
+      expect(res.invocations[2]!.error).toMatchObject({ kind: 'timeout' });
+      // the power copper is the candidate: a partial board the loop can repair, not a TIMEOUT with nothing
+      expect(res.candidates).toHaveLength(1);
+      expect(res.candidates[0]!.engineId).toBe('router-slow');
+      expect(res.outcome.status).toBe('PARTIAL');
+      expect(res.candidates[0]!.verify.metrics.completion_rate).toBeGreaterThan(0);
+      expect(res.candidates[0]!.verify.metrics.completion_rate).toBeLessThan(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
   it('a staged run carries the power copper into the bulk stage and yields one candidate per final branch', async () => {
     if (!(await haveKicad())) return;
     const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-staged-'));

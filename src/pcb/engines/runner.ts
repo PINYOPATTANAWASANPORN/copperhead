@@ -190,7 +190,8 @@ export async function runRouting(opts: RoutingRunOptions): Promise<RoutingRun> {
             ? await invoke(opts, engine, n, job({ runId: `${path.basename(opts.run.root)}-${n}`, limits: clamped() }), snapshotText, (p, j, c) => p.route(j, c))
             : skipped(engine);
           if (!inv.workDir) opts.log?.(`stage ${step.name}: ${engine.manifest.id} not started, the budget is spent`);
-          inv.stage = { index: i, name: step.name, final, ...(final ? { carried: carriedNow } : {}) };
+          // every stage carries the copper routed before it, so a stage the budget cuts off before the last one can still be judged
+          inv.stage = { index: i, name: step.name, final, carried: carriedNow };
           return inv;
         };
       });

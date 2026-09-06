@@ -127,10 +127,13 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
   });
   const candidates: MaterializedCandidate[] = [];
   const scored = [];
+  // the candidates come from the last stage that produced copper: the final stage, or, when the budget cut the run short
+  // before it (B4), the last one that ran, whose composite is what the board would carry
+  const judged = judgedStage(res.invocations);
   for (const inv of res.invocations) {
     if (!inv.result || inv.snapshotViolation) continue;
     if (inv.result.status === 'failed' || inv.result.status === 'unsupported') continue;
-    if (inv.stage && !inv.stage.final) continue; // intermediate stages are not candidates; their copper rides in the final branches
+    if (inv.stage && inv.stage.index !== judged) continue; // other stages are not candidates; their copper rides in the judged branches
     // a staged branch is the union of the carried stages and its own copper
     const carried = inv.stage?.carried;
     const result: RoutingResult = carried ? { ...inv.result, ...dedupeCopper({ segments: [...carried.segments, ...inv.result.segments], arcs: [...carried.arcs, ...inv.result.arcs], vias: [...carried.vias, ...inv.result.vias] }) } : inv.result;
@@ -138,7 +141,7 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
     const preserve = opts.preserveExistingRoutes ?? false;
     const cand = await materialize(inv, candidateFromRouting(result, preserve, design), { sourceText: text, design, ...(projectText ? { projectText } : {}), profile, kicadVersion, ...(opts.noKicad ? { noKicad: true } : {}) });
     candidates.push(cand);
-    const wall = res.invocations.filter((x) => x === inv || (x.stage && !x.stage.final)).reduce((a, x) => a + (x.result?.runtime.wallSeconds ?? 0), 0);
+    const wall = res.invocations.filter((x) => x === inv || (x.stage && x.stage.index < (inv.stage?.index ?? 0))).reduce((a, x) => a + (x.result?.runtime.wallSeconds ?? 0), 0);
     const metrics = routingMetrics({ design: cand.design, verify: cand.verify, baseline: design, runtimeSeconds: wall });
     await writeFile(path.join(inv.workDir, 'metrics.json'), JSON.stringify(metrics, null, 2), 'utf8');
     const gates = cand.verify.gates;
@@ -146,12 +149,20 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
   }
   const ranking = rank(scored, scoring);
   await writeFile(path.join(run.root, 'ranking.json'), JSON.stringify(ranking, null, 2), 'utf8');
-  const outcome = outcomeOf(res.invocations, candidates, ranking, [...unknown, ...res.ineligible]);
+  const outcome = outcomeOf(res.invocations, candidates, ranking, [...unknown, ...res.ineligible], judged);
   await writeFile(path.join(run.root, 'outcome.json'), JSON.stringify({ ...outcome, diagnostics: outcome.diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message, entityReferences: d.entityReferences })) }, null, 2), 'utf8');
   return { outcome, runDir: run.root, ranking, invocations: res.invocations, candidates, ineligible: [...unknown, ...res.ineligible], ...(plan ? { plan } : {}) };
 }
 
-function outcomeOf(invocations: Invocation<RoutingResult>[], candidates: MaterializedCandidate[], ranking: Ranking, ineligible: { engineId: string; reasons: string[] }[]): Outcome<Diagnostic> {
+/** The stage whose branches are judged: the last one with a usable result, else the final stage (every branch of which then explains the failure). */
+function judgedStage(invocations: Invocation<RoutingResult>[]): number | null {
+  const staged = invocations.filter((i) => i.stage);
+  if (!staged.length) return null;
+  const usable = staged.filter((i) => i.result && !i.snapshotViolation && i.result.status !== 'failed' && i.result.status !== 'unsupported');
+  return usable.length ? Math.max(...usable.map((i) => i.stage!.index)) : Math.max(...staged.map((i) => i.stage!.index));
+}
+
+function outcomeOf(invocations: Invocation<RoutingResult>[], candidates: MaterializedCandidate[], ranking: Ranking, ineligible: { engineId: string; reasons: string[] }[], judged: number | null = judgedStage(invocations)): Outcome<Diagnostic> {
   const detail: string[] = [];
   for (const i of ineligible) detail.push(`${i.engineId}: ineligible (${i.reasons.join('; ')})`);
   for (const inv of invocations) {
@@ -171,7 +182,7 @@ function outcomeOf(invocations: Invocation<RoutingResult>[], candidates: Materia
   if (invocations.some((i) => i.snapshotViolation)) return { status: 'INVALID_OUTPUT', summary: 'an engine modified its input snapshot', detail, diagnostics: [] };
   // the verdict rests on the invocations that could have produced a candidate: the final branches of a staged run, every one otherwise;
   // an engine that returned no copper ('failed') counts as an engine failure
-  const finals = invocations.filter((i) => !i.stage || i.stage.final);
+  const finals = invocations.filter((i) => !i.stage || i.stage.index === judged);
   const failedKind = (i: Invocation<RoutingResult>): string | null => (i.error ? i.error.kind : i.result && (i.result.status === 'failed' || i.result.status === 'unsupported') ? i.result.status : null);
   if (!candidates.length && finals.length) {
     if (finals.every((i) => failedKind(i) === 'timeout')) return { status: 'TIMEOUT', summary: 'every engine ran out of budget', detail, diagnostics: [] };
