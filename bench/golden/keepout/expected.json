@@ -12,9 +12,7 @@
     }
   ],
   "drc": {
-    "errorTypes": [
-      "items_not_allowed"
-    ],
+    "errorTypes": [],
     "unconnected": 2
   }
 }

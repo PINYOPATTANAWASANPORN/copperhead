@@ -218,8 +218,9 @@ const CASES: Case[] = [
     outline: [30, 24],
     parts: [{ ref: 'H1', fp: FP.hole, value: 'M3', x: 106, y: 106 }, { ref: 'U1', fp: FP.soic8, value: 'MCU', x: 120, y: 114 }, { ref: 'R2', fp: FP.r0603, value: '4k7', x: 110.3, y: 110.8 }],
     nets: { SIG: ['U1.2', 'R2.1'], VCC: ['U1.8', 'R2.2'] },
-    keepouts: [{ rect: [102, 102, 112, 112] }],
-    expected: { status: 'REFUSE', diagnostics: [{ code: 'intent.manufacturing.keepout', entityReferences: ['R2'] }], drc: { errorTypes: ['items_not_allowed'], unconnected: 2 } },
+    // a ring keepout is intent, not a KiCad rule area: a rule area would flag the hole's own footprint too, and KiCad cannot exempt it
+    intent: 'placement:\n  keepouts:\n    - region: mounting_hole_ring\n      radius_mm: 3.5\n      prohibit: [components, copper]\n',
+    expected: { status: 'REFUSE', diagnostics: [{ code: 'intent.manufacturing.keepout', entityReferences: ['R2'] }], drc: { errorTypes: [], unconnected: 2 } },
   },
   {
     name: 'open',

@@ -8,7 +8,7 @@ Fifteen small KiCad 10 boards, each carrying exactly one seeded layout fault, wi
 | `outside-board` | R1 wholly outside the outline | `geom.outside-board` | nothing (no rule fires for a footprint entirely outside) |
 | `fixed-connector` | J1 constrained to the west edge, placed mid-board (`intent.yaml`) | `intent.mechanical.edge` | nothing |
 | `decoupling-far` | C1 attached to U1 pins 8/4 within 2 mm, placed 20 mm away (`intent.yaml`) | `intent.relative.attached` | nothing |
-| `keepout` | R2 inside the keepout ring around H1 | `intent.manufacturing.keepout` | `items_not_allowed` |
+| `keepout` | R2 inside the 3.5 mm ring around mounting hole H1 (`intent.yaml`) | `intent.manufacturing.keepout` | nothing |
 | `open` | SIG1 track stops short of R1.1 | `conn.open` | unconnected item, `track_dangling` warning |
 | `short` | VCC track lands on a GND pad | `conn.short` | `shorting_items` (plus `solder_mask_bridge`, a consequence) |
 | `clearance` | two tracks 0.05 mm apart under a 0.2 mm rule | `drc.clearance` | `clearance` |
@@ -20,7 +20,7 @@ Fifteen small KiCad 10 boards, each carrying exactly one seeded layout fault, wi
 | `separation` | analog and digital blocks 3 mm apart against a 10 mm minimum (`intent.yaml`) | `intent.functional.separation` | nothing |
 | `power-width` | a 2 A net routed at 0.25 mm against a 0.8 mm requirement (`intent.yaml`) | `intent.routing.width` | nothing |
 
-Nine of the fifteen are invisible to DRC. That is the point of the set: a harness that only wraps KiCad DRC cannot pass B0.
+Ten of the fifteen are invisible to DRC. That is the point of the set: a harness that only wraps KiCad DRC cannot pass B0.
 
 `expected.json` fields: `status` (the terminal status the run must end in), `diagnostics` (codes and entity references the harness must emit), `drc.errorTypes` (KiCad error types that must appear), `drc.consequential` (types that may appear because they follow from the fault), `drc.unconnected` (KiCad's unconnected-item count), `metricsWithin` (metric ranges, from Phase 2).
 

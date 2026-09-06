@@ -49,6 +49,8 @@ describe('intent language', () => {
 describe('ECAD ingestion', () => {
   it('derives routing classes, locked parts, and keepout areas; a contradicting hand entry is reported', async () => {
     const { design: d } = await design('keepout');
+    // a KiCad rule area on the board (the golden keepout carries its ring as intent instead)
+    d.board.keepouts.push({ id: 'ra1', polygon: { outer: [{ x: 102e6, y: 102e6 }, { x: 112e6, y: 102e6 }, { x: 112e6, y: 112e6 }, { x: 102e6, y: 112e6 }], holes: [] }, layers: ['F.Cu', 'B.Cu'], prohibits: ['tracks', 'vias', 'pads', 'footprints', 'copper'] });
     const ecad = ecadConstraints(d);
     expect(ecad['layout.routing.class.Default.width']).toMatchObject({ source: 'ecad_rules', class: 'routing', severity: 'hard', parameters: { width_nm: d.board.rules.trackWidthNm } });
     const keep = Object.entries(ecad).filter(([k]) => k.startsWith('layout.manufacturing.keepout.'));
@@ -101,10 +103,11 @@ describe('intent checker on the golden boards', () => {
     expect(att[0]!.measured!.value).toBeGreaterThan(mmToNm(10));
     expect(att[0]!.allowed).toEqual({ value: 2_000_000, unit: 'nm', relation: '<=' });
   });
-  it('keepout: R2 lies in the ring around H1 (from the board\'s own rule area, no intent file)', async () => {
+  it('keepout: R2 lies in the 3.5 mm ring around H1 declared in intent.yaml', async () => {
     const { p, design: d } = await design('keepout');
     const { registry, intentPath } = await loadConstraints(d, p);
-    expect(intentPath).toBeNull();
+    expect(intentPath).toMatch(/intent\.yaml$/);
+    expect(registry['layout.manufacturing.keepout.mounting_hole_ring']!.parameters!.radius_nm).toBe(3_500_000);
     const r = checkIntent(d, registry);
     const k = r.diagnostics.filter((x) => x.code === 'intent.manufacturing.keepout');
     expect(k.map((x) => x.entityReferences[0])).toEqual(['R2']);

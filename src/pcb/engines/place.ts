@@ -37,6 +37,7 @@ import { bbox, bboxOf, type Polygon } from '../ir/geometry.js';
 import type { PlacedComponent, ComponentInstance, PcbDesign } from '../ir/types.js';
 import type { Block } from '../intent/blocks.js';
 import { loadConstraints } from '../intent/load.js';
+import { placeMechanical, legalizeKeepouts, legalizeSeparation } from './legalize.js';
 import type { Constraint } from '../../memory/constraints.js';
 
 export interface PlaceOptions {
@@ -141,9 +142,20 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
   let movableIds = design.components.filter((c) => !c.attributes.locked && (!wantedRefs || wantedRefs.has(c.reference))).map((c) => c.id);
   await mkdir(opts.runDir, { recursive: true });
   let plan: PlacementPlan | undefined;
-  if (opts.blocks?.length || opts.reuse?.length || attached.length) {
+  const hasMechanical = Object.entries(constraints).some(([k, c]) => c.class === 'mechanical' && (k.startsWith('layout.mechanical.edge.') || k.startsWith('layout.mechanical.fixed.')) && c.source !== 'ecad_rules');
+  if (opts.blocks?.length || opts.reuse?.length || attached.length || hasMechanical) {
     // staged plan, stages 1 to 3: locked parts stay; anchors go to their region centroids and are locked for the wrapped placer
     const lockedIds = design.components.filter((c) => c.attributes.locked).map((c) => c.id);
+    // stage 1: parts a mechanical constraint fixes outright (edge, fixed position), then held
+    const mech = placeMechanical(design, constraints, new Set(movableIds));
+    if (mech.placements.length) {
+      text = applyCandidate(text, design, { placement: mech.placements }).text;
+      design = importBoard({ boardText: text, boardPath: path.relative(opts.repoRoot, opts.boardPath), ...(projectText ? { projectText, projectPath: path.relative(opts.repoRoot, projectPath!) } : {}), kicadVersion, ...(opts.profile ? { fabricationProfile: opts.profile } : {}) }).design;
+      for (const n of mech.notes) log(`stage 1: ${n}`);
+    }
+    const mechIds = new Set(mech.placements.map((p) => p.id));
+    movableIds = movableIds.filter((id) => !mechIds.has(id));
+    for (const id of mechIds) lockedIds.push(id);
     const anchorsPlacer = new AnchorsPlacer();
     const preSnapshot = makeSnapshot(design, { kind: 'placement', movableComponentIds: movableIds }, { seed: opts.seed ?? 0, limits: { ...DEFAULT_LIMITS, ...opts.limits } });
     const anchors = await anchorsPlacer.place({ runId: 'anchors', snapshot: preSnapshot, movableComponentIds: movableIds, constraints: (opts.blocks ?? []).map((block) => ({ kind: 'functional.group', block })), objectives: [], seed: opts.seed ?? 0, limits: preSnapshot.limits }, { workDir: opts.runDir, boardPath: opts.boardPath, log });
@@ -214,6 +226,16 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
   for (const inv of res.invocations) {
     if (!inv.result || inv.snapshotViolation) continue;
     if (inv.result.status === 'failed' || inv.result.status === 'unsupported') continue;
+    // rule stages on the engine's result: out of keepouts, blocks apart; what moved is recorded on the candidate
+    const movableNow = new Set(movableIds);
+    const k = legalizeKeepouts(design, constraints, movableNow, inv.result.placements);
+    const sep = legalizeSeparation(design, constraints, movableNow, k.placements);
+    const legalizeNotes = [...k.notes, ...sep.notes];
+    if (legalizeNotes.length) {
+      inv.result = { ...inv.result, placements: sep.placements };
+      for (const n of legalizeNotes) log(`${inv.engineId}: legalized: ${n}`);
+      await writeFile(path.join(inv.workDir, 'legalized.json'), JSON.stringify({ notes: legalizeNotes, placements: sep.placements }, null, 2), 'utf8');
+    }
     const before = new Map(design.components.map((c) => [c.id, c]));
     const moved = inv.result.placements.some((p) => {
       const c = before.get(p.id);
@@ -223,7 +245,7 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
     const candidate = { placement: inv.result.placements, ...(hasCopper && moved ? { routing: { segments: [], arcs: [], vias: [], preserveIds: new Set<string>() } } : {}) };
     const cand = await materialize(inv, candidate, { sourceText: text, design, ...(projectText ? { projectText } : {}), profile, kicadVersion, ...(opts.noKicad ? { noKicad: true } : {}), ...(Object.keys(constraints).length ? { constraints } : {}) });
     candidates.push(cand);
-    const metrics: Record<string, number> = { ...placementMetrics({ design: cand.design, verify: cand.verify, runtimeSeconds: inv.result.runtime.wallSeconds }), unplaced_count: inv.result.unplacedComponentIds.length, refused_count: cand.refused.length, intent_hard_violations: cand.verify.metrics.intent_hard_violations ?? 0, intent_soft_violations: cand.verify.metrics.intent_soft_violations ?? 0, intent_hard_total: cand.verify.metrics.intent_hard_total ?? 0, intent_compliance: cand.verify.metrics.intent_compliance ?? 1 };
+    const metrics: Record<string, number> = { ...placementMetrics({ design: cand.design, verify: cand.verify, runtimeSeconds: inv.result.runtime.wallSeconds }), unplaced_count: inv.result.unplacedComponentIds.length, refused_count: cand.refused.length, intent_hard_violations: cand.verify.metrics.intent_hard_violations ?? 0, intent_soft_violations: cand.verify.metrics.intent_soft_violations ?? 0, intent_hard_total: cand.verify.metrics.intent_hard_total ?? 0, intent_compliance: cand.verify.metrics.intent_compliance ?? 1, legalized_moves: legalizeNotes.length };
     if (opts.probe !== false && cand.verify.gates.placement.passed) {
       try {
         const p = await routabilityProbe({ repoRoot: opts.repoRoot, pcbPath: cand.pcbPath, workDir: inv.workDir, ...(opts.probe?.routerId ? { routerId: opts.probe.routerId } : {}), ...(opts.probe?.budgetSeconds ? { budgetSeconds: opts.probe.budgetSeconds } : {}), registry: opts.probe?.registry ?? defaultRouterRegistry(opts.repoRoot), policy: opts.policy ?? DEFAULT_POLICY, ...(opts.noKicad ? { noKicad: true } : {}), log: (l) => log(`  probe: ${l}`) });
