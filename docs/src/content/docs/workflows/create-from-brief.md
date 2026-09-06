@@ -86,7 +86,7 @@ Eight stages, each one a full `do` loop with its own prompt and gate. A stage th
 
 The pipeline is resumable. Stage completion is inferred from repo state, so if a stage fails, fix what it complained about and rerun the same command: it skips past what is already done and picks up at the first incomplete stage.
 
-Stage 5 writes a `## Draft quality` section into `LAYOUT.md` saying exactly what is fine and what a human or a specialist tool should redo. Non-optimal is acceptable; unlabeled non-optimal is not.
+Stage 5 writes a `## Draft quality` section into `LAYOUT.md` saying exactly what is fine and what a human or a specialist tool should redo. Non-optimal is acceptable; unlabeled non-optimal is not. The model does not route: once it has placed the parts, copperhead routes the board through its wrapped engines (Freerouting, kicad-tools), verifies every candidate itself, writes the best one to the board, and appends a `## Layout evidence` section naming the engine, the metrics, any connections still owed, and the evidence bundle under `.copperhead/runs/`. `copperhead check` re-verifies that board from then on and fails if it changes without new evidence.
 
 ## 4. Read the output
 

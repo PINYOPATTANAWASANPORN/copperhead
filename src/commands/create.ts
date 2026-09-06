@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { loadConfig, resolveCompatSettings } from '../config.js';
 import { bootstrapKicadProject, markCreateOrigin } from '../kicad/bootstrap.js';
 import { populateBoard, boardHasFootprints, layoutDocSeed, type PopulateResult } from '../kicad/board.js';
+import { routeForCreate, layoutContract } from '../pcb/layout-stage.js';
 import { exportSvg, runErc, runDrc } from '../kicad/cli.js';
 import { listSymbols } from '../kicad/sexp.js';
 import { checkLegibility } from '../kicad/legibility.js';
@@ -254,10 +255,14 @@ export const STAGES: Stage[] = [
       const p = path.join(root, config.board);
       if (!existsSync(p)) return false;
       if (!(await readFile(p, 'utf8')).includes('(footprint')) return false;
-      return docHasContent(root, path.join(docs, 'LAYOUT.md'), '## Draft quality');
+      if (!(await docHasContent(root, path.join(docs, 'LAYOUT.md'), '## Draft quality'))) return false;
+      // ADR 0009: the placed board has been routed through the wrapped engines and
+      // the evidence in LAYOUT.md is for exactly this board (AC-17.16)
+      const verdict = await layoutContract(root, config);
+      return verdict?.ok ?? false;
     },
     prompt: () =>
-      'Stage 5: first-draft layout. The board already holds every schematic part: copperhead placed each footprint on a grid inside an outline sized to fit, all on F.Cu, pads carrying their nets, nothing routed (the "## Board as placed" block below lists what is on it and how each package was chosen). Your job is placement, not geometry: move parts by editing each footprint\'s `(at X Y)` line (a third number sets rotation) so connectors sit on board edges, decoupling sits at its IC pins, ESD sits at the connector, keepouts are honored, and the user-facing parts sit where the brief puts them; resize the Edge.Cuts rectangle to the board the brief asks for. Move a few related parts at a time and run run_drc after each batch; keep courtyards a millimetre apart and inside the outline. Never add, remove, or rewrite footprints, pads, or nets: the engine owns them. The listed grid placement passes DRC; if your rearrangement cannot be brought back to DRC-clean within a few batches, restore the moved parts to their listed coordinates (that state is always reachable and always clean), keep whatever improvements did hold, and say under Draft quality that placement is a grid a human should refine. A refusal is for a design that cannot exist, not for a layout that is merely unfinished: with the grid to fall back to, this stage always has a finishable state. Routing is optional in a first draft and unrouted connections are reported separately by run_drc, not as violations; any track you do add must leave run_drc clean, and every board edit must be followed by run_drc. Then write docs/LAYOUT.md (keep the "## Footprints" table copperhead wrote) with a "## Draft quality" section: exactly what is fine (outline, keepouts, DRC-clean placement) and what a human or specialist tool should redo (routing, any package chosen by default rather than by the schematic). Non-optimal is acceptable; unlabeled non-optimal is not.',
+      'Stage 5: first-draft layout. The board already holds every schematic part: copperhead placed each footprint on a grid inside an outline sized to fit, all on F.Cu, pads carrying their nets, nothing routed (the "## Board as placed" block below lists what is on it and how each package was chosen). Your job is placement, not geometry: move parts by editing each footprint\'s `(at X Y)` line (a third number sets rotation) so connectors sit on board edges, decoupling sits at its IC pins, ESD sits at the connector, keepouts are honored, and the user-facing parts sit where the brief puts them; resize the Edge.Cuts rectangle to the board the brief asks for. Move a few related parts at a time and run run_drc after each batch; keep courtyards a millimetre apart and inside the outline. Never add, remove, or rewrite footprints, pads, or nets: the engine owns them. The listed grid placement passes DRC; if your rearrangement cannot be brought back to DRC-clean within a few batches, restore the moved parts to their listed coordinates (that state is always reachable and always clean), keep whatever improvements did hold, and say under Draft quality that placement is a grid a human should refine. A refusal is for a design that cannot exist, not for a layout that is merely unfinished: with the grid to fall back to, this stage always has a finishable state. Do not route: when you finish, copperhead routes the board through its own wrapped engines, verifies every candidate, writes the best one to the board, and records the evidence in LAYOUT.md; unrouted connections are reported separately by run_drc, not as violations, and every board edit must be followed by run_drc. If the placement fails copperhead\'s placement gate (overlapping courtyards, a part outside the outline), the stage comes back to you with the findings and the parts to move. Then write docs/LAYOUT.md (keep the "## Footprints" table copperhead wrote) with a "## Draft quality" section: exactly what is fine (outline, keepouts, DRC-clean placement) and what a human or specialist tool should redo (routing, any package chosen by default rather than by the schematic). Non-optimal is acceptable; unlabeled non-optimal is not.',
   },
   {
     name: 'outputs',
@@ -323,6 +328,48 @@ async function emitJlcpcbAfterOutputs(stageName: string, opts: CreateOptions): P
 }
 
 /**
+ * ADR 0009: once the model has placed the parts, copperhead routes the board
+ * through the wrapped engines, writes the selected candidate over the board,
+ * and records the evidence in LAYOUT.md. Runs on the pass that finishes the
+ * stage and, for a repo placed before this landed, on resume. Never a model
+ * call; a refusal (placement gate) is reported and the stage stays open so
+ * the model moves parts.
+ */
+async function routeAfterLayout(stageName: string, opts: CreateOptions, config: CopperheadConfig): Promise<void> {
+  if (stageName !== 'layout-draft') return;
+  try {
+    const res = await routeForCreate(opts.repoRoot, config, (l) => opts.log(stageLine('layout-draft', l)));
+    if (!res) return;
+    const e = res.evidence;
+    const m = e.metrics;
+    const level = e.status === 'PASS' ? 'ok' : e.status === 'PARTIAL' || e.status === 'UNSUPPORTED' ? 'warn' : 'err';
+    opts.log(
+      stageLine(
+        'layout-draft',
+        `routed through the layout harness: ${e.status}` +
+          (e.selected ? ` (${e.selected}, ${Math.round((m.completion_rate ?? 0) * 100)}% routed, ${e.owed.length} owed, ${m.drc_error_count ?? 0} DRC error(s))` : '') +
+          (res.applied ? `; written to ${config.board}` : '; board unchanged') +
+          `; evidence in ${e.runDir}`,
+        level,
+      ),
+    );
+    if (!res.verdict.ok) opts.log(stageLine('layout-draft', res.verdict.reason, 'warn'));
+  } catch (err) {
+    opts.log(stageLine('layout-draft', `routing step failed: ${(err as Error).message}`, 'err'));
+  }
+}
+
+/** A board with footprints and a written Draft quality section but no layout evidence yet. */
+async function placedButUnrouted(root: string, config: CopperheadConfig): Promise<boolean> {
+  if (!config.board) return false;
+  const p = path.join(root, config.board);
+  if (!existsSync(p) || !(await readFile(p, 'utf8')).includes('(footprint')) return false;
+  if (!(await docHasContent(root, path.join(config.docs, 'LAYOUT.md'), '## Draft quality'))) return false;
+  const verdict = await layoutContract(root, config);
+  return !!verdict && !verdict.ok && verdict.evidence === null;
+}
+
+/**
  * The generic "contract not met" line names no defect. For the schematic stage
  * the most common gap after the electrical gates go green is legibility, so
  * name the finding counts by kind — the resume then starts on the actual work
@@ -357,7 +404,11 @@ export async function contractGapDetail(stageName: string, root: string, config:
     if (!boardPath || !existsSync(boardPath) || !(await readFile(boardPath, 'utf8')).includes('(footprint')) {
       return 'the layout-draft contract is not met: the board holds no footprint';
     }
-    return 'the layout-draft contract is not met: docs/LAYOUT.md has no "## Draft quality" section; write it (what is fine, what a human or specialist tool should redo)';
+    if (!(await docHasContent(root, path.join(config.docs, 'LAYOUT.md'), '## Draft quality'))) {
+      return 'the layout-draft contract is not met: docs/LAYOUT.md has no "## Draft quality" section; write it (what is fine, what a human or specialist tool should redo)';
+    }
+    const verdict = await layoutContract(root, config);
+    return `the layout-draft contract is not met: ${verdict?.reason ?? 'no board configured'}`;
   }
   if (stageName !== 'schematic' || !config.schematic) return generic;
   const p = path.join(root, config.schematic);
@@ -913,6 +964,9 @@ export async function runCreate(opts: CreateOptions): Promise<{ ok: boolean; com
         opts.log(stageLine('schematic', `scaffolded empty KiCad project (${created} + board + project), wired into config`));
       }
     }
+    if (stage.name === 'layout-draft' && !(await stage.isComplete(opts.repoRoot, config.docs)) && (await placedButUnrouted(opts.repoRoot, config))) {
+      await routeAfterLayout(stage.name, opts, config);
+    }
     if (await stage.isComplete(opts.repoRoot, config.docs)) {
       opts.log(stageLine(stage.name, 'already complete (resuming past it)', 'ok'));
       await commitResumedStage(opts, config, stage.name);
@@ -1028,6 +1082,7 @@ export async function runCreate(opts: CreateOptions): Promise<{ ok: boolean; com
       // with the schematic stage: one header edit, ERC "clean" on an empty
       // sheet). Advancing anyway lets every later stage run against a design
       // that isn't there, so the completion contract is the real gate.
+      if (res.outcome === 'success') await routeAfterLayout(stage.name, opts, config);
       const failure =
         res.outcome !== 'success'
           ? `the run ended as "${res.outcome}" (${res.exitPath})`

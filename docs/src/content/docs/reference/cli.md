@@ -123,7 +123,9 @@ ERC and DRC are skipped when no schematic or board is configured, rather than fa
 | `0` | Everything agrees. |
 | `1` | At least one check failed, or `kicad-cli` is missing. |
 
-With `--json`, prints a result object with `ok` plus per-check detail for `erc`, `drc`, `drift`, `openspec`, `constraints`, and `legibility` (findings, counts, skipped and disabled families, and the advisory `score`). Legibility findings never affect the exit code.
+With `--json`, prints a result object with `ok` plus per-check detail for `erc`, `drc`, `drift`, `openspec`, `constraints`, `legibility` (findings, counts, skipped and disabled families, and the advisory `score`), and `layout`. Legibility findings never affect the exit code.
+
+**Layout track.** When `docs/LAYOUT.md` carries layout evidence (written by `create` after it routes the board, or by `copperhead pcb route --apply`), `check` re-verifies the committed board with the harness checkers: pre-flight, geometry, connectivity, return path, and KiCad DRC as one voter. No engine runs and nothing is routed. The track fails when the board changed after the evidence was written (`STALE`: re-run `copperhead pcb route` or `create`) or when a hard gate fails on the board as committed. `layout` is `null` when there is no evidence.
 
 ## `copperhead draft schematic`
 
@@ -268,7 +270,7 @@ Each stage is a full `do` loop with its own prompt and gate. Stage completion is
 | 2 | `architecture` | `docs/SUBSYSTEMS.md` |
 | 3 | `parts` | `docs/BOM.md`, MPNs flagged `UNVERIFIED` |
 | 4 | `schematic` | The `.kicad_sch`, ERC clean after each sheet |
-| 5 | `layout` | Draft placement and critical routing, DRC clean, plus a `## Draft quality` section in `LAYOUT.md` |
+| 5 | `layout` | The model places the parts (DRC clean); copperhead then routes the board through its wrapped engines, writes the selected candidate to the board, and records the evidence in `LAYOUT.md` next to the model's `## Draft quality` section. The stage is complete only when the evidence is for the board as committed and routing ended `PASS`, `PARTIAL`, or `UNSUPPORTED` (no engine installed, said so); a placement-gate `REFUSE` sends the findings back to the model |
 | 6 | `outputs` | `outputs/`: gerbers, drill, DXF, STEP, SVG, `BOM.csv` |
 | 7 | `firmware` | `firmware/` scaffold, `pins.h` generated from `PINOUT.md` |
 | 8 | `devplan` | `docs/DEVPLAN.md` |

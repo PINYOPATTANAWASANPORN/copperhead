@@ -12,6 +12,7 @@ import path from 'node:path';
 import type { EngineManifest, RoutingJob, RoutingResult, RouterPlugin, RunContext } from '../../contracts.js';
 import { ENGINE_SCHEMA_VERSION } from '../../contracts.js';
 import { EngineError } from '../../../ir/status.js';
+import { toolsDirs } from '../../tools.js';
 import { emitDsn } from './dsn.js';
 import { parseSes } from './ses.js';
 
@@ -37,7 +38,7 @@ export interface FreeroutingPaths {
   java: string;
 }
 
-/** Jar: COPPERHEAD_FREEROUTING_JAR > config > bench/var/tools > the KiCad plugin install. */
+/** Jar: COPPERHEAD_FREEROUTING_JAR > config > bench/var/tools (target repo, then the copperhead package) > the KiCad plugin install. */
 export async function resolveJar(configJar: string | null | undefined, env = process.env, repoRoot = process.cwd()): Promise<string> {
   const explicit = env.COPPERHEAD_FREEROUTING_JAR?.trim() || configJar?.trim();
   if (explicit) {
@@ -45,13 +46,12 @@ export async function resolveJar(configJar: string | null | undefined, env = pro
     return explicit;
   }
   const candidates: string[] = [];
-  const tools = path.join(repoRoot, 'bench', 'var', 'tools');
   const pluginRoots = [
     path.join(os.homedir(), '.local', 'share', 'kicad'),
     path.join(os.homedir(), 'Library', 'Preferences', 'kicad'),
     path.join(env.APPDATA ?? '', 'kicad'),
   ];
-  for (const root of [tools, ...pluginRoots]) {
+  for (const root of [...toolsDirs(repoRoot), ...pluginRoots]) {
     if (!root || !existsSync(root)) continue;
     for (const f of await walkJars(root, 4)) candidates.push(f);
   }
@@ -85,8 +85,10 @@ function versionOf(jar: string): number {
 /** Java: COPPERHEAD_JAVA > bench/var/tools/jre25 > JAVA_HOME > PATH. */
 export function resolveJava(env = process.env, repoRoot = process.cwd()): string {
   if (env.COPPERHEAD_JAVA?.trim()) return env.COPPERHEAD_JAVA.trim();
-  const tools = path.join(repoRoot, 'bench', 'var', 'tools', 'jre25', 'bin', 'java');
-  if (existsSync(tools)) return tools;
+  for (const dir of toolsDirs(repoRoot)) {
+    const java = path.join(dir, 'jre25', 'bin', 'java');
+    if (existsSync(java)) return java;
+  }
   if (env.JAVA_HOME && existsSync(path.join(env.JAVA_HOME, 'bin', 'java'))) return path.join(env.JAVA_HOME, 'bin', 'java');
   return 'java';
 }

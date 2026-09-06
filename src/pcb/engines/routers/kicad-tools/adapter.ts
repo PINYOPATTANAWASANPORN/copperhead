@@ -12,6 +12,7 @@ import type { EngineManifest, RoutingJob, RoutingResult, RouterPlugin, RunContex
 import { ENGINE_SCHEMA_VERSION } from '../../contracts.js';
 import { EngineError } from '../../../ir/status.js';
 import type { PcbDesign } from '../../../ir/types.js';
+import { toolsDirs } from '../../tools.js';
 import { topLevelBlocks } from '../../../ir/kicad/blocks.js';
 import { importBoard } from '../../../ir/kicad/import.js';
 import { extractFills } from '../../../ir/kicad/zones.js';
@@ -36,11 +37,14 @@ export const KICAD_TOOLS_MANIFEST: EngineManifest = {
 
 export const KCT_STRATEGIES = ['basic', 'negotiated', 'monte-carlo', 'evolutionary'] as const;
 
-/** kct: COPPERHEAD_KCT > bench/var/tools/kt-venv > PATH. */
+/** kct: COPPERHEAD_KCT > bench/var/tools/kt-venv (target repo, then the copperhead package) > PATH. */
 export function resolveKct(env = process.env, repoRoot = process.cwd()): string {
   if (env.COPPERHEAD_KCT?.trim()) return env.COPPERHEAD_KCT.trim();
-  const venv = path.join(repoRoot, 'bench', 'var', 'tools', 'kt-venv', 'bin', 'kct');
-  return existsSync(venv) ? venv : 'kct';
+  for (const dir of toolsDirs(repoRoot)) {
+    const venv = path.join(dir, 'kt-venv', 'bin', 'kct');
+    if (existsSync(venv)) return venv;
+  }
+  return 'kct';
 }
 
 export class KicadToolsRouter implements RouterPlugin {

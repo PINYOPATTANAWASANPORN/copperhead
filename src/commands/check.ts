@@ -9,6 +9,11 @@ import { pinNets, readSheetGeometry } from '../kicad/sexp.js';
 import { scoreFromGeometry, type ScoreReport } from '../kicad/score.js';
 import { checkLegibility, formatLegibility, LEGIBILITY_FAMILIES, type LegibilityFinding } from '../kicad/legibility.js';
 import { openspecValidate } from '../openspec/cli.js';
+import { readFile } from 'node:fs/promises';
+import { evidenceContract } from '../pcb/evidence.js';
+import { importBoard } from '../pcb/ir/kicad/import.js';
+import { extractFills } from '../pcb/ir/kicad/zones.js';
+import { verifyDesign } from '../pcb/verify/index.js';
 
 /**
  * `copperhead check` (alias `verify`): deterministic, zero LLM calls, CI-safe
@@ -35,6 +40,21 @@ export interface CheckResult {
     /** Advisory quantitative score; null when no schematic is configured. */
     score: ScoreReport | null;
   };
+  /**
+   * The layout track (ADR 0009): present when docs/LAYOUT.md carries layout
+   * evidence. The committed board is re-verified by the harness checkers (no
+   * engine, no model); stale evidence or a failed gate fails the check.
+   */
+  layout: {
+    ok: boolean;
+    status: string;
+    stale: boolean;
+    selected: string | null;
+    runDir: string;
+    gates: { preflight: boolean; placement: boolean; routing: boolean };
+    metrics: Record<string, number>;
+    errors: { code: string; entityReferences: string[]; message: string }[];
+  } | null;
 }
 
 export async function runCheck(repoRoot: string, log: (s: string) => void): Promise<CheckResult> {
@@ -122,12 +142,39 @@ export async function runCheck(repoRoot: string, log: (s: string) => void): Prom
     }
   }
 
+  let layout: CheckResult['layout'] = null;
+  const layoutDoc = path.join(repoRoot, config.docs, 'LAYOUT.md');
+  if (config.board && existsSync(path.join(repoRoot, config.board)) && existsSync(layoutDoc)) {
+    const boardPath = path.join(repoRoot, config.board);
+    const boardText = await readFile(boardPath, 'utf8');
+    const proPath = boardPath.replace(/\.kicad_pcb$/, '.kicad_pro');
+    const projectText = existsSync(proPath) ? await readFile(proPath, 'utf8') : undefined;
+    const verdict = evidenceContract(await readFile(layoutDoc, 'utf8'), boardText, boardPath, projectText);
+    if (verdict.evidence) {
+      const { design } = importBoard({ boardText, boardPath, ...(projectText ? { projectText } : {}) });
+      const v = verifyDesign({ design, fills: extractFills(boardText), ...(drc ? { drc } : {}) });
+      const errors = v.diagnostics.filter((d) => d.severity === 'error').map((d) => ({ code: d.code, entityReferences: d.entityReferences, message: d.message }));
+      const gates = { preflight: v.gates.preflight.passed, placement: v.gates.placement.passed, routing: v.gates.routing.passed };
+      const status = verdict.stale ? 'STALE' : verdict.evidence.status;
+      const ok = !verdict.stale && gates.preflight && gates.placement && gates.routing;
+      layout = { ok, status, stale: verdict.stale, selected: verdict.evidence.selected, runDir: verdict.evidence.runDir, gates, metrics: Object.fromEntries(Object.entries(v.metrics).filter((kv): kv is [string, number] => typeof kv[1] === 'number')), errors };
+      log(
+        ok
+          ? `layout ✓ ${verdict.evidence.status} (${verdict.evidence.selected ?? 'no engine'}, ${v.metrics.routed_nets ?? 0} net(s) routed, ${v.metrics.unrouted_count ?? 0} owed; evidence ${verdict.evidence.runDir})`
+          : verdict.stale
+            ? `layout: ${verdict.reason}`
+            : `layout: gate failed (${[...v.gates.preflight.failures, ...v.gates.placement.failures, ...v.gates.routing.failures].map((d) => d.code).filter((c, i, a) => a.indexOf(c) === i).join(', ')}); evidence ${verdict.evidence.runDir}`,
+      );
+    }
+  }
+
   const ok =
     (erc?.ok ?? true) &&
     (drc?.ok ?? true) &&
     drift.length === 0 &&
     (openspec?.ok ?? true) &&
-    constraintViolations.length === 0;
+    constraintViolations.length === 0 &&
+    (layout?.ok ?? true);
 
   return {
     ok,
@@ -137,5 +184,6 @@ export async function runCheck(repoRoot: string, log: (s: string) => void): Prom
     openspec,
     constraints: { ok: constraintViolations.length === 0, violations: constraintViolations },
     legibility,
+    layout,
   };
 }

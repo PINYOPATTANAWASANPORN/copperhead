@@ -335,10 +335,16 @@ pcbGroup
         policy: { network: pcb.allowRemoteEngines ? 'required' : 'optional', allowHarnessEngines: opts.allowHarnessEngines, denyLicenses: [] },
         log: json ? () => {} : (l) => console.error(l),
       });
-      if (opts.apply && res.ranking.selected) {
-        const sel = res.candidates.find((c) => c.engineId === res.ranking.selected)!;
-        await copyFile(sel.pcbPath, boardPath);
-        res.outcome.detail.push(`applied ${res.ranking.selected} to ${path.relative(repo, boardPath)}`);
+      if (opts.apply) {
+        const sel = res.ranking.selected ? res.candidates.find((c) => c.engineId === res.ranking.selected) : undefined;
+        if (sel && (res.outcome.status === 'PASS' || res.outcome.status === 'PARTIAL')) {
+          await copyFile(sel.pcbPath, boardPath);
+          res.outcome.detail.push(`applied ${res.ranking.selected} to ${path.relative(repo, boardPath)}`);
+        } else res.outcome.detail.push('nothing applied; the board is unchanged');
+        // the evidence in docs/LAYOUT.md is what `check` re-verifies against (ADR 0009); a refusal is evidence too
+        const { evidenceFromRun, recordEvidence } = await import('./pcb/layout-stage.js');
+        const verdict = await recordEvidence(repo, config.docs, boardPath, await evidenceFromRun(repo, boardPath, res));
+        res.outcome.detail.push(`evidence recorded in ${path.join(config.docs, 'LAYOUT.md')}${verdict.ok ? '' : ` (${verdict.reason})`}`);
       }
       if (json) console.log(JSON.stringify({ ...res.outcome, diagnostics: res.outcome.diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message })), runDir: res.runDir, ranking: res.ranking, ineligible: res.ineligible }, null, 2));
       else {

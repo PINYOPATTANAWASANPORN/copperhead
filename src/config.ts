@@ -36,6 +36,8 @@ export interface PcbUserConfig {
   java?: string | null;
   freerouting?: { passes?: number };
   allowRemoteEngines?: boolean;
+  /** Let the harness-only reference router compete (test fixtures only; never for real boards). */
+  allowHarnessEngines?: boolean;
   intentPath?: string;
   referenceDesigns?: string[];
   teardownCorpus?: string[];

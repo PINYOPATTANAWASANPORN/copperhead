@@ -40,10 +40,10 @@
 
 ## 4b. Phase 2b: routing in `create` and `check` (ADR 0009)
 
-- [ ] 4b.1 Completion contract for layout evidence: `outcome.status ∈ {PASS, PARTIAL}`, `snapshot.hash === hashDesign(import(board))`, evidence markers in `docs/LAYOUT.md` naming the run directory, selected engine, and metrics
-- [ ] 4b.2 `create` stage 5: after population, verify the board (pre-flight and placement gates), route it through `routeBoard` with the configured engines and budget, apply the selected candidate, render the evidence summary ("Board as routed" block with the diagnostics and metrics), and hand the model only the placed-parts moves on a gate failure; no model call routes
-- [ ] 4b.3 `check`: when `docs/LAYOUT.md` carries the evidence markers, run pre-flight, geometry, connectivity, return path, and KiCad DRC on the committed board and print the layout track; no engine, no model, no network (AC-17.5 guard extended)
-- [ ] 4b.4 Docs (`create`, `check`, `LAYOUT.md`), tests for the contract and both surfaces; Phase 4's `check` task (7.x) reduced to the intent checkers
+- [x] 4b.1 Completion contract for layout evidence: `outcome.status ∈ {PASS, PARTIAL}`, `snapshot.hash === hashDesign(import(board))`, evidence markers in `docs/LAYOUT.md` naming the run directory, selected engine, and metrics
+- [x] 4b.2 `create` stage 5: after population, verify the board (pre-flight and placement gates), route it through `routeBoard` with the configured engines and budget, apply the selected candidate, render the evidence summary ("Board as routed" block with the diagnostics and metrics), and hand the model only the placed-parts moves on a gate failure; no model call routes
+- [x] 4b.3 `check`: when `docs/LAYOUT.md` carries the evidence markers, run pre-flight, geometry, connectivity, return path, and KiCad DRC on the committed board and print the layout track; no engine, no model, no network (AC-17.5 guard extended)
+- [x] 4b.4 Docs (`create`, `check`, `LAYOUT.md`), tests for the contract and both surfaces; Phase 4's `check` task (7.x) reduced to the intent checkers
 
 ## 5. Phase 3: placement harness
 
