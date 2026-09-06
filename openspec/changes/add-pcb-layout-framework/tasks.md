@@ -68,7 +68,7 @@
 
 ## 7. Phase 5: closed loop
 
-- [ ] 7.0 Rule stages the B3 evidence asks for before the repair loop: edge placement (stage 1: a part with `mechanical.edge` goes to that edge), keepout legalization (move a part the least distance out of a keepout), block separation (disjoint regions for separated blocks); re-take the B3 measure on the eight intent boards
+- [x] 7.0 Rule stages the B3 evidence asks for before the repair loop: edge placement (stage 1: a part with `mechanical.edge` goes to that edge), keepout legalization (move a part the least distance out of a keepout), block separation (disjoint regions for separated blocks); re-take the B3 measure on the eight intent boards (re-taken: 10/10 hard intent constraints, 8/8 PASS; recorded in the B3 report)
 
 - [ ] 7.1 `src/pcb/agent/`: repair catalog with per-action cost estimates; engine-second and wall-clock budgets; planner over normalized diagnostics only; terminal statuses
 - [ ] 7.2 `pcb_layout` and `pcb_repair` tools (spec-gated); `edit_file` refusal of copper and zone edits on framework boards; `do` on a framework board through the repair loop

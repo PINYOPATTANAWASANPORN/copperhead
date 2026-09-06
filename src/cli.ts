@@ -616,7 +616,7 @@ pcbGroup
   .action(async (board: string | undefined, opts: { out?: string; plain: boolean; legend: boolean; scale: string }) => {
     const repo = repoOf(program.opts());
     try {
-      const { boardPath } = await pcbBoard(repo, board);
+      const { boardPath, config } = await pcbBoard(repo, board);
       const path = await import('node:path');
       const { readFile, writeFile } = await import('node:fs/promises');
       const { existsSync } = await import('node:fs');
@@ -624,12 +624,15 @@ pcbGroup
       const { extractFills } = await import('./pcb/ir/kicad/zones.js');
       const { verifyDesign } = await import('./pcb/verify/index.js');
       const { renderSvg } = await import('./pcb/ir/svg.js');
+      const { loadConstraints } = await import('./pcb/intent/load.js');
       const proPath = boardPath.replace(/\.kicad_pcb$/, '.kicad_pro');
       const projectText = existsSync(proPath) ? await readFile(proPath, 'utf8') : undefined;
       const text = await readFile(boardPath, 'utf8');
       const { design } = importBoard({ boardText: text, boardPath, ...(projectText ? { projectText } : {}) });
       const plain = opts.plain || Boolean(program.opts().plain); // the global --plain (log style) swallows the flag when it precedes the subcommand
-      const diagnostics = plain ? [] : verifyDesign({ design, fills: extractFills(text) }).diagnostics;
+      // intent markers too: the same registry verify and check use
+      const constraints = plain ? {} : (await loadConstraints(design, boardPath, { intentPath: config.pcb?.intentPath ?? null, docsDir: path.join(repo, config.docs), repoRoot: repo })).registry;
+      const diagnostics = plain ? [] : verifyDesign({ design, fills: extractFills(text), constraints }).diagnostics;
       const out = opts.out ? path.resolve(repo, opts.out) : boardPath.replace(/\.kicad_pcb$/, '.svg');
       await writeFile(out, renderSvg(design, { diagnostics, scale: Number(opts.scale), legend: !plain && opts.legend !== false }), 'utf8');
       if (Boolean(program.opts().json)) console.log(JSON.stringify({ out, diagnostics: diagnostics.filter((d) => d.severity !== 'info').length }));
