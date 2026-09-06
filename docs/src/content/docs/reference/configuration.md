@@ -59,6 +59,7 @@ Every key is optional.
 | `freerouting.passes` | `20` | Autorouter passes. |
 | `allowRemoteEngines` | `false` | Whether engines that need the network are eligible. Never on the `check` path. |
 | `allowHarnessEngines` | `false` | Let the harness-only reference router compete. For test fixtures; it is not a router for real boards. |
+| `layoutBlocks` | `[]` | Reference blocks to copy during `pcb place`: `{ id, source: <path to a .kicad_pcb>, anchor: <refdes>, members: [<refdes>…], map? }`. Each member is placed around the anchor with the source's relative offset and rotation, then held while the wrapped placer places the rest. |
 
 There is also a `generatedHashes` key, maintained by copperhead. It records content hashes of the generated docs so `init` can tell an untouched file from a hand-edited one. Do not edit it by hand.
 

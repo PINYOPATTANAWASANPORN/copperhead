@@ -39,6 +39,8 @@ export interface PcbUserConfig {
   /** Let the harness-only reference router compete (test fixtures only; never for real boards). */
   allowHarnessEngines?: boolean;
   intentPath?: string;
+  /** Reference blocks to copy: a source board, its anchor refdes, and the member refdes (implementation spec §6.7). */
+  layoutBlocks?: { id: string; source: string; anchor: string; members: string[]; map?: Record<string, string> }[];
   referenceDesigns?: string[];
   teardownCorpus?: string[];
 }

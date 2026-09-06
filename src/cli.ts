@@ -398,8 +398,14 @@ pcbGroup
         blocks = deriveBlocks({ design, subsystemsMd: existsSync(subsystems) ? await readFile(subsystems, 'utf8') : null, schematicIntent: intentPath && existsSync(intentPath) ? JSON.parse(await readFile(intentPath, 'utf8')) : null });
         if (!json) for (const b of blocks) console.error(`block ${b.id}: ${b.members.length} part(s), anchor ${b.anchor ? design.components.find((c) => c.id === b.anchor)!.reference : 'none'}, region ${b.region ? 'assigned' : 'none'}${b.notes.length ? ` (${b.notes.join('; ')})` : ''}`);
       }
+      let reuse: import('./pcb/engines/placers/layout-reuse/adapter.js').LayoutBlockSpec[] | undefined;
+      if (pcb.layoutBlocks?.length) {
+        const { specFromBoard } = await import('./pcb/engines/placers/layout-reuse/adapter.js');
+        reuse = await Promise.all(pcb.layoutBlocks.map((b) => specFromBoard(b, repo)));
+        if (!json) for (const r of reuse) console.error(`layout block ${r.id}: ${r.members.length} member(s) around ${r.anchor} from ${r.source}`);
+      }
       const res = await placeBoard({
-        repoRoot: repo, boardPath, runDir, ...(placers ? { placers } : {}), mode, ...(opts.movable ? { movableReferences: opts.movable.split(',').map((s) => s.trim()) } : {}), seed: Number(opts.seed), limits: { engineSeconds: budget, wallSeconds: budget }, ...(pcb.profile ? { profile: pcb.profile } : {}), ...(pcb.maxParallelEngines ? { maxParallel: pcb.maxParallelEngines } : {}),
+        repoRoot: repo, boardPath, runDir, ...(placers ? { placers } : {}), mode, ...(opts.movable ? { movableReferences: opts.movable.split(',').map((s) => s.trim()) } : {}), ...(reuse?.length ? { reuse } : {}), seed: Number(opts.seed), limits: { engineSeconds: budget, wallSeconds: budget }, ...(pcb.profile ? { profile: pcb.profile } : {}), ...(pcb.maxParallelEngines ? { maxParallel: pcb.maxParallelEngines } : {}),
         policy: { network: pcb.allowRemoteEngines ? 'required' : 'optional', allowHarnessEngines: opts.allowHarnessEngines || (pcb.allowHarnessEngines ?? false), denyLicenses: [] },
         probe: opts.probe ? { routerId: opts.probeRouter } : false,
         ...(blocks ? { blocks } : {}),

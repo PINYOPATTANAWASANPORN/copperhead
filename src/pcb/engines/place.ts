@@ -30,6 +30,8 @@ import { ReferencePlacer, REFERENCE_PLACER_MANIFEST } from './placers/reference/
 import { PyplacerPlacer, PYPLACER_MANIFEST } from './placers/pyplacer/adapter.js';
 import { KicadToolsPlacer, KCT_PHYSICS_MANIFEST, KCT_EVOLUTIONARY_MANIFEST } from './placers/kicad-tools/adapter.js';
 import { AnchorsPlacer, ANCHORS_PLACER_MANIFEST } from './placers/anchors/adapter.js';
+import { AttachPlacer, ATTACH_PLACER_MANIFEST, type AttachedConstraint } from './placers/attach/adapter.js';
+import type { LayoutBlockSpec } from './placers/layout-reuse/adapter.js';
 import { applyCandidate } from '../ir/kicad/export.js';
 import type { Block } from '../intent/blocks.js';
 
@@ -59,6 +61,9 @@ export interface PlaceOptions {
    * locked, then the wrapped placers place the remainder.
    */
   blocks?: Block[];
+  /** Stage 3 inputs: reference blocks to copy around their anchors, and single attachments (`relative.attached`). */
+  reuse?: LayoutBlockSpec[];
+  attached?: Omit<AttachedConstraint, 'kind'>[];
   log?: (line: string) => void;
 }
 
@@ -111,21 +116,41 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
   let movableIds = design.components.filter((c) => !c.attributes.locked && (!wantedRefs || wantedRefs.has(c.reference))).map((c) => c.id);
   await mkdir(opts.runDir, { recursive: true });
   let plan: PlacementPlan | undefined;
-  if (opts.blocks?.length) {
+  if (opts.blocks?.length || opts.reuse?.length || opts.attached?.length) {
     // staged plan, stages 1 to 3: locked parts stay; anchors go to their region centroids and are locked for the wrapped placer
     const lockedIds = design.components.filter((c) => c.attributes.locked).map((c) => c.id);
     const anchorsPlacer = new AnchorsPlacer();
     const preSnapshot = makeSnapshot(design, { kind: 'placement', movableComponentIds: movableIds }, { seed: opts.seed ?? 0, limits: { ...DEFAULT_LIMITS, ...opts.limits } });
-    const anchors = await anchorsPlacer.place({ runId: 'anchors', snapshot: preSnapshot, movableComponentIds: movableIds, constraints: opts.blocks.map((block) => ({ kind: 'functional.group', block })), objectives: [], seed: opts.seed ?? 0, limits: preSnapshot.limits }, { workDir: opts.runDir, boardPath: opts.boardPath, log });
+    const anchors = await anchorsPlacer.place({ runId: 'anchors', snapshot: preSnapshot, movableComponentIds: movableIds, constraints: (opts.blocks ?? []).map((block) => ({ kind: 'functional.group', block })), objectives: [], seed: opts.seed ?? 0, limits: preSnapshot.limits }, { workDir: opts.runDir, boardPath: opts.boardPath, log });
     if (anchors.placements.length) {
       text = applyCandidate(text, design, { placement: anchors.placements }).text;
       design = importBoard({ boardText: text, boardPath: path.relative(opts.repoRoot, opts.boardPath), ...(projectText ? { projectText, projectPath: path.relative(opts.repoRoot, projectPath!) } : {}), kicadVersion, ...(opts.profile ? { fabricationProfile: opts.profile } : {}) }).design;
     }
     const anchorIds = new Set(anchors.placements.map((p) => p.id));
     movableIds = movableIds.filter((id) => !anchorIds.has(id));
-    plan = { stages: [{ name: 'fixed', engineId: 'placer-fixed', componentIds: lockedIds }, { name: 'anchors', engineId: ANCHORS_PLACER_MANIFEST.id, componentIds: [...anchorIds] }, { name: 'attach', engineId: 'placer-attach', componentIds: [] }, { name: 'bulk', engineId: (opts.placers ?? ['*']).join('|'), componentIds: movableIds }], blocks: opts.blocks };
+    // stage 3: reference blocks around their anchors and single attachments, then locked like the anchors
+    let attachedIds = new Set<string>();
+    if (opts.reuse?.length || opts.attached?.length) {
+      const stageSnapshot = makeSnapshot(design, { kind: 'placement', movableComponentIds: movableIds }, { seed: opts.seed ?? 0, limits: { ...DEFAULT_LIMITS, ...opts.limits } });
+      const constraints = [...(opts.reuse ?? []).map((spec) => ({ kind: 'layout.reuse', spec })), ...(opts.attached ?? []).map((a) => ({ kind: 'relative.attached' as const, ...a }))];
+      const attach = await new AttachPlacer().place({ runId: 'attach', snapshot: stageSnapshot, movableComponentIds: movableIds, constraints, objectives: [], seed: opts.seed ?? 0, limits: stageSnapshot.limits }, { workDir: opts.runDir, boardPath: opts.boardPath, log });
+      if (attach.placements.length) {
+        text = applyCandidate(text, design, { placement: attach.placements }).text;
+        design = importBoard({ boardText: text, boardPath: path.relative(opts.repoRoot, opts.boardPath), ...(projectText ? { projectText, projectPath: path.relative(opts.repoRoot, projectPath!) } : {}), kicadVersion, ...(opts.profile ? { fabricationProfile: opts.profile } : {}) }).design;
+      }
+      attachedIds = new Set(attach.placements.map((p) => p.id));
+      // the parts they were placed against must not move either, or the bulk placer breaks the relation
+      const byRef = new Map(design.components.map((c) => [c.reference, c.id]));
+      for (const spec of opts.reuse ?? []) if (byRef.has(spec.anchor) && attach.placements.length) attachedIds.add(byRef.get(spec.anchor)!);
+      for (const a of opts.attached ?? []) {
+        const target = byRef.get(a.to.split('.')[0]!);
+        if (target && attach.placements.some((p) => p.id === byRef.get(a.ref))) attachedIds.add(target);
+      }
+      movableIds = movableIds.filter((id) => !attachedIds.has(id));
+    }
+    plan = { stages: [{ name: 'fixed', engineId: 'placer-fixed', componentIds: lockedIds }, { name: 'anchors', engineId: ANCHORS_PLACER_MANIFEST.id, componentIds: [...anchorIds] }, { name: 'attach', engineId: ATTACH_PLACER_MANIFEST.id, componentIds: [...attachedIds] }, { name: 'bulk', engineId: (opts.placers ?? ['*']).join('|'), componentIds: movableIds }], blocks: opts.blocks ?? [] };
     await writeFile(path.join(opts.runDir, 'plan.json'), JSON.stringify(plan, null, 2), 'utf8');
-    log(`staged plan: ${anchorIds.size} anchor(s) placed at their region centroids, ${movableIds.length} part(s) left to the placers`);
+    log(`staged plan: ${anchorIds.size} anchor(s) at their region centroids, ${attachedIds.size} part(s) attached or reused, ${movableIds.length} part(s) left to the placers`);
   }
   const snapshot = makeSnapshot(design, { kind: 'placement', movableComponentIds: movableIds }, { seed: opts.seed ?? 0, limits: { ...DEFAULT_LIMITS, ...opts.limits } });
   const run = await writeRunDir(opts.runDir, snapshot, [opts.boardPath, ...(projectPath ? [projectPath] : [])]);
