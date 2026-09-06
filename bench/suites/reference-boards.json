@@ -1,0 +1,81 @@
+{
+  "suite": "reference-boards",
+  "kind": "layout",
+  "corpus": "pcbench",
+  "commit": "dec3be7",
+  "tracks": [
+    "c"
+  ],
+  "criteria": "the ten PCBench qualification boards that route clean in one pass at B1: human-placed, human-routed originals kept as calibration baselines (RFC 11 \u00a713.4); the closed loop re-places and re-routes them and the report compares against the authors' wirelength and via count",
+  "boards": [
+    {
+      "id": "breakout-boards_50-to-100",
+      "license": "mit",
+      "footprints": 2,
+      "file": "processed.kicad_pcb"
+    },
+    {
+      "id": "rufs_simple_kicad_schema_and_pcb_v1",
+      "license": "apache-2.0",
+      "footprints": 3,
+      "file": "processed.kicad_pcb"
+    },
+    {
+      "id": "esp8266_wi07_3_adapter_esp",
+      "license": "mit",
+      "footprints": 5,
+      "file": "processed.kicad_pcb"
+    },
+    {
+      "id": "spisolator_spisolator",
+      "license": "mit",
+      "footprints": 8,
+      "file": "processed.kicad_pcb"
+    },
+    {
+      "id": "kitspace_hum_temp_sensor",
+      "license": "MIT",
+      "footprints": 12,
+      "file": "processed.kicad_pcb"
+    },
+    {
+      "id": "kitspace_temp_breakout",
+      "license": "MIT",
+      "footprints": 14,
+      "file": "processed.kicad_pcb"
+    },
+    {
+      "id": "kitspace_Lcr_addon",
+      "license": "MIT",
+      "footprints": 17,
+      "file": "processed.kicad_pcb"
+    },
+    {
+      "id": "komputer-klavier_KomputerKlavier",
+      "license": "mit",
+      "footprints": 19,
+      "file": "processed.kicad_pcb"
+    },
+    {
+      "id": "kitspace_12_24_boost_converter",
+      "license": "MIT",
+      "footprints": 22,
+      "file": "processed.kicad_pcb"
+    },
+    {
+      "id": "nextbusclock_NextBusClockV1",
+      "license": "mit",
+      "footprints": 26,
+      "file": "processed.kicad_pcb"
+    }
+  ],
+  "routers": [
+    "router-freerouting",
+    "router-kicad-tools"
+  ],
+  "placers": [
+    "placer-pyplacer",
+    "placer-fixed"
+  ],
+  "budgetSeconds": 300
+}
