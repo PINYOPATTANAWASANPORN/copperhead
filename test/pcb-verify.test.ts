@@ -115,3 +115,17 @@ describe('a real routed board verifies clean', () => {
     }
   }, 300_000);
 });
+
+describe('IR renderer', () => {
+  it('draws the board, copper, and numbered diagnostics with a legend', async () => {
+    const { renderSvg } = await import('../src/pcb/ir/svg.js');
+    const pcb = path.join(GOLDEN, 'short', 'board.kicad_pcb');
+    const { design } = importBoard({ boardText: await readFile(pcb, 'utf8'), boardPath: pcb, now: 't' });
+    const v = verifyDesign({ design });
+    const svg = renderSvg(design, { diagnostics: v.diagnostics, title: 'short' });
+    expect(svg.startsWith('<svg')).toBe(true);
+    expect(svg).toContain('conn.short');
+    expect((svg.match(/<line /g) ?? []).length).toBe(design.routing.segments.length);
+    expect(svg).toContain('>1</text>');
+  });
+});
