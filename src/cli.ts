@@ -250,6 +250,187 @@ scoreGroup
     }
   });
 
+// `pcb` is the layout framework's command group (RFC 11 §14.2). import,
+// route, verify, and score make no model or network call; only local engines
+// run, and every command ends in one of the eight layout statuses.
+const pcbGroup = program.command('pcb').description('PCB layout framework: import, route, verify, score (RFC 11); no LLM, no network');
+const pcbExit = (status: string): never => {
+  const codes: Record<string, number> = { PASS: 0, PARTIAL: 0, HOLD: 2, REFUSE: 3, UNSUPPORTED: 4, TIMEOUT: 5, ENGINE_ERROR: 6, INVALID_OUTPUT: 7 };
+  process.exit(codes[status] ?? 1);
+};
+const pcbBoard = async (repo: string, boardOpt?: string): Promise<{ boardPath: string; config: Awaited<ReturnType<typeof import('./config.js')['loadConfig']>> }> => {
+  const { loadConfig } = await import('./config.js');
+  const path = await import('node:path');
+  const config = await loadConfig(repo);
+  const rel = boardOpt ?? config.board;
+  if (!rel) {
+    console.error('no board configured; pass --board or set "board" in .copperhead/config.json');
+    process.exit(1);
+  }
+  return { boardPath: path.resolve(repo, rel), config };
+};
+pcbGroup
+  .command('import')
+  .description('read the board into the canonical IR and report what it holds')
+  .option('--board <path>', 'board to import (default: the configured board)')
+  .action(async (opts: { board?: string }) => {
+    const repo = repoOf(program.opts());
+    const json = Boolean(program.opts().json);
+    try {
+      const { boardPath } = await pcbBoard(repo, opts.board);
+      const { importBoard } = await import('./pcb/ir/kicad/import.js');
+      const { readFile } = await import('node:fs/promises');
+      const { existsSync } = await import('node:fs');
+      const proPath = boardPath.replace(/\.kicad_pcb$/, '.kicad_pro');
+      const { design, ecad, warnings } = importBoard({ boardText: await readFile(boardPath, 'utf8'), boardPath, ...(existsSync(proPath) ? { projectText: await readFile(proPath, 'utf8') } : {}) });
+      const copper = design.board.layers.filter((l) => l.kind === 'copper').map((l) => l.id);
+      const summary = { hash: design.source.contentHash, fileVersion: design.source.boardFileVersion, netDialect: design.source.netDialect, components: design.components.length, nets: design.nets.length, copperLayers: copper, segments: design.routing.segments.length, vias: design.routing.vias.length, zones: design.routing.zones.length, keepouts: design.board.keepouts.length, netClasses: ecad.netClasses.map((c) => c.name), druRules: ecad.druRules.length, lossy: design.lossy, warnings };
+      if (json) console.log(JSON.stringify(summary, null, 2));
+      else {
+        console.log(`imported ${design.components.length} component(s), ${design.nets.length} net(s), ${copper.join('/')} copper, ${design.routing.segments.length} segment(s), ${design.routing.vias.length} via(s), ${design.routing.zones.length} zone(s); file version ${design.source.boardFileVersion} (${design.source.netDialect} nets); hash ${design.source.contentHash.slice(0, 12)}`);
+        for (const l of design.lossy) console.log(`  lossy: ${l}`);
+        for (const w of warnings) console.log(`  warning: ${w}`);
+      }
+      process.exit(0);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+pcbGroup
+  .command('route')
+  .description('route the board with local engines, verify every candidate, and select one')
+  .option('--board <path>', 'board to route (default: the configured board)')
+  .option('--routers <ids>', 'comma-separated engine ids in preference order (default: config or every built-in router)')
+  .option('--mode <mode>', 'single | race | ensemble (default: config or single)')
+  .option('--nets <names>', 'comma-separated net names to route (default: all)')
+  .option('--preserve', 'keep the copper already on the board', false)
+  .option('--seed <n>', 'seed for seeded engines', '0')
+  .option('--budget-seconds <n>', 'engine-second and wall-clock budget')
+  .option('--allow-harness-engines', 'let the reference router compete (harness fixtures only)', false)
+  .option('--apply', 'write the selected candidate over the board file', false)
+  .option('--run-dir <path>', 'where to write the run (default: .copperhead/runs/<ts>/layout)')
+  .action(async (opts: { board?: string; routers?: string; mode?: string; nets?: string; preserve: boolean; seed: string; budgetSeconds?: string; allowHarnessEngines: boolean; apply: boolean; runDir?: string }) => {
+    const repo = repoOf(program.opts());
+    const json = Boolean(program.opts().json);
+    try {
+      const { boardPath, config } = await pcbBoard(repo, opts.board);
+      const { routeBoard } = await import('./pcb/engines/route.js');
+      const path = await import('node:path');
+      const { copyFile } = await import('node:fs/promises');
+      const pcb = config.pcb ?? {};
+      const budget = Number(opts.budgetSeconds ?? pcb.budgetSeconds ?? 600);
+      const runDir = opts.runDir ? path.resolve(repo, opts.runDir) : path.join(repo, '.copperhead', 'runs', new Date().toISOString().replace(/[:.]/g, '-'), 'layout');
+      const routers = opts.routers?.split(',').map((s) => s.trim()).filter(Boolean) ?? pcb.routers;
+      const mode = (opts.mode ?? pcb.mode ?? 'single') as 'single' | 'race' | 'ensemble';
+      const res = await routeBoard({
+        repoRoot: repo, boardPath, runDir, ...(routers ? { routers } : {}), mode, ...(opts.nets ? { netNames: opts.nets.split(',').map((s) => s.trim()) } : {}), preserveExistingRoutes: opts.preserve, seed: Number(opts.seed), limits: { engineSeconds: budget, wallSeconds: budget }, ...(pcb.profile ? { profile: pcb.profile } : {}), ...(pcb.scoring ? { scoring: pcb.scoring } : {}), ...(pcb.maxParallelEngines ? { maxParallel: pcb.maxParallelEngines } : {}),
+        policy: { network: pcb.allowRemoteEngines ? 'required' : 'optional', allowHarnessEngines: opts.allowHarnessEngines, denyLicenses: [] },
+        log: json ? () => {} : (l) => console.error(l),
+      });
+      if (opts.apply && res.ranking.selected) {
+        const sel = res.candidates.find((c) => c.engineId === res.ranking.selected)!;
+        await copyFile(sel.pcbPath, boardPath);
+        res.outcome.detail.push(`applied ${res.ranking.selected} to ${path.relative(repo, boardPath)}`);
+      }
+      if (json) console.log(JSON.stringify({ ...res.outcome, diagnostics: res.outcome.diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message })), runDir: res.runDir, ranking: res.ranking, ineligible: res.ineligible }, null, 2));
+      else {
+        console.log(`${res.outcome.status}: ${res.outcome.summary}`);
+        for (const d of res.outcome.detail) console.log(`  ${d}`);
+        console.log(`  run: ${path.relative(repo, res.runDir)}`);
+      }
+      pcbExit(res.outcome.status);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+pcbGroup
+  .command('verify')
+  .description('verify one board file: pre-flight, geometry, connectivity, return path, KiCad DRC')
+  .argument('[board]', 'board file (default: the configured board)')
+  .option('--no-kicad', 'skip kicad-cli (no DRC, no zone refill)')
+  .action(async (board: string | undefined, opts: { kicad: boolean }) => {
+    const repo = repoOf(program.opts());
+    const json = Boolean(program.opts().json);
+    try {
+      const { boardPath } = await pcbBoard(repo, board);
+      const path = await import('node:path');
+      const { readFile, mkdtemp, cp, rm } = await import('node:fs/promises');
+      const { existsSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { importBoard } = await import('./pcb/ir/kicad/import.js');
+      const { refillZones, extractFills } = await import('./pcb/ir/kicad/zones.js');
+      const { verifyDesign } = await import('./pcb/verify/index.js');
+      const { EXIT_CODE } = await import('./pcb/ir/status.js');
+      const proPath = boardPath.replace(/\.kicad_pcb$/, '.kicad_pro');
+      const projectText = existsSync(proPath) ? await readFile(proPath, 'utf8') : undefined;
+      let text = await readFile(boardPath, 'utf8');
+      let drc;
+      if (opts.kicad) {
+        // refill on a copy so verify never mutates the user's file
+        const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-verify-'));
+        try {
+          await cp(path.dirname(boardPath), dir, { recursive: true });
+          const copy = path.join(dir, path.basename(boardPath));
+          drc = await refillZones(copy);
+          text = await readFile(copy, 'utf8');
+        } finally {
+          await rm(dir, { recursive: true, force: true });
+        }
+      }
+      const { design } = importBoard({ boardText: text, boardPath, ...(projectText ? { projectText } : {}) });
+      const v = verifyDesign({ design, fills: extractFills(text), ...(drc ? { drc } : {}) });
+      const errors = v.diagnostics.filter((d) => d.severity === 'error');
+      const status = !v.gates.preflight.passed ? 'REFUSE' : errors.length ? 'PARTIAL' : (v.metrics.unrouted_count ?? 0) > 0 ? 'PARTIAL' : 'PASS';
+      if (json) console.log(JSON.stringify({ status, metrics: v.metrics, gates: { preflight: v.gates.preflight.passed, placement: v.gates.placement.passed, routing: v.gates.routing.passed }, disagreements: v.disagreements, diagnostics: v.diagnostics.map((d) => ({ code: d.code, severity: d.severity, entityReferences: d.entityReferences, message: d.message })) }, null, 2));
+      else {
+        console.log(`${status}: ${v.metrics.routed_nets ?? 0} net(s) routed, ${v.metrics.unrouted_count ?? 0} owed, ${v.metrics.shorts ?? 0} short(s), ${v.metrics.drc_error_count ?? 0} KiCad error(s); gates preflight ${v.gates.preflight.passed ? 'pass' : 'FAIL'}, placement ${v.gates.placement.passed ? 'pass' : 'FAIL'}, routing ${v.gates.routing.passed ? 'pass' : 'FAIL'}`);
+        for (const d of v.diagnostics.filter((d) => d.severity !== 'info')) console.log(`  ${d.severity} ${d.code}${d.entityReferences.length ? ` [${d.entityReferences.slice(0, 4).join(', ')}]` : ''}: ${d.message}`);
+        for (const x of v.disagreements) console.log(`  disagreement ${x.code}: ${x.a.checker} says ${x.a.says}; ${x.b.checker} says ${x.b.says}`);
+      }
+      process.exit(EXIT_CODE[status]);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+pcbGroup
+  .command('score')
+  .description('re-rank the candidates of a run directory')
+  .argument('<run-dir>', 'a run directory written by pcb route')
+  .option('--scoring <profile>', 'scoring profile', 'default-low-speed-2-layer')
+  .action(async (runDir: string, opts: { scoring: string }) => {
+    const json = Boolean(program.opts().json);
+    try {
+      const path = await import('node:path');
+      const { readFile, readdir, writeFile } = await import('node:fs/promises');
+      const { existsSync } = await import('node:fs');
+      const { rank } = await import('./pcb/verify/scoring.js');
+      const { loadScoringProfile } = await import('./pcb/verify/profiles/scoring/index.js');
+      const dir = path.resolve(runDir);
+      const candidates = path.join(dir, 'candidates');
+      const inputs = [];
+      for (const d of existsSync(candidates) ? await readdir(candidates) : []) {
+        const mp = path.join(candidates, d, 'metrics.json');
+        const dp = path.join(candidates, d, 'diagnostics.json');
+        if (!existsSync(mp)) continue;
+        const metrics = JSON.parse(await readFile(mp, 'utf8'));
+        const diags = existsSync(dp) ? (JSON.parse(await readFile(dp, 'utf8')) as { code: string; severity: string }[]) : [];
+        const gateFailures = diags.filter((x) => x.severity === 'error' && !x.code.startsWith('conn.unrouted') && !x.code.startsWith('drc.') && !x.code.startsWith('quality.')).map((x) => x.code);
+        inputs.push({ id: d.replace(/-\d+$/, ''), metrics, gatesPassed: gateFailures.length === 0 && (metrics.drc_critical_count ?? 0) === 0, gateFailures });
+      }
+      const ranking = rank(inputs, loadScoringProfile(opts.scoring));
+      await writeFile(path.join(dir, 'ranking.json'), JSON.stringify(ranking, null, 2), 'utf8');
+      if (json) console.log(JSON.stringify(ranking, null, 2));
+      else for (const c of ranking.candidates) console.log(`${c.rank}. ${c.id}${c.eligible ? '' : ' (ineligible)'}: ${c.reason}`);
+      process.exit(0);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
 program
   .command('doctor')
   .description('env preflight: kicad-cli, git, node, and the model provider credential; no LLM, no network')

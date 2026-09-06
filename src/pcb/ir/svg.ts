@@ -7,10 +7,16 @@
 import type { PcbDesign } from './types.js';
 import type { Polygon } from './geometry.js';
 import { bbox, bboxOf } from './geometry.js';
-import type { Diagnostic } from '../verify/diagnostic.js';
+/** The slice of a verify diagnostic the renderer needs; kept structural so ir never depends on verify. */
+export interface RenderDiagnostic {
+  code: string;
+  severity: 'error' | 'warning' | 'info';
+  entityReferences: string[];
+  region?: Polygon;
+}
 
 export interface SvgOptions {
-  diagnostics?: Diagnostic[];
+  diagnostics?: RenderDiagnostic[];
   /** Pixels per millimetre. */
   scale?: number;
   title?: string;

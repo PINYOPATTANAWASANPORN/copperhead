@@ -50,7 +50,12 @@ describe('src/pcb import direction', () => {
     for (const f of await tsFiles(path.join(ROOT, 'src/pcb/engines'))) {
       for (const i of await importsOf(f)) {
         expect(rel(i), rel(f)).not.toMatch(/^src\/pcb\/agent\//);
-        if (/^src\/pcb\/engines\/(routers|placers)\//.test(rel(f))) expect(rel(i), rel(f)).not.toMatch(/^src\/pcb\/engines\/(routers|placers)\/(?!\.\.)/);
+        // a wrapper may import its own directory (dsn.ts, ses.ts) but never another engine's
+        const own = /^(src\/pcb\/engines\/(?:routers|placers)\/[^/]+)\//.exec(rel(f))?.[1];
+        if (own) {
+          const target = /^(src\/pcb\/engines\/(?:routers|placers)\/[^/]+)\//.exec(rel(i))?.[1];
+          if (target) expect(target, `${rel(f)} imports ${rel(i)}`).toBe(own);
+        }
       }
     }
   });

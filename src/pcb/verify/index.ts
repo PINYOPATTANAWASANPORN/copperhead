@@ -10,6 +10,7 @@ import { checkGeometry } from './checkers/geometry.js';
 import { checkConnectivity } from './checkers/connectivity.js';
 import { fromDrcReport } from './checkers/kicad-drc.js';
 import { checkPreflight, type PreflightInputs } from './checkers/preflight.js';
+import { checkReturnPath } from './checkers/returnpath.js';
 import { preflightGate, placementGate, routingGate, type GateResult } from './gates.js';
 import type { CheckResult, Diagnostic } from './diagnostic.js';
 
@@ -44,6 +45,7 @@ export function verifyDesign(input: VerifyInput): VerifyResult {
     checkPreflight(input.design, profile, input.preflight ?? {}),
     checkGeometry(input.design, profile),
     checkConnectivity(input.design, input.fills ?? []),
+    checkReturnPath(input.design, input.fills ?? []),
   ];
   if (input.drc) results.push(fromDrcReport(input.drc, profile, input.kicadVersion));
   const diagnostics = results.flatMap((r) => r.diagnostics);
