@@ -33,6 +33,8 @@ import { AnchorsPlacer, ANCHORS_PLACER_MANIFEST } from './placers/anchors/adapte
 import { AttachPlacer, ATTACH_PLACER_MANIFEST, type AttachedConstraint } from './placers/attach/adapter.js';
 import type { LayoutBlockSpec } from './placers/layout-reuse/adapter.js';
 import { applyCandidate } from '../ir/kicad/export.js';
+import { bbox, bboxOf, type Polygon } from '../ir/geometry.js';
+import type { PlacedComponent, ComponentInstance, PcbDesign } from '../ir/types.js';
 import type { Block } from '../intent/blocks.js';
 
 export interface PlaceOptions {
@@ -148,6 +150,15 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
       }
       movableIds = movableIds.filter((id) => !attachedIds.has(id));
     }
+    // stages 2 and 3 are rule placements that ignore the outline: a block whose members now hang over
+    // the edge is shifted as a whole (offsets intact) back inside before the wrapped placer runs
+    const groups = groupsFor(opts, design, anchorIds, attachedIds);
+    const shifts = fitInside(design, groups);
+    if (shifts.length) {
+      text = applyCandidate(text, design, { placement: shifts }).text;
+      design = importBoard({ boardText: text, boardPath: path.relative(opts.repoRoot, opts.boardPath), ...(projectText ? { projectText, projectPath: path.relative(opts.repoRoot, projectPath!) } : {}), kicadVersion, ...(opts.profile ? { fabricationProfile: opts.profile } : {}) }).design;
+      log(`staged plan: ${groups.filter((g) => g.some((id) => shifts.some((p) => p.id === id))).length} block(s) shifted back inside the outline`);
+    }
     plan = { stages: [{ name: 'fixed', engineId: 'placer-fixed', componentIds: lockedIds }, { name: 'anchors', engineId: ANCHORS_PLACER_MANIFEST.id, componentIds: [...anchorIds] }, { name: 'attach', engineId: ATTACH_PLACER_MANIFEST.id, componentIds: [...attachedIds] }, { name: 'bulk', engineId: (opts.placers ?? ['*']).join('|'), componentIds: movableIds }], blocks: opts.blocks ?? [] };
     await writeFile(path.join(opts.runDir, 'plan.json'), JSON.stringify(plan, null, 2), 'utf8');
     log(`staged plan: ${anchorIds.size} anchor(s) at their region centroids, ${attachedIds.size} part(s) attached or reused, ${movableIds.length} part(s) left to the placers`);
@@ -241,4 +252,49 @@ function outcomeOf(invocations: Invocation<PlacementResult>[], candidates: Mater
   const worst = candidates[0];
   for (const c of ranking.candidates) detail.push(`${c.id}: ${c.reason}`);
   return { status: 'PARTIAL', summary: 'every candidate failed a hard gate; the board is unchanged', detail, diagnostics: worst ? worst.verify.diagnostics.filter((d) => d.severity === 'error') : [] };
+}
+
+/** The rigid groups the rule stages produced: each block's anchor with its members placed by stage 3; reuse specs' anchors with their members. */
+function groupsFor(opts: PlaceOptions, design: PcbDesign, anchorIds: Set<string>, attachedIds: Set<string>): string[][] {
+  const byRef = new Map(design.components.map((c) => [c.reference, c.id]));
+  const groups: string[][] = [];
+  for (const b of opts.blocks ?? []) {
+    if (!b.anchor || !anchorIds.has(b.anchor)) continue;
+    groups.push([b.anchor, ...b.members.filter((m) => m !== b.anchor && attachedIds.has(m))]);
+  }
+  for (const spec of opts.reuse ?? []) {
+    const a = byRef.get(spec.anchor);
+    if (!a || groups.some((g) => g.includes(a))) continue;
+    groups.push([a, ...spec.members.map((m) => byRef.get(m.ref)).filter((id): id is string => !!id && attachedIds.has(id))]);
+  }
+  return groups;
+}
+
+function extentOf(c: ComponentInstance): Polygon | null {
+  if (c.footprint.courtyard) return c.footprint.courtyard;
+  if (!c.pads.length) return null;
+  const b = bboxOf(c.pads.map((p) => p.copper));
+  return { outer: [{ x: b.minX, y: b.minY }, { x: b.maxX, y: b.minY }, { x: b.maxX, y: b.maxY }, { x: b.minX, y: b.maxY }], holes: [] };
+}
+
+/** Translate each group by the least vector that brings its extent inside the outline (inset by the edge clearance); groups that fit already are untouched. */
+function fitInside(design: PcbDesign, groups: string[][]): PlacedComponent[] {
+  const ob = bbox(design.board.outline);
+  const inset = design.board.rules.copperEdgeClearanceNm + 250_000;
+  const lim = { minX: ob.minX + inset, minY: ob.minY + inset, maxX: ob.maxX - inset, maxY: ob.maxY - inset };
+  const out: PlacedComponent[] = [];
+  for (const g of groups) {
+    const comps = g.map((id) => design.components.find((c) => c.id === id)).filter((c): c is ComponentInstance => !!c);
+    const polys = comps.map(extentOf).filter((p): p is Polygon => !!p);
+    if (!polys.length) continue;
+    const b = bboxOf(polys);
+    let dx = 0, dy = 0;
+    if (b.minX < lim.minX) dx = lim.minX - b.minX;
+    else if (b.maxX > lim.maxX) dx = lim.maxX - b.maxX;
+    if (b.minY < lim.minY) dy = lim.minY - b.minY;
+    else if (b.maxY > lim.maxY) dy = lim.maxY - b.maxY;
+    if (!dx && !dy) continue;
+    for (const c of comps) out.push({ id: c.id, at: { x: c.at.x + dx, y: c.at.y + dy }, rotation: c.rotation, side: c.attributes.side });
+  }
+  return out;
 }

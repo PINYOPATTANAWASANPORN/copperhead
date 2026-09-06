@@ -8,8 +8,7 @@ import type { EngineManifest, PlacementJob, PlacementResult, PlacerPlugin, RunCo
 import { ENGINE_SCHEMA_VERSION } from '../../contracts.js';
 import type { PlacedComponent } from '../../../ir/types.js';
 import { bboxOf } from '../../../ir/geometry.js';
-import { resultShape } from '../shared.js';
-import { specsOf, applySpec } from '../layout-reuse/adapter.js';
+import { resultShape, specsOf, applySpec } from '../shared.js';
 
 export const ATTACH_PLACER_MANIFEST: EngineManifest = {
   id: 'placer-attach',

@@ -489,7 +489,7 @@ Keys follow the existing dotted convention: `layout.relative.C12-near-U1`, `layo
 
 ### 7.2b Reference layout retrieval
 
-`agent/intent/references.ts` (P3 for the local sources, P4 for the network sources) implements RFC §8.6. Entry point `findReferences(design, blocks, opts) → ReferenceBlock[]`, exposed as the `pcb_find_references` tool (11.3) and run by `pcb layout` before the attachment stage.
+`src/pcb/intent/references.ts` (P3 for the local sources; the datasheet source and the network sources are P4 and live under `agent/` because they call a model) implements RFC §8.6. Entry point `findReferences(design, blocks, opts) → ReferenceBlock[]`, exposed as the `pcb_find_references` tool (11.3) and run by `pcb layout` before the attachment stage.
 
 Sources, each behind a `ReferenceSource` interface (`id`, `kind: 'datasheet'|'design'|'teardown'`, `network: boolean`, `search(query) → Candidate[]`, `extract(candidate) → ReferenceBlock`):
 

@@ -3,7 +3,9 @@
  * how to turn an engine's output board back into a PlacementResult without
  * trusting anything but the positions it wrote.
  */
-import type { PcbDesign, ComponentInstance } from '../../ir/types.js';
+import type { PcbDesign, ComponentInstance, Nm, Mdeg } from '../../ir/types.js';
+import { rotatePoint } from '../../ir/geometry.js';
+import { normMdeg } from '../../ir/units.js';
 import type { PlacementJob, PlacementResult } from '../contracts.js';
 import type { PlacedComponent } from '../../ir/types.js';
 
@@ -42,4 +44,40 @@ export function identityPlacements(job: PlacementJob): PlacedComponent[] {
 
 export function resultShape(status: PlacementResult['status'], placements: PlacedComponent[], unplaced: string[], wall: number, provenance: PlacementResult['provenance']): PlacementResult {
   return { status, placements, unplacedComponentIds: unplaced, diagnostics: [], runtime: { wallSeconds: wall, engineSeconds: wall }, provenance };
+}
+
+/** A block to reuse: member offsets relative to the anchor, in the anchor's frame. */
+export interface LayoutBlockSpec {
+  id: string;
+  /** Target refdes of the anchor. */
+  anchor: string;
+  members: { ref: string; rel: { x: Nm; y: Nm; rotation: Mdeg }; side: 'front' | 'back' }[];
+  source: string;
+}
+
+/** Specs travel in the job's constraints as `{ kind: 'layout.reuse', spec }`. */
+export function specsOf(job: PlacementJob): LayoutBlockSpec[] {
+  return job.constraints.filter((c): c is { kind: string; spec: LayoutBlockSpec } => typeof c === 'object' && c !== null && (c as { kind?: string }).kind === 'layout.reuse').map((c) => c.spec);
+}
+
+/** Place a spec's members around the anchor as it stands in `design`. Members that are not movable (or absent) are skipped and named. */
+export function applySpec(spec: LayoutBlockSpec, design: PcbDesign, movable: Set<string>): { placements: PlacedComponent[]; skipped: string[] } {
+  const byRef = new Map(design.components.map((c) => [c.reference, c]));
+  const anchor = byRef.get(spec.anchor);
+  const placements: PlacedComponent[] = [];
+  const skipped: string[] = [];
+  if (!anchor) return { placements, skipped: [`anchor ${spec.anchor} not on the board`] };
+  for (const m of spec.members) {
+    const c = byRef.get(m.ref);
+    if (!c || !movable.has(c.id) || c.attributes.locked) {
+      skipped.push(m.ref);
+      continue;
+    }
+    const d = rotatePoint({ x: m.rel.x, y: m.rel.y }, anchor.rotation);
+    // a side flip is refused by the exporter; keep the member on its own side and say so
+    const side = c.attributes.side;
+    if (side !== m.side) skipped.push(`${m.ref} (side ${m.side} in the reference, ${side} here; kept)`);
+    placements.push({ id: c.id, at: { x: Math.round(anchor.at.x + d.x), y: Math.round(anchor.at.y + d.y) }, rotation: normMdeg(anchor.rotation + m.rel.rotation), side });
+  }
+  return { placements, skipped };
 }

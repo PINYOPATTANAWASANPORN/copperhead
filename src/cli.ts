@@ -371,9 +371,10 @@ pcbGroup
   .option('--probe-router <id>', 'router for the probe', 'router-freerouting')
   .option('--allow-harness-engines', 'let the reference placer and router compete (harness fixtures only)', false)
   .option('--blocks', 'staged plan: derive functional blocks from docs/SUBSYSTEMS.md and schematic.intent.json, place each block anchor in its signal-flow slot first', false)
+  .option('--references', 'apply the approved (or permissively licensed) cached reference block per anchor as stage 3; implies --blocks', false)
   .option('--apply', 'write the selected candidate over the board file', false)
   .option('--run-dir <path>', 'where to write the run (default: .copperhead/runs/<ts>/placement)')
-  .action(async (opts: { board?: string; placers?: string; mode?: string; movable?: string; seed: string; budgetSeconds?: string; probe: boolean; probeRouter: string; allowHarnessEngines: boolean; blocks: boolean; apply: boolean; runDir?: string }) => {
+  .action(async (opts: { board?: string; placers?: string; mode?: string; movable?: string; seed: string; budgetSeconds?: string; probe: boolean; probeRouter: string; allowHarnessEngines: boolean; blocks: boolean; references: boolean; apply: boolean; runDir?: string }) => {
     const repo = repoOf(program.opts());
     const json = Boolean(program.opts().json);
     try {
@@ -387,7 +388,7 @@ pcbGroup
       const placers = opts.placers?.split(',').map((s) => s.trim()).filter(Boolean) ?? pcb.placers;
       const mode = (opts.mode ?? (pcb.mode === 'staged' ? 'single' : pcb.mode) ?? 'single') as 'single' | 'race' | 'ensemble';
       let blocks;
-      if (opts.blocks) {
+      if (opts.blocks || opts.references) {
         const { readFile } = await import('node:fs/promises');
         const { existsSync } = await import('node:fs');
         const { importBoard } = await import('./pcb/ir/kicad/import.js');
@@ -399,16 +400,36 @@ pcbGroup
         if (!json) for (const b of blocks) console.error(`block ${b.id}: ${b.members.length} part(s), anchor ${b.anchor ? design.components.find((c) => c.id === b.anchor)!.reference : 'none'}, region ${b.region ? 'assigned' : 'none'}${b.notes.length ? ` (${b.notes.join('; ')})` : ''}`);
       }
       let reuse: import('./pcb/engines/placers/layout-reuse/adapter.js').LayoutBlockSpec[] | undefined;
+      let attached: { ref: string; to: string; max_distance_nm: number }[] | undefined;
       if (pcb.layoutBlocks?.length) {
         const { specFromBoard } = await import('./pcb/engines/placers/layout-reuse/adapter.js');
         reuse = await Promise.all(pcb.layoutBlocks.map((b) => specFromBoard(b, repo)));
         if (!json) for (const r of reuse) console.error(`layout block ${r.id}: ${r.members.length} member(s) around ${r.anchor} from ${r.source}`);
       }
+      if (opts.references && blocks) {
+        const refs = await import('./pcb/intent/references.js');
+        const cached = await refs.readCache(repo);
+        const usable = refs.applicable(cached.filter((b) => blocks!.some((k) => k.anchor === b.target.anchorId)));
+        const holds = cached.filter((b) => blocks!.some((k) => k.anchor === b.target.anchorId) && !refs.applicable([b]).length);
+        for (const b of usable) {
+          const inputs = refs.toStageInputs(b);
+          reuse = [...(reuse ?? []), inputs.reuse];
+          attached = [...(attached ?? []), ...inputs.attached];
+          if (!json) console.error(`reference ${b.id.slice(0, 8)}: ${b.members.length} member(s) around ${b.target.anchorRef} from ${b.source.kind} ${path.relative(repo, b.source.locator)}`);
+        }
+        if (!usable.length && holds.length) {
+          const { EXIT_CODE } = await import('./pcb/ir/status.js');
+          const msg = `HOLD: ${holds.length} cached reference block(s) need approval before they apply (${holds.slice(0, 3).map((h) => `${h.id.slice(0, 8)} ${h.source.license}`).join(', ')}); run copperhead pcb references --approve <id>`;
+          if (json) console.log(JSON.stringify({ status: 'HOLD', summary: msg, holds: holds.map((h) => h.id) }));
+          else console.log(msg);
+          process.exit(EXIT_CODE.HOLD);
+        }
+      }
       const res = await placeBoard({
         repoRoot: repo, boardPath, runDir, ...(placers ? { placers } : {}), mode, ...(opts.movable ? { movableReferences: opts.movable.split(',').map((s) => s.trim()) } : {}), ...(reuse?.length ? { reuse } : {}), seed: Number(opts.seed), limits: { engineSeconds: budget, wallSeconds: budget }, ...(pcb.profile ? { profile: pcb.profile } : {}), ...(pcb.maxParallelEngines ? { maxParallel: pcb.maxParallelEngines } : {}),
         policy: { network: pcb.allowRemoteEngines ? 'required' : 'optional', allowHarnessEngines: opts.allowHarnessEngines || (pcb.allowHarnessEngines ?? false), denyLicenses: [] },
         probe: opts.probe ? { routerId: opts.probeRouter } : false,
-        ...(blocks ? { blocks } : {}),
+        ...(blocks ? { blocks } : {}), ...(attached?.length ? { attached } : {}),
         log: json ? () => {} : (l) => console.error(l),
       });
       if (opts.apply) {
@@ -426,6 +447,54 @@ pcbGroup
       }
       const { EXIT_CODE } = await import('./pcb/ir/status.js');
       process.exit(EXIT_CODE[res.outcome.status]);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+pcbGroup
+  .command('references')
+  .description('find reference layouts for each block anchor in local sources (KiCad demos, PCBench, the repo\'s reference boards, pcb.referenceDesigns, pcb.teardownCorpus); no model, no network')
+  .option('--board <path>', 'board (default: the configured board)')
+  .option('--refresh', 'search again for anchors that already have cached blocks', false)
+  .option('--approve <id>', 'record the approval of a cached block whose license needs one')
+  .option('--approver <who>', 'who approves (default: user)', 'user')
+  .action(async (opts: { board?: string; refresh: boolean; approve?: string; approver: string }) => {
+    const repo = repoOf(program.opts());
+    const json = Boolean(program.opts().json);
+    try {
+      const path = await import('node:path');
+      const { readFile } = await import('node:fs/promises');
+      const { existsSync } = await import('node:fs');
+      const refs = await import('./pcb/intent/references.js');
+      if (opts.approve) {
+        const b = await refs.approveReference(repo, opts.approve, opts.approver);
+        if (!b) throw new Error(`no cached reference block ${opts.approve} (see .copperhead/layout-refs/index.json)`);
+        if (json) console.log(JSON.stringify({ approved: b.id, approvedBy: b.approvedBy, license: b.source.license }));
+        else console.log(`approved ${b.id} (${b.source.license}) by ${b.approvedBy}: ${b.members.length} member(s) around ${b.target.anchorRef} from ${b.source.locator}`);
+        process.exit(0);
+      }
+      const { boardPath, config } = await pcbBoard(repo, opts.board);
+      const { importBoard } = await import('./pcb/ir/kicad/import.js');
+      const { deriveBlocks } = await import('./pcb/intent/blocks.js');
+      const pcb = config.pcb ?? {};
+      const { design } = importBoard({ boardText: await readFile(boardPath, 'utf8'), boardPath });
+      const subsystems = path.join(repo, config.docs, 'SUBSYSTEMS.md');
+      const intentPath = config.schematic ? path.join(path.dirname(path.join(repo, config.schematic)), 'schematic.intent.json') : null;
+      const blocks = deriveBlocks({ design, subsystemsMd: existsSync(subsystems) ? await readFile(subsystems, 'utf8') : null, schematicIntent: intentPath && existsSync(intentPath) ? JSON.parse(await readFile(intentPath, 'utf8')) : null });
+      const licenses: Record<string, string> = {};
+      const suite = path.join(repo, 'bench', 'suites', 'pcbench-qual.json');
+      if (existsSync(suite)) for (const b of (JSON.parse(await readFile(suite, 'utf8')) as { boards: { id: string; license?: string }[] }).boards) if (b.license) licenses[b.id] = b.license;
+      const sources = [new refs.LocalDesignSource(await refs.localBoards(repo, { referenceDesigns: pcb.referenceDesigns ?? [], pcbenchLicenses: licenses })), new refs.TeardownSource((pcb.teardownCorpus ?? []).map((d) => (path.isAbsolute(d) ? d : path.join(repo, d))))];
+      const res = await refs.findReferences(design, blocks, { repoRoot: repo, sources, refresh: opts.refresh });
+      const usable = refs.applicable(res.blocks);
+      if (json) console.log(JSON.stringify({ status: res.holds.length && !usable.length ? 'HOLD' : 'PASS', blocks: res.blocks.map((b) => ({ id: b.id, anchor: b.target.anchorRef, source: b.source.locator, kind: b.source.kind, score: b.similarity.score, members: b.members.length, license: b.source.license, approvedBy: b.approvedBy ?? null, applicable: usable.some((u) => u.id === b.id) })), holds: res.holds.map((b) => b.id), searched: res.searched, fromCache: res.fromCache }, null, 2));
+      else {
+        console.log(`${res.blocks.length} reference block(s) for ${blocks.filter((b) => b.anchor && b.id !== 'unassigned').length} anchor(s) (${res.searched} searched, ${res.fromCache} from cache); ${usable.length} applicable, ${res.holds.length} on hold`);
+        for (const b of res.blocks) console.log(`  ${usable.some((u) => u.id === b.id) ? 'apply' : b.approvedBy ? 'ok   ' : 'HOLD '} ${b.id.slice(0, 8)} ${b.target.anchorRef}: ${b.members.length} member(s), score ${b.similarity.score.toFixed(2)}, ${b.source.kind} ${path.relative(repo, b.source.locator)} (${b.source.license}${b.approvedBy ? `, approved by ${b.approvedBy}` : ''})`);
+        if (res.holds.length) console.log(`  approve with: copperhead pcb references --approve <id>`);
+      }
+      process.exit(0);
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);
