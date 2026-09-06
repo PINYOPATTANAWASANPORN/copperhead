@@ -4,7 +4,9 @@
  */
 import type { BenchReport, BoardRecord } from './runner.js';
 
-const METRICS = ['completion_rate', 'unrouted_count', 'drc_error_count', 'drc_critical_count', 'shorts', 'total_wirelength_nm', 'via_count', 'bend_count', 'pour_largest_share', 'runtime_s'];
+const ROUTING_METRICS = ['completion_rate', 'unrouted_count', 'drc_error_count', 'drc_critical_count', 'shorts', 'total_wirelength_nm', 'via_count', 'bend_count', 'pour_largest_share', 'runtime_s'];
+const PLACEMENT_METRICS = ['routability_completion', 'routability_drc_errors', 'hpwl_nm', 'congestion_overflow', 'courtyard_overlap_count', 'outside_board_count', 'unplaced_count', 'runtime_s'];
+const metricsFor = (r: BenchReport) => (r.kind === 'placement' ? PLACEMENT_METRICS : ROUTING_METRICS);
 
 function esc(s: unknown): string {
   return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -19,6 +21,7 @@ function fmt(key: string, v: number | undefined): string {
 }
 
 export function summaryCsv(report: BenchReport): string {
+  const METRICS = metricsFor(report);
   const head = ['board', 'seed', 'status', 'selected', 'wall_s', 'engine_s', 'overhead_s', 'regret', 'invalid_over_valid', ...METRICS];
   const rows = report.boards.map((b) => {
     const m = b.candidates.find((c) => c.id === b.selected)?.metrics ?? {};
@@ -27,7 +30,7 @@ export function summaryCsv(report: BenchReport): string {
   return [head.join(','), ...rows].join('\n') + '\n';
 }
 
-function boardRow(b: BoardRecord): string {
+function boardRow(b: BoardRecord, METRICS: string[]): string {
   const sel = b.candidates.find((c) => c.id === b.selected);
   const cands = b.candidates.map((c) => `<li class="${c.eligible ? 'ok' : 'bad'}">${esc(c.id)} · rank ${c.rank} · score ${c.score.toFixed(3)}${c.gateFailures.length ? ` · ${esc(c.gateFailures.join(', '))}` : ''}</li>`).join('');
   const inel = b.ineligible.map((i) => `<li class="muted">${esc(i.engineId)}: ${esc(i.reasons.join('; '))}</li>`).join('');
@@ -37,6 +40,7 @@ function boardRow(b: BoardRecord): string {
 
 export function renderHtml(r: BenchReport): string {
   const s = r.summary;
+  const METRICS = metricsFor(r);
   const status = Object.entries(s.byStatus).map(([k, v]) => `${k} ${v}`).join(' · ');
   return `<!doctype html><meta charset="utf-8"><title>copperbench · ${esc(r.suite)}</title>
 <style>
@@ -46,7 +50,7 @@ td.num{text-align:right;white-space:nowrap}td.status{min-width:220px}td.board{mi
 .s-PASS td:first-child{border-left:4px solid #1a7f37}.s-PARTIAL td:first-child{border-left:4px solid #b26b00}.s-REFUSE td:first-child,.s-ENGINE_ERROR td:first-child,.s-INVALID_OUTPUT td:first-child{border-left:4px solid #b42318}
 .kv{display:grid;grid-template-columns:max-content 1fr;gap:2px 16px}.kv div:nth-child(odd){color:#555}code{background:#eee;padding:1px 4px;border-radius:3px}
 </style>
-<h1>copperbench · ${esc(r.suite)} · track ${esc(r.track)}</h1>
+<h1>copperbench · ${esc(r.suite)} · ${esc(r.kind ?? 'routing')} · track ${esc(r.track)}</h1>
 <div class="muted">${esc(r.startedAt)} → ${esc(r.finishedAt)} · benchmark version ${esc(r.benchmarkVersion)}</div>
 <h2>Summary</h2>
 <div class="kv">
@@ -58,6 +62,7 @@ td.num{text-align:right;white-space:nowrap}td.status{min-width:220px}td.board{mi
 <div>invalid-over-valid selections</div><div>${s.invalidOverValidCount}</div>
 <div>mean engine / overhead seconds</div><div>${s.meanEngineSeconds.toFixed(1)} / ${s.meanOverheadSeconds.toFixed(1)}</div>
 ${Object.keys(s.seedVariance).length ? `<div>seed variance (wirelength CV)</div><div>${esc(Object.entries(s.seedVariance).map(([k, v]) => `${k} ${(v * 100).toFixed(1)}%`).join(' · '))}</div>` : ''}
+${s.hpwlVsRoutability ? `<div>HPWL vs probe completion</div><div>Pearson r ${s.hpwlVsRoutability.r === null ? 'n/a' : s.hpwlVsRoutability.r.toFixed(2)} over ${s.hpwlVsRoutability.candidates} eligible candidate(s); mean completion ${(s.hpwlVsRoutability.meanCompletion * 100).toFixed(1)}%</div>` : ''}
 </div>
 <h2>Record (RFC 11 §13.4)</h2>
 <div class="kv">
@@ -70,6 +75,6 @@ ${Object.keys(s.seedVariance).length ? `<div>seed variance (wirelength CV)</div>
 </div>
 <h2>Boards</h2>
 <table><thead><tr><th>board</th><th>status</th><th>selected</th>${METRICS.map((k) => `<th>${esc(k)}</th>`).join('')}<th>wall / engine / overhead s</th><th>candidates</th></tr></thead>
-<tbody>${r.boards.map(boardRow).join('\n')}</tbody></table>
+<tbody>${r.boards.map((b) => boardRow(b, METRICS)).join('\n')}</tbody></table>
 `;
 }

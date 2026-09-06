@@ -83,7 +83,7 @@ describe('runSuite (B0: byte-stable harness)', () => {
       expect(one.report.summary.selectionRegretTotal).toBe(0);
       expect(one.report.summary.invalidOverValidCount).toBe(0);
       expect(one.report.summary.meanOverheadSeconds).toBeGreaterThan(0);
-      expect(one.report.reproduce).toMatch(/^copperbench run bench\/suites\/microboards\.json --routers router-reference/);
+      expect(one.report.reproduce).toMatch(/^copperbench run bench\/suites\/microboards\.json --kind routing --routers router-reference/);
       const c = compareReports(one.report, two.report);
       expect(c.identicalMetrics, JSON.stringify(c.boards)).toBe(true);
       // the candidate boards are identical too, up to the uuids KiCad regenerates when it saves the refilled board
@@ -109,6 +109,38 @@ describe('runSuite (B0: byte-stable harness)', () => {
       const rep = await execa('npx', [...cli, 'report', path.join(dir, 'a')], { cwd: ROOT, reject: false });
       expect(rep.exitCode, rep.stderr).toBe(0);
       expect((await readFile(path.join(dir, 'a', 'report.html'), 'utf8')).length).toBeGreaterThan(1000);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 600_000);
+});
+
+describe('placement suites', () => {
+  it('both placement suites load with the placement kind and 30 cases between them', async () => {
+    const micro = await loadSuite(path.join(ROOT, 'bench/suites/placement-microboards.json'));
+    const pcb = await loadSuite(path.join(ROOT, 'bench/suites/placement-pcbench.json'));
+    expect(micro.kind).toBe('placement');
+    expect(pcb.kind).toBe('placement');
+    expect(micro.cases!.length + pcb.boards!.length).toBe(30);
+    expect(micro.placers).toContain('placer-fixed');
+  });
+  it('runs a placement suite through placeBoard with the probe and reports HPWL against routability', async () => {
+    if (!(await haveKicad())) return;
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-benchplace-'));
+    try {
+      const { report } = await runSuite({ repoRoot: ROOT, suitePath: path.join(ROOT, 'bench/suites/placement-microboards.json'), placers: ['placer-fixed', 'placer-reference'], probeRouter: 'router-reference', mode: 'ensemble', boards: ['overlap', 'completion'], budgetSeconds: 120, allowHarnessEngines: true, outDir: path.join(dir, 'run') });
+      expect(report.kind).toBe('placement');
+      expect(report.scoring).toBe('default-placement-2-layer');
+      // suite order; the reference placer packs tighter than the committed grid, so it may win completion on HPWL too
+      expect(report.boards.map((b) => [b.id, b.status])).toEqual([['completion', 'PASS'], ['overlap', 'PASS']]);
+      expect(report.boards.find((b) => b.id === 'overlap')!.selected).toBe('placer-reference');
+      expect(['placer-fixed', 'placer-reference']).toContain(report.boards.find((b) => b.id === 'completion')!.selected);
+      const stat = report.summary.hpwlVsRoutability!;
+      expect(stat.candidates).toBe(3); // overlap: reference only; completion: both
+      expect(stat.meanCompletion).toBe(1);
+      expect(report.reproduce).toMatch(/--kind placement --placers placer-fixed,placer-reference --probe-router router-reference/);
+      expect(summaryCsv(report)).toMatch(/hpwl_nm/);
+      expect(renderHtml(report)).toContain('HPWL vs probe completion');
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

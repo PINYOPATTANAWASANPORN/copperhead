@@ -225,7 +225,7 @@ copperhead pcb render [board] [--out <svg>] [--plain] [--scale <n>]
 
 The run directory: `snapshot.json` (the immutable input, hashed), `plan.json` (staged mode), `candidates/<engine>-<n>/` with `job.json`, `result.json`, `provenance.json` (binary, arguments, versions, seed, exit code), `candidate.kicad_pcb`, `diagnostics.json`, `metrics.json`, and `ranking.json`, `outcome.json`, `events.jsonl` at the top. Engines get a scrubbed environment (no `*_KEY`, `*_TOKEN`, `*_SECRET`, `PASSWORD`).
 
-`copperbench run|compare|report` (a second bin) drives the same `route` path over a suite (`bench/suites/*.json`) and writes JSON, HTML, and CSV reports with the RFC 11 §13.4 record; `compare` refuses to diff runs of different benchmark versions.
+`copperbench run|compare|report` (a second bin) drives the same `route` or `place` path over a suite (`bench/suites/*.json`; `--kind routing|placement`, `--routers`, `--placers`, `--probe-router`) and writes JSON, HTML, and CSV reports with the RFC 11 §13.4 record. Placement reports add the HPWL-versus-probe-completion correlation over every eligible candidate. `compare` refuses to diff runs of different benchmark versions.
 
 ## `copperhead sync`
 

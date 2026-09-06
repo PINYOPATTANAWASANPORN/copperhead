@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import { routeBoard, defaultRegistry } from '../pcb/engines/route.js';
+import { placeBoard, defaultPlacerRegistry } from '../pcb/engines/place.js';
 import type { ExecutionMode } from '../pcb/engines/runner.js';
 import type { EnginePolicy } from '../pcb/engines/registry.js';
 import { kicadCliVersion } from '../kicad/cli.js';
@@ -30,7 +31,12 @@ export interface SuiteFile {
   cases?: string[];
   /** pcbench: board records from bench/corpora. */
   boards?: { id: string; file?: string; license?: string; footprints?: number }[];
+  /** routing (default) or placement: which harness path the suite drives. */
+  kind?: 'routing' | 'placement';
   routers?: string[];
+  placers?: string[];
+  /** placement: router used by the routability probe (default router-freerouting). */
+  probeRouter?: string;
   mode?: ExecutionMode;
   seeds?: number[];
   budgetSeconds?: number;
@@ -40,7 +46,10 @@ export interface BenchOptions {
   repoRoot: string;
   suitePath: string;
   outDir?: string;
+  kind?: 'routing' | 'placement';
   routers?: string[];
+  placers?: string[];
+  probeRouter?: string;
   mode?: ExecutionMode;
   seeds?: number[];
   budgetSeconds?: number;
@@ -87,6 +96,7 @@ export interface BoardRecord {
 
 export interface BenchReport {
   benchmarkVersion: string;
+  kind: 'routing' | 'placement';
   suite: string;
   corpus: string;
   corpusCommit?: string;
@@ -112,6 +122,8 @@ export interface BenchReport {
     meanOverheadSeconds: number;
     meanEngineSeconds: number;
     seedVariance: Record<string, number>;
+    /** placement: over every gate-passing candidate with a probe, Pearson r between HPWL and probe completion (the B2 question). */
+    hpwlVsRoutability?: { candidates: number; r: number | null; meanCompletion: number };
   };
 }
 
@@ -154,13 +166,17 @@ export async function runSuite(opts: BenchOptions): Promise<{ report: BenchRepor
   const startedAt = new Date().toISOString();
   const dir = opts.outDir ?? path.join(opts.repoRoot, 'bench', 'var', 'runs', `${startedAt.replace(/[:.]/g, '-')}-${suite.suite}`);
   await mkdir(dir, { recursive: true });
-  const registry = defaultRegistry(opts.repoRoot);
-  const routers = opts.routers ?? suite.routers ?? registry.list('router').map((e) => e.manifest.id);
+  const kind = opts.kind ?? suite.kind ?? 'routing';
+  const registry = kind === 'placement' ? defaultPlacerRegistry(opts.repoRoot) : defaultRegistry(opts.repoRoot);
+  const routers = opts.routers ?? suite.routers ?? defaultRegistry(opts.repoRoot).list('router').map((e) => e.manifest.id);
+  const placers = opts.placers ?? suite.placers ?? registry.list('placer').map((e) => e.manifest.id);
+  const engineIds = kind === 'placement' ? placers : routers;
+  const probeRouter = opts.probeRouter ?? suite.probeRouter ?? 'router-freerouting';
   const mode = opts.mode ?? suite.mode ?? 'ensemble';
   const seeds = opts.seeds ?? suite.seeds ?? [0];
   const budgetSeconds = opts.budgetSeconds ?? suite.budgetSeconds ?? 300;
   const track = opts.track ?? suite.tracks[0] ?? 'b';
-  const scoringId = 'default-low-speed-2-layer';
+  const scoringId = kind === 'placement' ? 'default-placement-2-layer' : 'default-low-speed-2-layer';
   const scoring = loadScoringProfile(scoringId);
   const policy: EnginePolicy = { network: 'none', allowHarnessEngines: opts.allowHarnessEngines ?? false, denyLicenses: [] };
   const entries = suite.corpus === 'golden' ? (suite.cases ?? []).map((id) => ({ id, file: undefined as string | undefined })) : (suite.boards ?? []).map((b) => ({ id: b.id, file: b.file }));
@@ -187,9 +203,12 @@ export async function runSuite(opts: BenchOptions): Promise<{ report: BenchRepor
     for (const seed of seeds) {
       const runDir = path.join(dir, 'runs', `${entry.id}-s${seed}`);
       const t0 = Date.now();
-      log(`${entry.id} seed ${seed}: ${routers.join(',')} (${mode})`);
+      log(`${entry.id} seed ${seed}: ${engineIds.join(',')} (${kind}, ${mode})`);
       try {
-        const res = await routeBoard({ repoRoot: opts.repoRoot, boardPath, runDir, routers, mode, seed, limits: { engineSeconds: budgetSeconds, wallSeconds: budgetSeconds }, scoring: scoringId, policy, registry, ...(opts.maxParallel ? { maxParallel: opts.maxParallel } : {}), ...(opts.noKicad ? { noKicad: true } : {}), log: (l) => log(`  ${l}`) });
+        const res =
+          kind === 'placement'
+            ? await placeBoard({ repoRoot: opts.repoRoot, boardPath, runDir, placers, mode: mode === 'staged' ? 'single' : mode, seed, limits: { engineSeconds: budgetSeconds, wallSeconds: budgetSeconds }, scoring: scoringId, policy, registry, probe: { routerId: probeRouter, budgetSeconds: Math.min(120, budgetSeconds) }, ...(opts.maxParallel ? { maxParallel: opts.maxParallel } : {}), ...(opts.noKicad ? { noKicad: true } : {}), log: (l) => log(`  ${l}`) })
+            : await routeBoard({ repoRoot: opts.repoRoot, boardPath, runDir, routers, mode, seed, limits: { engineSeconds: budgetSeconds, wallSeconds: budgetSeconds }, scoring: scoringId, policy, registry, ...(opts.maxParallel ? { maxParallel: opts.maxParallel } : {}), ...(opts.noKicad ? { noKicad: true } : {}), log: (l) => log(`  ${l}`) });
         const wallSeconds = (Date.now() - t0) / 1000;
         const engineSeconds = res.invocations.reduce((a, i) => a + (i.result?.runtime.wallSeconds ?? 0), 0);
         // engines in race/ensemble run concurrently, so the harness overhead is the wall beyond the slowest engine
@@ -220,11 +239,18 @@ export async function runSuite(opts: BenchOptions): Promise<{ report: BenchRepor
     }
   }
   const finishedAt = new Date().toISOString();
-  const engines = routers.map((id) => registry.get(id)).filter((e): e is NonNullable<typeof e> => !!e).map((e) => ({ id: e.manifest.id, version: e.manifest.version, license: e.manifest.license, adopted: e.manifest.harnessOnly ? ('harness-only' as const) : ('wrapped' as const), executionMode: e.manifest.executionMode, determinism: e.manifest.determinism }));
+  const engines = engineIds.map((id) => registry.get(id)).filter((e): e is NonNullable<typeof e> => !!e).map((e) => ({ id: e.manifest.id, version: e.manifest.version, license: e.manifest.license, adopted: e.manifest.harnessOnly ? ('harness-only' as const) : ('wrapped' as const), executionMode: e.manifest.executionMode, determinism: e.manifest.determinism }));
   const byStatus: Record<string, number> = {};
   for (const b of boards) byStatus[b.status] = (byStatus[b.status] ?? 0) + 1;
   const withCandidates = boards.filter((b) => b.selected);
-  const completion = withCandidates.map((b) => b.candidates.find((c) => c.id === b.selected)?.metrics.completion_rate ?? 0);
+  const completionKey = kind === 'placement' ? 'routability_completion' : 'completion_rate';
+  const completion = withCandidates.map((b) => b.candidates.find((c) => c.id === b.selected)?.metrics[completionKey] ?? 0);
+  // B2's question: does HPWL predict routing completion? Over every eligible probed candidate.
+  let hpwlVsRoutability: BenchReport['summary']['hpwlVsRoutability'];
+  if (kind === 'placement') {
+    const pts = boards.flatMap((b) => b.candidates.filter((c) => c.eligible && c.metrics.routability_completion !== undefined && c.metrics.hpwl_nm !== undefined).map((c) => [c.metrics.hpwl_nm!, c.metrics.routability_completion!] as [number, number]));
+    hpwlVsRoutability = { candidates: pts.length, r: pearson(pts), meanCompletion: pts.length ? pts.reduce((a, p) => a + p[1], 0) / pts.length : 0 };
+  }
   const seedVariance: Record<string, number> = {};
   if (seeds.length > 1) {
     for (const id of new Set(boards.map((b) => b.id))) {
@@ -236,10 +262,10 @@ export async function runSuite(opts: BenchOptions): Promise<{ report: BenchRepor
     }
   }
   const report: BenchReport = {
-    benchmarkVersion: BENCHMARK_VERSION, suite: suite.suite, corpus: suite.corpus, ...(suite.commit ? { corpusCommit: suite.commit } : {}), track, startedAt, finishedAt,
+    benchmarkVersion: BENCHMARK_VERSION, kind, suite: suite.suite, corpus: suite.corpus, ...(suite.commit ? { corpusCommit: suite.commit } : {}), track, startedAt, finishedAt,
     harness: { copperhead: pkg.version, commit: await gitCommit(opts.repoRoot), kicad, node: process.version, platform: `${os.platform()} ${os.arch()}` },
     engines, scoring: scoring.id, mode, seeds, budgetSeconds,
-    reproduce: `copperbench run ${path.relative(opts.repoRoot, opts.suitePath)} --routers ${routers.join(',')} --mode ${mode} --seeds ${seeds.join(',')} --budget-seconds ${budgetSeconds}${opts.allowHarnessEngines ? ' --allow-harness-engines' : ''}${opts.boards ? ` --boards ${opts.boards.join(',')}` : ''}`,
+    reproduce: `copperbench run ${path.relative(opts.repoRoot, opts.suitePath)} --kind ${kind} ${kind === 'placement' ? `--placers ${placers.join(',')} --probe-router ${probeRouter}` : `--routers ${routers.join(',')}`} --mode ${mode} --seeds ${seeds.join(',')} --budget-seconds ${budgetSeconds}${opts.allowHarnessEngines ? ' --allow-harness-engines' : ''}${opts.boards ? ` --boards ${opts.boards.join(',')}` : ''}`,
     boards,
     summary: {
       boards: new Set(boards.map((b) => b.id)).size, runs: boards.length, byStatus,
@@ -250,6 +276,7 @@ export async function runSuite(opts: BenchOptions): Promise<{ report: BenchRepor
       meanOverheadSeconds: boards.length ? boards.reduce((a, b) => a + b.overheadSeconds, 0) / boards.length : 0,
       meanEngineSeconds: boards.length ? boards.reduce((a, b) => a + b.engineSeconds, 0) / boards.length : 0,
       seedVariance,
+      ...(hpwlVsRoutability ? { hpwlVsRoutability } : {}),
     },
   };
   await writeReport(dir, report);
@@ -261,4 +288,17 @@ export async function writeReport(dir: string, report: BenchReport): Promise<voi
   await writeFile(path.join(dir, 'report.json'), JSON.stringify(report, null, 2), 'utf8');
   await writeFile(path.join(dir, 'report.html'), renderHtml(report), 'utf8');
   await writeFile(path.join(dir, 'summary.csv'), summaryCsv(report), 'utf8');
+}
+
+function pearson(pts: [number, number][]): number | null {
+  if (pts.length < 3) return null;
+  const mx = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+  const my = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (const [x, y] of pts) {
+    sxy += (x - mx) * (y - my);
+    sxx += (x - mx) ** 2;
+    syy += (y - my) ** 2;
+  }
+  return sxx > 0 && syy > 0 ? sxy / Math.sqrt(sxx * syy) : null;
 }
