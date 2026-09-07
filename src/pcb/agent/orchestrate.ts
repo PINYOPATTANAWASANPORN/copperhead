@@ -153,8 +153,8 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
 
   const runRouting = async (n: number): Promise<Outcome<Diagnostic>> => {
     const t = Date.now();
-    // a cycle that may be followed by a repair leaves half the budget for it (B4: one Freerouting pass at the rule ate all 300 s of a board owing two connections and no cycle could run); the last cycle takes everything
-    const share = n < maxCycles ? 0.5 : 1;
+    // the first pass takes the whole budget: B4 measured that saving half for repair cost two real boards their clean pass and repaired none; repairs run on what remains
+    const share = 1;
     routing = await routeBoard({
       repoRoot: opts.repoRoot, boardPath: work, runDir: path.join(opts.runDir, `cycle-${n}`, 'routing'), routers: routerPick ?? routerIds, mode: 'staged', seed: opts.seed ?? 0,
       limits: { engineSeconds: Math.max(10, Math.floor(remaining().engineSeconds * share)), wallSeconds: Math.max(10, Math.floor(remaining().wallSeconds * share)) }, policy, registry: routers, strategy: routeStrategy,
