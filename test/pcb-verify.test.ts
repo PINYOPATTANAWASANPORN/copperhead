@@ -93,6 +93,28 @@ describe('golden microboards verify as expected', () => {
   }, 120_000);
 });
 
+describe('courtyard overlap without a courtyard', () => {
+  it('a two-pad part with no courtyard still overlaps on its pad extent; a one-pad via-style footprint under a part does not', async () => {
+    const pcb = path.join(GOLDEN, 'overlap', 'board.kicad_pcb');
+    const text = await readFile(pcb, 'utf8');
+    const projectText = await readFile(path.join(GOLDEN, 'overlap', 'board.kicad_pro'), 'utf8');
+    const i = text.indexOf('(footprint "Capacitor_SMD:C_0603_1608Metric"');
+    const j = text.indexOf('\n\t(footprint', i + 1);
+    const block = text.slice(i, j > 0 ? j : undefined);
+    // C1 without its courtyard, and 0.55 mm further into U1 so its pads (not only the courtyard it no longer has) reach U1's courtyard
+    const noCourtyard = block.replace(/\n\t\t\(fp_rect\n\t\t\t\(start -1\.48 -0\.73\)[\s\S]*?\(layer "F\.CrtYd"\)\n\t\t\)/, '').replace('(at 119.05 112)', '(at 118.5 112)');
+    expect(noCourtyard).not.toContain('F.CrtYd');
+    expect(noCourtyard).toContain('(at 118.5 112)');
+    const profile = JLCPCB_2LAYER;
+    const overlaps = (t: string) => verifyDesign({ design: importBoard({ boardText: t, boardPath: pcb, projectText, now: 't' }).design, profile }).diagnostics.filter((d) => d.code === 'geom.courtyard-overlap');
+    expect(overlaps(text)).toHaveLength(1);
+    expect(overlaps(text.replace(block, noCourtyard))).toHaveLength(1); // two pads: a part, its pad extent stands in
+    const onePad = noCourtyard.replace(/\n\t\t\(pad "2"[\s\S]*?\n\t\t\)(?=\n)/, '');
+    expect((onePad.match(/\(pad "/g) ?? []).length).toBe(1);
+    expect(overlaps(text.replace(block, onePad))).toEqual([]); // one pad, no courtyard: a via or a hole, nothing to collide
+  });
+});
+
 describe('a real routed board verifies clean', () => {
   it('StickHub after a live zone refill: no shorts, no opens, completion 1.0', async () => {
     if (!existsSync(STICKHUB) || !(await haveKicad())) return;

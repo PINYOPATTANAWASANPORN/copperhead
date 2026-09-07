@@ -10,7 +10,8 @@ Each wrapper below names the §4.1 neighbour it wraps and the live evidence from
 - **router-freerouting**: `freerouting/freerouting` 2.4.1 (GPL-3.0), `java -jar freerouting.jar -de <dsn> -do <ses> -mp <passes>`; needs a JRE 25 (2.2.4, the jar the KiCad plugin installs, needs 21). Routed the ecc83 demo's DSN in 9 s with zero unrouted and zero violations by its own check. DSN dialect and SES scale verified against KiCad's exporter and pcbnew (implementation spec §6.6).
 - **router-kicad-tools**: `kct route` 0.20.0 (MIT), strategies `basic|negotiated|monte-carlo|evolutionary`; ecc83 stripped board routed 19/20 connections DRC-clean in 18 s (ADR 0002). `router-kicad-tools-astar` in the RFC is this wrapper with `--strategy basic`.
 - **router-reference**: grid Lee/A*, `harnessOnly`, exists so CI has a deterministic router without external binaries.
-- Deferred: `router-orthoroute` (GPU, KiCad IPC plugin; not runnable headless on this machine), `router-pcbworld-pns` (ADR 0001).
+- **router-orthoroute**: wrapped on 2026-09-07 through its documented ORP/ORS files in CPU-only headless mode; routes on inner layers only, so `minLayers: 4` keeps it off every two-layer board (ADR 0010). TopoR cannot be wrapped (Windows GUI, no CLI); topola waits on a Rust toolchain.
+- Deferred: `router-pcbworld-pns` (ADR 0001).
 
 ## Placers
 

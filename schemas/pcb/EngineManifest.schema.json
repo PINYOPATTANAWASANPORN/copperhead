@@ -188,6 +188,10 @@
     "RouterCapabilities": {
       "type": "object",
       "properties": {
+        "minLayers": {
+          "type": "number",
+          "description": "Fewest copper layers the engine routes on at all (OrthoRoute routes on inner layers only: 4)."
+        },
         "maxLayers": {
           "type": "number"
         },

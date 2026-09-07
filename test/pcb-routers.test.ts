@@ -6,7 +6,7 @@
  * runs need the tools from bench/corpora/tools.sh.
  */
 import { describe, it, expect } from 'vitest';
-import { readFile, writeFile, mkdtemp, rm, chmod } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, mkdir, rm, chmod } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -18,6 +18,10 @@ import { emitDsn } from '../src/pcb/engines/routers/freerouting/dsn.js';
 import { parseSes } from '../src/pcb/engines/routers/freerouting/ses.js';
 import { FreeroutingRouter, resolveJar, resolveJava } from '../src/pcb/engines/routers/freerouting/adapter.js';
 import { KicadToolsRouter, resolveKct, toCodeDialect } from '../src/pcb/engines/routers/kicad-tools/adapter.js';
+import { OrthorouteRouter, ORTHOROUTE_MANIFEST, resolveOrthoroute } from '../src/pcb/engines/routers/orthoroute/adapter.js';
+import { buildOrp, encodeOrp, parseOrs } from '../src/pcb/engines/routers/orthoroute/orp.js';
+import { eligible } from '../src/pcb/engines/registry.js';
+import { gzipSync } from 'node:zlib';
 import { EngineError } from '../src/pcb/ir/status.js';
 import { mmToNm } from '../src/pcb/ir/units.js';
 import type { RoutingJob, RunContext } from '../src/pcb/engines/contracts.js';
@@ -173,6 +177,99 @@ describe('kicad-tools failure kinds are named', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+});
+
+describe('router-orthoroute (ADR 0010)', () => {
+  it('writes an ORP from the IR: millimetres, y up, pads named ref@number with their nets, rules and layers carried', async () => {
+    const { design } = await completion();
+    const orp = buildOrp(design, { boardName: 'b', netIds: null }) as { board: { bounds: Record<string, number>; layer_count: number }; layers: { name: string }[]; pads: Record<string, unknown>[]; nets: { name: string }[]; drc_rules: { default: Record<string, number> } };
+    expect(orp.board.layer_count).toBe(2);
+    expect(orp.layers.map((l) => l.name)).toEqual(['F.Cu', 'B.Cu']);
+    expect(orp.board.bounds.y_max).toBeGreaterThan(orp.board.bounds.y_min);
+    expect(orp.drc_rules.default.clearance).toBeCloseTo(design.board.rules.clearanceNm / 1e6, 6);
+    const pad = orp.pads.find((p) => p.component_ref === 'U1')!;
+    expect(String(pad.id)).toMatch(/^U1@/);
+    const u1 = design.components.find((c) => c.reference === 'U1')!;
+    const first = u1.pads.find((q) => `U1@${q.number}` === pad.id)!;
+    expect((pad.position as { x: number; y: number }).y).toBeCloseTo(-first.at.y / 1e6, 6);
+    expect(orp.nets.length).toBe(design.nets.filter((n) => n.padIds.length >= 2).length);
+    // only pads on routable nets are exported; every exported pad's net is in the net list
+    const names = new Set(orp.nets.map((n) => n.name));
+    for (const p of orp.pads) expect(names.has(String(p.net_name))).toBe(true);
+    expect(encodeOrp(orp).length).toBeGreaterThan(20);
+  });
+  it('reads an ORS back into IR copper: y flipped, layers by name or index, widths floored at the rule', async () => {
+    const { design } = await completion();
+    const copperLayers = ['F.Cu', 'B.Cu'];
+    const net = design.nets.find((n) => n.padIds.length >= 2)!;
+    const ors = { format_version: '1.0', metadata: { converged: true, total_iterations: 3 }, geometry: { all_tracks: [
+      { net_id: net.name, layer: 'F.Cu', start: { x: 1, y: 2 }, end: { x: 5, y: 2 }, width: 0.05 },
+      { net_id: net.name, layer: 1, start: { x: 5, y: 2 }, end: { x: 5, y: 6 }, width: 0.3 },
+      { net_id: 'no-such-net', layer: 'F.Cu', start: { x: 0, y: 0 }, end: { x: 1, y: 0 }, width: 0.3 },
+    ], all_vias: [{ net_id: net.name, position: { x: 5, y: 2 }, from_layer: 0, to_layer: 1, diameter: 0.6, drill: 0.3 }] } };
+    for (const data of [Buffer.from(JSON.stringify(ors)), gzipSync(Buffer.from(JSON.stringify(ors)))]) {
+      const r = parseOrs(data, { copperLayers, netIdByName: new Map(design.nets.map((n) => [n.name, n.id])), rules: design.board.rules, namespace: 'ns' });
+      expect(r.segments).toHaveLength(2);
+      expect(r.segments[0]).toMatchObject({ netId: net.id, layer: 'F.Cu', a: { x: 1_000_000, y: -2_000_000 }, b: { x: 5_000_000, y: -2_000_000 }, width: design.board.rules.trackWidthNm });
+      expect(r.segments[1]!.layer).toBe('B.Cu');
+      expect(r.vias[0]).toMatchObject({ netId: net.id, at: { x: 5_000_000, y: -2_000_000 }, layers: ['F.Cu', 'B.Cu'], size: 600_000, drill: 300_000 });
+      expect(r.nets).toEqual([net.name]);
+      expect(r.converged).toBe(true);
+    }
+  });
+  it('is not offered a two-layer board: the manifest needs four copper layers, and the reason says so', () => {
+    const policy = { network: 'none' as const, allowHarnessEngines: false, denyLicenses: [] };
+    const two = eligible({ plugin: null as never, manifest: ORTHOROUTE_MANIFEST }, { kind: 'router', hardConstraintKinds: [], copperLayers: 2 }, policy);
+    expect(two.ok).toBe(false);
+    expect(two.reasons.join(' ')).toMatch(/needs at least 4 copper layers, board has 2/);
+    expect(eligible({ plugin: null as never, manifest: ORTHOROUTE_MANIFEST }, { kind: 'router', hardConstraintKinds: [], copperLayers: 4 }, policy).ok).toBe(true);
+  });
+  it('runs the headless entry point and names its failures: a solution with no copper is "failed" with the reason, a crash is process-failed', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-orthoroute-'));
+    try {
+      const { pcb, design } = await completion();
+      await writeFile(path.join(dir, 'main.py'), '', 'utf8');
+      // a fake interpreter that writes an empty solution
+      const empty = path.join(dir, 'python-empty');
+      await writeFile(empty, '#!/bin/sh\nout=""; while [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then out="$2"; fi; shift; done\nprintf \'{"format_version":"1.0","metadata":{"converged":false,"total_iterations":0},"geometry":{"all_tracks":[],"all_vias":[]}}\' > "$out"\n', 'utf8');
+      await chmod(empty, 0o755);
+      const r = await new OrthorouteRouter({ paths: { dir, python: empty } }).route(job(design), ctxIn(dir, pcb));
+      expect(r.status).toBe('failed');
+      expect(r.unroutedNetIds.length).toBe(design.nets.filter((n) => n.padIds.length >= 2).length);
+      expect(r.diagnostics[0]!.message).toMatch(/routes on inner layers only/);
+      expect(existsSync(path.join(dir, 'board.ORP'))).toBe(true);
+      const crash = path.join(dir, 'python-crash');
+      await writeFile(crash, '#!/bin/sh\necho "Traceback: boom" >&2\nexit 1\n', 'utf8');
+      await chmod(crash, 0o755);
+      // same work directory on purpose: the earlier run's solution must not be read as this one's
+      await expect(new OrthorouteRouter({ paths: { dir, python: crash } }).route(job(design), ctxIn(dir, pcb))).rejects.toMatchObject({ kind: 'process-failed' });
+      expect(() => resolveOrthoroute({ COPPERHEAD_ORTHOROUTE: '/nowhere' }, dir)).toThrow(/checkout not found/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  it('live: on a two-layer board OrthoRoute routes nothing, on the same board with two inner layers it routes (COPPERHEAD_TEST_ORTHOROUTE=1)', async () => {
+    if (process.env.COPPERHEAD_TEST_ORTHOROUTE !== '1') return;
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-orthoroute-live-'));
+    try {
+      const { pcb, text, projectText, design } = await completion();
+      const paths = resolveOrthoroute(process.env, ROOT);
+      const two = await new OrthorouteRouter({ paths }).route(job(design, { limits: { engineSeconds: 240, wallSeconds: 240, memoryMb: 2048 }, strategy: { iterations: 20 } }), ctxIn(dir, pcb));
+      // what comes back on two layers is pad-escape stubs on the outer layer (every piece under 4 mm) and their vias, never a finished net
+      expect(two.status).not.toBe('complete');
+      expect(two.segments.length).toBeGreaterThan(0);
+      expect(two.segments.every((s) => s.layer === 'F.Cu' && Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y) < 4_000_000)).toBe(true);
+      const four = importBoard({ boardText: text.replace('(0 "F.Cu" signal)', '(0 "F.Cu" signal)\n\t\t(1 "In1.Cu" signal)\n\t\t(2 "In2.Cu" signal)'), boardPath: pcb, projectText, now: 't' }).design;
+      expect(four.board.layers.filter((l) => l.kind === 'copper')).toHaveLength(4);
+      const dir4 = path.join(dir, 'four');
+      await mkdir(dir4, { recursive: true });
+      const r = await new OrthorouteRouter({ paths }).route(job(four, { limits: { engineSeconds: 240, wallSeconds: 240, memoryMb: 2048 }, strategy: { iterations: 40 } }), ctxIn(dir4, pcb));
+      expect(r.segments.length).toBeGreaterThan(0);
+      expect(r.segments.some((s) => s.layer === 'In1.Cu' || s.layer === 'In2.Cu')).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 600_000);
 });
 
 describe('live engines (bench/corpora/tools.sh)', () => {

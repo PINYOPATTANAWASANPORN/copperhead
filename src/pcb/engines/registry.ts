@@ -62,6 +62,7 @@ export function eligible(engine: RegisteredEngine, job: JobShape, policy: Engine
   }
   const caps = m.capabilities as Partial<RouterCapabilities & PlacerCapabilities>;
   if (job.kind === 'router' && caps.maxLayers !== undefined && job.copperLayers > caps.maxLayers) reasons.push(`supports ${caps.maxLayers} copper layers, board has ${job.copperLayers}`);
+  if (job.kind === 'router' && caps.minLayers !== undefined && job.copperLayers < caps.minLayers) reasons.push(`needs at least ${caps.minLayers} copper layers, board has ${job.copperLayers}`);
   for (const [k, v] of Object.entries(job.needs ?? {})) {
     if (v === true && (caps as Record<string, unknown>)[k] !== true) reasons.push(`lacks capability ${k}`);
   }

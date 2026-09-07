@@ -27,6 +27,7 @@ import type { RoutingResult, RoutingStrategy } from './contracts.js';
 import { ReferenceRouter, REFERENCE_ROUTER_MANIFEST } from './routers/reference/adapter.js';
 import { FreeroutingRouter, FREEROUTING_MANIFEST } from './routers/freerouting/adapter.js';
 import { KicadToolsRouter, KICAD_TOOLS_MANIFEST } from './routers/kicad-tools/adapter.js';
+import { OrthorouteRouter, ORTHOROUTE_MANIFEST } from './routers/orthoroute/adapter.js';
 
 export interface RouteOptions {
   repoRoot: string;
@@ -71,6 +72,7 @@ export function defaultRegistry(repoRoot: string): EngineRegistry {
   const r = new EngineRegistry();
   r.register(new FreeroutingRouter({ repoRoot }), FREEROUTING_MANIFEST);
   r.register(new KicadToolsRouter({ repoRoot }), KICAD_TOOLS_MANIFEST);
+  r.register(new OrthorouteRouter({ repoRoot }), ORTHOROUTE_MANIFEST);
   r.register(new ReferenceRouter(), REFERENCE_ROUTER_MANIFEST);
   return r;
 }

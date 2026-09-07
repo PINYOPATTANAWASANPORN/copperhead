@@ -32,6 +32,8 @@ export interface PlacerCapabilities {
 }
 
 export interface RouterCapabilities {
+  /** Fewest copper layers the engine routes on at all (OrthoRoute routes on inner layers only: 4). */
+  minLayers?: number;
   maxLayers?: number;
   differentialPairs: boolean;
   lengthMatching: boolean;

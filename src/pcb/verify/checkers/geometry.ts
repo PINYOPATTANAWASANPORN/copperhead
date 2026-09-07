@@ -50,8 +50,10 @@ export function checkGeometry(design: PcbDesign, profile: FabricationProfile): C
       if (intersects(shape, cut)) d.push(make(GEOMETRY_CHECKER, 'geom.in-cutout', { entityIds: [c.id], entityReferences: [c.reference], region: shape, message: `${c.reference} overlaps a board cutout`, suggestedActions: ['move-group'] }));
     }
   }
-  // no courtyard drawn: the pad extent stands in, so overlap is still caught (pre-flight warned)
-  const withCourtyard = design.components.map((c) => ({ c, poly: c.footprint.courtyard ?? padExtent(c) })).filter((x): x is { c: typeof x.c; poly: Polygon } => !!x.poly);
+  // no courtyard drawn: the pad extent stands in, so overlap is still caught (pre-flight warned). A single-pad footprint with no
+  // courtyard is a via, a hole, a test point or a fiducial, not a body that can collide: KiCad 4-era boards put "VIA" footprints
+  // under parts, and KiCad's own DRC has nothing to check there (probe on PCBench's larger boards: three refusals from this alone).
+  const withCourtyard = design.components.filter((c) => c.footprint.courtyard || c.pads.length >= 2).map((c) => ({ c, poly: c.footprint.courtyard ?? padExtent(c) })).filter((x): x is { c: typeof x.c; poly: Polygon } => !!x.poly);
   for (let i = 0; i < withCourtyard.length; i++) {
     const { c: a, poly: pa } = withCourtyard[i]!;
     const ba = bbox(pa);
