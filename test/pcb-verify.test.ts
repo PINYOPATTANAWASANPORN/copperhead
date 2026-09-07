@@ -94,7 +94,7 @@ describe('golden microboards verify as expected', () => {
 });
 
 describe('courtyard overlap without a courtyard', () => {
-  it('a two-pad part with no courtyard still overlaps on its pad extent; a one-pad via-style footprint under a part does not', async () => {
+  it('a footprint with no courtyard takes no part in courtyard overlap (as in KiCad DRC); pre-flight warns instead', async () => {
     const pcb = path.join(GOLDEN, 'overlap', 'board.kicad_pcb');
     const text = await readFile(pcb, 'utf8');
     const projectText = await readFile(path.join(GOLDEN, 'overlap', 'board.kicad_pro'), 'utf8');
@@ -106,12 +106,11 @@ describe('courtyard overlap without a courtyard', () => {
     expect(noCourtyard).not.toContain('F.CrtYd');
     expect(noCourtyard).toContain('(at 118.5 112)');
     const profile = JLCPCB_2LAYER;
-    const overlaps = (t: string) => verifyDesign({ design: importBoard({ boardText: t, boardPath: pcb, projectText, now: 't' }).design, profile }).diagnostics.filter((d) => d.code === 'geom.courtyard-overlap');
-    expect(overlaps(text)).toHaveLength(1);
-    expect(overlaps(text.replace(block, noCourtyard))).toHaveLength(1); // two pads: a part, its pad extent stands in
-    const onePad = noCourtyard.replace(/\n\t\t\(pad "2"[\s\S]*?\n\t\t\)(?=\n)/, '');
-    expect((onePad.match(/\(pad "/g) ?? []).length).toBe(1);
-    expect(overlaps(text.replace(block, onePad))).toEqual([]); // one pad, no courtyard: a via or a hole, nothing to collide
+    const verify = (t: string) => verifyDesign({ design: importBoard({ boardText: t, boardPath: pcb, projectText, now: 't' }).design, profile }).diagnostics;
+    expect(verify(text).filter((d) => d.code === 'geom.courtyard-overlap')).toHaveLength(1);
+    const without = verify(text.replace(block, noCourtyard));
+    expect(without.filter((d) => d.code === 'geom.courtyard-overlap')).toEqual([]);
+    expect(without.some((d) => d.code === 'preflight.courtyard' && d.entityReferences.includes('C1'))).toBe(true);
   });
 });
 
