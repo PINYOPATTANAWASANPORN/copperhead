@@ -156,10 +156,10 @@ export async function runRouting(opts: RoutingRunOptions): Promise<RoutingRun> {
   const invocations: Invocation<RoutingResult>[] = [];
   /** An engine the run's budget can no longer afford is recorded, not started. */
   const skipped = (engine: RegisteredEngine): Invocation<RoutingResult> => ({ engineId: engine.manifest.id, manifest: engine.manifest, workDir: '', result: null, error: { kind: 'timeout', message: 'budget exhausted before start' }, provenance: { engineId: engine.manifest.id, engineVersion: engine.manifest.version, adapterVersion: engine.manifest.adapterVersion, seed: opts.job.seed, startedAt: '', finishedAt: '' }, snapshotViolation: null });
-  /** Each invocation's limits are the job's, clamped to what the run's budget still holds: five engines in a staged run must not each take the whole budget (B4). */
-  const clamped = (): RoutingJob['limits'] => {
+  /** Each invocation's limits are the job's, clamped to a share of what the run's budget still holds: five engines in a staged run must not each take the whole budget, and a stage before the last takes at most half so the final stage at the rule always runs (B4: Freerouting spends its whole allotment on a board it cannot finish). */
+  const clamped = (share = 1): RoutingJob['limits'] => {
     const r = opts.budget.remaining;
-    return { ...opts.job.limits, engineSeconds: Math.max(1, Math.min(opts.job.limits.engineSeconds, Math.floor(r.engineSeconds))), wallSeconds: Math.max(1, Math.min(opts.job.limits.wallSeconds, Math.floor(r.wallSeconds))) };
+    return { ...opts.job.limits, engineSeconds: Math.max(1, Math.min(opts.job.limits.engineSeconds, Math.floor(r.engineSeconds * share))), wallSeconds: Math.max(1, Math.min(opts.job.limits.wallSeconds, Math.floor(r.wallSeconds * share))) };
   };
   if (opts.mode === 'staged') {
     const { importBoard } = await import('../ir/kicad/import.js');
@@ -187,7 +187,7 @@ export async function runRouting(opts: RoutingRunOptions): Promise<RoutingRun> {
         const n = ordinal++;
         return async () => {
           const inv = opts.budget.affords({ engineSeconds: 1, wallSeconds: 1 })
-            ? await invoke(opts, engine, n, job({ runId: `${path.basename(opts.run.root)}-${n}`, limits: clamped() }), snapshotText, (p, j, c) => p.route(j, c))
+            ? await invoke(opts, engine, n, job({ runId: `${path.basename(opts.run.root)}-${n}`, limits: clamped(final ? 1 : 0.5) }), snapshotText, (p, j, c) => p.route(j, c))
             : skipped(engine);
           if (!inv.workDir) opts.log?.(`stage ${step.name}: ${engine.manifest.id} not started, the budget is spent`);
           // every stage carries the copper routed before it, so a stage the budget cuts off before the last one can still be judged

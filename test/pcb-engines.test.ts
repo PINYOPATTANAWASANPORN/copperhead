@@ -151,8 +151,8 @@ describe('the run budget bounds a staged run', () => {
       const [first, second, third] = res.invocations;
       expect(first!.error).toBeNull();
       const job1 = JSON.parse(await readFile(path.join(first!.workDir, 'job.json'), 'utf8'));
-      expect(job1.limits.wallSeconds).toBeLessThanOrEqual(2); // the job asked for 60, the run holds 2
-      expect(job1.limits.engineSeconds).toBe(60);
+      expect(job1.limits.wallSeconds).toBeLessThanOrEqual(1); // the job asked for 60, the run holds 2, a stage before the last gets half
+      expect(job1.limits.engineSeconds).toBe(30);
       // 1.2 s used of 2: the second may still start with what is left, the third may not
       if (second!.workDir) expect(JSON.parse(await readFile(path.join(second!.workDir, 'job.json'), 'utf8')).limits.wallSeconds).toBeLessThanOrEqual(1);
       expect(third!.error).toMatchObject({ kind: 'timeout', message: 'budget exhausted before start' });
