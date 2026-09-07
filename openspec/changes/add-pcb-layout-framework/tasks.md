@@ -76,7 +76,7 @@
 - [x] 7.4 `create` stage 5 switched to `pcb layout` (the closed loop runs on the populated board before the model's turn; the model moves parts; copperhead routes again when it finishes); completion contract on the bundle (AC-17.15, AC-17.16); `copperhead pcb layout`
 - [x] 7.5 Track D (repair) and track C (end to end) in the bench (`copperbench --kind layout`; suites layout-microboards and repair-pcbench); reference-board set started: `bench/suites/reference-boards.json`, the ten PCBench boards that route clean at B1, kept as human calibration baselines
 - [x] 7.6 README and docs site: the framework, the supported envelope page (§10.7), engine setup (`docs/src/content/docs/concepts/layout-framework.md`); ROADMAP non-goal reworded
-- [ ] 7.7 Exit: end to end runs unattended on supported boards and fails explicitly elsewhere; B4 reported as directional until 30 held-out boards
+- [x] 7.7 Exit: end to end runs unattended on supported boards and fails explicitly elsewhere; B4 reported as directional until 30 held-out boards (`bench/reports/B4-2026-09-07.md`: eight runs of each track, eleven loop defects found and fixed, repair cycles fixed no board yet)
 
 ## 8. Archive
 
