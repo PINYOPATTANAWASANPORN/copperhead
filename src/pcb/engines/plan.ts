@@ -6,6 +6,7 @@
  * Pure: reads the design, returns a plan; it never runs an engine.
  */
 import type { PcbDesign, NetDefinition } from '../ir/types.js';
+import { copperStack } from '../ir/layers.js';
 import type { RoutingStrategy, LayerStrategy } from './contracts.js';
 
 export interface RoutingStage {
@@ -62,6 +63,20 @@ export function layerStrategy(prefs: LayerPreference[] | undefined): Record<stri
   return out;
 }
 
+/**
+ * The layer strategy for a board: on four and six layers the inner layers alternate preferred directions
+ * (In1.Cu horizontal, In2.Cu vertical, …) and the outer layers stay free; the intent file's `routing.layers`
+ * entries override any layer (add-multilayer-layout D5). Two-layer boards get only what the intent says.
+ */
+export function layerStrategyFor(design: PcbDesign, prefs: LayerPreference[] | undefined): Record<string, LayerStrategy> | undefined {
+  const declared = layerStrategy(prefs) ?? {};
+  const stack = copperStack(design);
+  const out: Record<string, LayerStrategy> = {};
+  if (stack.length >= 4) stack.slice(1, -1).forEach((id, i) => { out[id] = { active: true, preferredDirection: i % 2 === 0 ? 'horizontal' : 'vertical' }; });
+  Object.assign(out, declared);
+  return Object.keys(out).length ? out : undefined;
+}
+
 export function defaultStagedPlan(design: PcbDesign, opts: PlanOptions): StagedPlan {
   const inScope = design.nets.filter((n) => n.padIds.length >= 2 && (!opts.netIds || opts.netIds.includes(n.id)));
   const critical = new Set(opts.criticalNetNames ?? []);
@@ -73,7 +88,7 @@ export function defaultStagedPlan(design: PcbDesign, opts: PlanOptions): StagedP
     else if (critical.has(n.name)) crit.push(n.id);
     else bulk.push(n.id);
   }
-  const layers = layerStrategy(opts.layerPreferences);
+  const layers = layerStrategyFor(design, opts.layerPreferences);
   const base: RoutingStrategy = layers ? { layers } : {};
   // margin costs nothing where there is room: every stage but the last routes at 1.5x the rule (at most 0.5 mm);
   // the last stage routes whatever is still owed at the rule itself

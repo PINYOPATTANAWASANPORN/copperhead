@@ -5,6 +5,7 @@
  * y (nanometres, y down) is negated on the way out and back.
  */
 import { gzipSync, gunzipSync } from 'node:zlib';
+import { copperStack } from '../../../ir/layers.js';
 import { uuidv5 } from '../../../../kicad/emit.js';
 import type { PcbDesign, TrackSegment, Via, DesignRules } from '../../../ir/types.js';
 import { bbox } from '../../../ir/geometry.js';
@@ -22,7 +23,7 @@ export interface OrpOptions {
 }
 
 export function buildOrp(design: PcbDesign, opts: OrpOptions): Record<string, unknown> {
-  const copper = design.board.layers.filter((l) => l.kind === 'copper').map((l) => l.id);
+  const copper = copperStack(design);
   const ob = bbox(design.board.outline);
   const rules = design.board.rules;
   const netById = new Map(design.nets.map((n) => [n.id, n]));

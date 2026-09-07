@@ -6,6 +6,8 @@
  * LLM-free and network-free; only local engines run.
  */
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { copperStack, isThroughVia } from '../ir/layers.js';
+import { defaultRoutingScoringFor } from '../verify/profiles/scoring/index.js';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { importBoard } from '../ir/kicad/import.js';
@@ -93,7 +95,7 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
   const { design, warnings } = importBoard({ boardText: text, boardPath: path.relative(opts.repoRoot, opts.boardPath), ...(projectText ? { projectText, projectPath: path.relative(opts.repoRoot, projectPath!) } : {}), kicadVersion, ...(opts.profile ? { fabricationProfile: opts.profile } : {}) });
   for (const w of warnings) log(`import: ${w}`);
   const profile = loadProfile(design.board.fabricationProfile);
-  const scoring = loadScoringProfile(opts.scoring ?? 'default-low-speed-2-layer');
+  const scoring = loadScoringProfile(opts.scoring ?? defaultRoutingScoringFor(copperStack(design).length));
   const netIds = opts.netNames ? design.nets.filter((n) => opts.netNames!.includes(n.name)).map((n) => n.id) : null;
   const snapshot = makeSnapshot(design, { kind: 'routing', netIds, region: null, preserveExistingRoutes: opts.preserveExistingRoutes ?? false }, { seed: opts.seed ?? 0, limits: { ...DEFAULT_LIMITS, ...opts.limits } });
   await mkdir(opts.runDir, { recursive: true });
@@ -132,9 +134,18 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
   // the candidates come from the last stage that produced copper: the final stage, or, when the budget cut the run short
   // before it (B4), the last one that ran, whose composite is what the board would carry
   const judged = judgedStage(res.invocations);
+  const stack = copperStack(design);
   for (const inv of res.invocations) {
     if (!inv.result || inv.snapshotViolation) continue;
     if (inv.result.status === 'failed' || inv.result.status === 'unsupported') continue;
+    // an engine may only return through vias on this release: anything else is output the harness cannot represent (D2)
+    const odd = inv.result.vias.find((v) => !isThroughVia(v, stack));
+    if (odd) {
+      inv.error = { kind: 'malformed-output', message: `via on net ${design.nets.find((n) => n.id === odd.netId)?.name ?? odd.netId} spans ${odd.layers[0]} to ${odd.layers[1]}; only through vias are supported` };
+      inv.result = null;
+      log(`${inv.engineId}: invalid output: ${inv.error.message}`);
+      continue;
+    }
     if (inv.stage && inv.stage.index !== judged) continue; // other stages are not candidates; their copper rides in the judged branches
     // a staged branch is the union of the carried stages and its own copper
     const carried = inv.stage?.carried;
@@ -182,6 +193,7 @@ function outcomeOf(invocations: Invocation<RoutingResult>[], candidates: Materia
   }
   if (!invocations.length) return { status: 'UNSUPPORTED', summary: 'no eligible routing engine', detail, diagnostics: [] };
   if (invocations.some((i) => i.snapshotViolation)) return { status: 'INVALID_OUTPUT', summary: 'an engine modified its input snapshot', detail, diagnostics: [] };
+  if (!candidates.length && invocations.some((i) => i.error?.kind === 'malformed-output')) return { status: 'INVALID_OUTPUT', summary: `an engine returned copper the harness cannot represent (${invocations.filter((i) => i.error?.kind === 'malformed-output').map((i) => `${i.engineId}: ${i.error!.message}`).join('; ').slice(0, 300)})`, detail, diagnostics: [] };
   // the verdict rests on the invocations that could have produced a candidate: the final branches of a staged run, every one otherwise;
   // an engine that returned no copper ('failed') counts as an engine failure
   const finals = invocations.filter((i) => !i.stage || i.stage.index === judged);

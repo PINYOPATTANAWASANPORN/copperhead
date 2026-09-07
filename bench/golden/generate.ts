@@ -20,7 +20,8 @@ const NS = uuidv5('copperhead-golden');
 const id = (p: string) => uuidv5(p, NS);
 
 interface Part { ref: string; fp: string; value: string; x: number; y: number }
-interface Seg { net: string; layer: 'F.Cu' | 'B.Cu'; from: [number, number]; to: [number, number]; width?: number }
+interface Seg { net: string; layer: string; from: [number, number]; to: [number, number]; width?: number }
+interface SeededVia { net: string; at: [number, number]; layers: [string, string] }
 interface Keepout { rect: [number, number, number, number] }
 interface Case {
   name: string;
@@ -29,7 +30,11 @@ interface Case {
   parts: Part[];
   nets: Record<string, string[]>; // net -> ["REF.PAD", ...]
   segments?: Seg[];
+  /** Seeded vias (add-multilayer-layout): a buried one is the `via-span` fault. */
+  vias?: SeededVia[];
   keepouts?: Keepout[];
+  /** Copper layers; four and six use the KiCad 10 numbering (B.Cu 2, In1.Cu 4 …), two keeps the legacy numbering the corpus was generated with. */
+  layers?: 2 | 4 | 6;
   intent?: string;
   expected: {
     status: 'PASS' | 'PARTIAL' | 'HOLD' | 'REFUSE';
@@ -67,7 +72,12 @@ function padOffsets(libText: string): Map<string, [number, number]> {
   return out;
 }
 
-const HEADER = (name: string) => `(kicad_pcb
+/** The copper part of the layer table: legacy numbering for two layers (the committed corpus), KiCad 10 numbering for four and six. */
+const COPPER_LAYERS = (layers: 2 | 4 | 6): string =>
+  layers === 2
+    ? '\t\t(0 "F.Cu" signal)\n\t\t(31 "B.Cu" signal)'
+    : ['\t\t(0 "F.Cu" signal)', ...Array.from({ length: layers - 2 }, (_, i) => `\t\t(${4 + 2 * i} "In${i + 1}.Cu" signal)`), '\t\t(2 "B.Cu" signal)'].join('\n');
+const HEADER = (name: string, layers: 2 | 4 | 6 = 2) => `(kicad_pcb
 	(version 20240108)
 	(generator "copperhead-golden")
 	(generator_version "0")
@@ -81,8 +91,7 @@ const HEADER = (name: string) => `(kicad_pcb
 		(comment 1 "copperhead golden microboard; footprints from the KiCad libraries (CC-BY-SA-4.0 with the KiCad library exception)")
 	)
 	(layers
-		(0 "F.Cu" signal)
-		(31 "B.Cu" signal)
+${COPPER_LAYERS(layers)}
 		(32 "B.Adhes" user "B.Adhesive")
 		(33 "F.Adhes" user "F.Adhesive")
 		(34 "B.Paste" user)
@@ -159,9 +168,16 @@ async function build(c: Case, dirs: string[], libCache: Map<string, string>): Pr
   const copper: string[] = [];
   for (const [i, s] of (c.segments ?? []).entries()) {
     const from = typeof s.from[0] === 'string' ? padAbs.get(s.from as unknown as string)! : s.from;
+    const to = typeof (s.to as unknown) === 'string' ? padAbs.get(s.to as unknown as string)! : s.to;
     copper.push(
-      `\t(segment\n\t\t(start ${knum(from[0])} ${knum(from[1])})\n\t\t(end ${knum(s.to[0])} ${knum(s.to[1])})\n\t\t(width ${knum(s.width ?? 0.25)})\n\t\t(layer "${s.layer}")\n\t\t(net ${code.get(s.net)})\n\t\t(uuid "${id(`${c.name}/seg/${i}`)}")\n\t)`,
+      `\t(segment\n\t\t(start ${knum(from[0])} ${knum(from[1])})\n\t\t(end ${knum(to[0])} ${knum(to[1])})\n\t\t(width ${knum(s.width ?? 0.25)})\n\t\t(layer "${s.layer}")\n\t\t(net ${code.get(s.net)})\n\t\t(uuid "${id(`${c.name}/seg/${i}`)}")\n\t)`,
     );
+  }
+  for (const [i, v] of (c.vias ?? []).entries()) {
+    const at = typeof (v.at as unknown) === 'string' ? padAbs.get(v.at as unknown as string)! : v.at;
+    // a via between inner layers is a blind or buried via in KiCad's file grammar
+    const kind = v.layers[0] === 'F.Cu' && v.layers[1] === 'B.Cu' ? '' : ' blind';
+    copper.push(`\t(via${kind}\n\t\t(at ${knum(at[0])} ${knum(at[1])})\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers "${v.layers[0]}" "${v.layers[1]}")\n\t\t(net ${code.get(v.net)})\n\t\t(uuid "${id(`${c.name}/via/${i}`)}")\n\t)`);
   }
   for (const [i, k] of (c.keepouts ?? []).entries()) {
     const [x1, y1, x2, y2] = k.rect;
@@ -169,7 +185,7 @@ async function build(c: Case, dirs: string[], libCache: Map<string, string>): Pr
       `\t(zone\n\t\t(net 0)\n\t\t(net_name "")\n\t\t(layers "F&B.Cu")\n\t\t(uuid "${id(`${c.name}/keepout/${i}`)}")\n\t\t(name "keepout")\n\t\t(hatch edge 0.5)\n\t\t(connect_pads (clearance 0))\n\t\t(min_thickness 0.25)\n\t\t(filled_areas_thickness no)\n\t\t(keepout (tracks not_allowed) (vias not_allowed) (pads not_allowed) (copperpour not_allowed) (footprints not_allowed))\n\t\t(fill (thermal_gap 0.5) (thermal_bridge_width 0.5))\n\t\t(polygon\n\t\t\t(pts (xy ${knum(x1)} ${knum(y1)}) (xy ${knum(x2)} ${knum(y1)}) (xy ${knum(x2)} ${knum(y2)}) (xy ${knum(x1)} ${knum(y2)}))\n\t\t)\n\t)`,
     );
   }
-  const pcb = `${HEADER(c.name)}${netTable}\n${outline}\n${chunks.join('\n')}\n${copper.join('\n')}${copper.length ? '\n' : ''})\n`;
+  const pcb = `${HEADER(c.name, c.layers ?? 2)}${netTable}\n${outline}\n${chunks.join('\n')}\n${copper.join('\n')}${copper.length ? '\n' : ''})\n`;
   const expected = { case: c.name, fault: c.fault, generator: 'bench/golden/generate.ts', ...c.expected };
   return { pcb, pro: PRO(c.name), expected, intent: c.intent };
 }
@@ -350,6 +366,77 @@ CASES.push(
     segments: [{ net: 'VIN', layer: 'F.Cu', from: [104, 108], to: [116, 108], width: 0.25 }, { net: 'VIN', layer: 'F.Cu', from: [116, 108], to: [116, 112], width: 0.25 }],
     intent: 'routing:\n  widths:\n    - net: VIN\n      min_width_mm: 0.8\n  currents:\n    - net: VIN\n      amps: 2\n',
     expected: { status: 'PARTIAL', diagnostics: [{ code: 'intent.routing.width', entityReferences: ['VIN'] }], drc: { errorTypes: [], unconnected: 2 } },
+  },
+);
+
+// add-multilayer-layout: the copper stack, through vias only, profiles by count (design D7)
+CASES.push(
+  {
+    name: 'four-layer',
+    fault: 'the completion board on four copper layers (KiCad 10 numbering), nothing routed: every connection is owed; the routers may use In1.Cu and In2.Cu',
+    layers: 4,
+    outline: [36, 26],
+    parts: [
+      { ref: 'U1', fp: FP.soic8, value: 'MCU', x: 116, y: 113 },
+      { ref: 'C1', fp: FP.c0603, value: '100n', x: 116, y: 106.5 },
+      { ref: 'R1', fp: FP.r0603, value: '10k', x: 124, y: 108 },
+      { ref: 'R2', fp: FP.r0603, value: '10k', x: 124, y: 118 },
+      { ref: 'Y1', fp: FP.xtal, value: '8MHz', x: 107, y: 118 },
+      { ref: 'J1', fp: FP.hdr4, value: 'CONN', x: 132, y: 109 },
+    ],
+    nets: {
+      VCC: ['U1.8', 'C1.1', 'R1.1', 'R2.1', 'J1.1'],
+      GND: ['U1.4', 'C1.2', 'Y1.2', 'Y1.4', 'J1.2'],
+      SIG1: ['U1.1', 'R1.2', 'J1.3'],
+      SIG2: ['U1.2', 'R2.2', 'J1.4'],
+      XI: ['U1.5', 'Y1.1'],
+      XO: ['U1.6', 'Y1.3'],
+    },
+    expected: { status: 'PARTIAL', diagnostics: [{ code: 'conn.unrouted', entityReferences: ['VCC', 'GND', 'SIG1', 'SIG2', 'XI', 'XO'] }], drc: { errorTypes: [], unconnected: 14 } },
+  },
+  {
+    name: 'six-layer',
+    fault: 'the congestion board on six copper layers: the same channel, four inner layers to cross it on',
+    layers: 6,
+    outline: [44, 50],
+    parts: [
+      { ref: 'J2', fp: FP.hdr2x18, value: 'CONN', x: 104, y: 103 },
+      { ref: 'U2', fp: FP.qfn16, value: 'MCU', x: 136, y: 124 },
+      { ref: 'C1', fp: FP.c0603, value: '100n', x: 136, y: 118 },
+      { ref: 'R1', fp: FP.r0603, value: '10k', x: 136, y: 130 },
+    ],
+    nets: Object.fromEntries([
+      ...Array.from({ length: 16 }, (_, i) => [`S${i + 1}`, [`J2.${i + 1}`, `U2.${i + 1}`]]),
+      ['VCC', ['J2.35', 'C1.1', 'R1.1']],
+      ['GND', ['J2.36', 'C1.2', 'U2.17']],
+      ['PU', ['R1.2', 'J2.34']],
+    ]),
+    expected: { status: 'PARTIAL', diagnostics: [{ code: 'conn.unrouted', entityReferences: ['GND', 'PU', 'S1'] }], drc: { errorTypes: [], unconnected: 21 } },
+  },
+  {
+    name: 'via-span',
+    fault: 'four layers; XI is routed on In1.Cu between two buried vias (In1.Cu to In2.Cu), which no profile or engine on this release supports',
+    layers: 4,
+    outline: [36, 26],
+    parts: [
+      { ref: 'U1', fp: FP.soic8, value: 'MCU', x: 116, y: 113 },
+      { ref: 'C1', fp: FP.c0603, value: '100n', x: 116, y: 106.5 },
+      { ref: 'R1', fp: FP.r0603, value: '10k', x: 124, y: 108 },
+      { ref: 'R2', fp: FP.r0603, value: '10k', x: 124, y: 118 },
+      { ref: 'Y1', fp: FP.xtal, value: '8MHz', x: 107, y: 118 },
+      { ref: 'J1', fp: FP.hdr4, value: 'CONN', x: 132, y: 109 },
+    ],
+    nets: {
+      VCC: ['U1.8', 'C1.1', 'R1.1', 'R2.1', 'J1.1'],
+      GND: ['U1.4', 'C1.2', 'Y1.2', 'Y1.4', 'J1.2'],
+      SIG1: ['U1.1', 'R1.2', 'J1.3'],
+      SIG2: ['U1.2', 'R2.2', 'J1.4'],
+      XI: ['U1.5', 'Y1.1'],
+      XO: ['U1.6', 'Y1.3'],
+    },
+    segments: [{ net: 'XI', layer: 'In1.Cu', from: P('U1.5'), to: P('Y1.1') }],
+    vias: [{ net: 'XI', at: P('U1.5'), layers: ['In1.Cu', 'In2.Cu'] }, { net: 'XI', at: P('Y1.1'), layers: ['In1.Cu', 'In2.Cu'] }],
+    expected: { status: 'PARTIAL', diagnostics: [{ code: 'geom.via-layers', entityReferences: ['XI'] }], drc: { errorTypes: [], consequential: ['via_dangling'], unconnected: 15 } },
   },
 );
 

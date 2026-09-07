@@ -7,6 +7,7 @@
  * INVALID_OUTPUT rather than a silently corrupted source.
  */
 import { mkdir, writeFile, appendFile } from 'node:fs/promises';
+import { copperStack } from '../ir/layers.js';
 import path from 'node:path';
 import type { BoardSnapshot } from '../ir/snapshot.js';
 import { verifySnapshotIntact, makeSnapshot, type RunDir } from '../ir/snapshot.js';
@@ -144,7 +145,7 @@ export interface RoutingRunOptions extends RunOptions {
 
 export async function runRouting(opts: RoutingRunOptions): Promise<RoutingRun> {
   const policy = opts.policy ?? DEFAULT_POLICY;
-  const copperLayers = opts.design.board.layers.filter((l) => l.kind === 'copper').length;
+  const copperLayers = copperStack(opts.design).length;
   const shape: JobShape = { kind: 'router', hardConstraintKinds: [], copperLayers, ...opts.shape };
   const ineligible: RoutingRun['ineligible'] = [];
   const usable = opts.engines.filter((e) => {
@@ -240,7 +241,7 @@ export interface PlacementRunOptions extends RunOptions {
 
 export async function runPlacement(opts: PlacementRunOptions): Promise<{ mode: ExecutionMode; invocations: Invocation<PlacementResult>[]; ineligible: RoutingRun['ineligible'] }> {
   const policy = opts.policy ?? DEFAULT_POLICY;
-  const copperLayers = opts.design.board.layers.filter((l) => l.kind === 'copper').length;
+  const copperLayers = copperStack(opts.design).length;
   const shape: JobShape = { kind: 'placer', hardConstraintKinds: [], copperLayers, ...opts.shape };
   const ineligible: RoutingRun['ineligible'] = [];
   const usable = opts.engines.filter((e) => {

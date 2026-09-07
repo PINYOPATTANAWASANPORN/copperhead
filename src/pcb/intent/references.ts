@@ -9,6 +9,7 @@
  * nothing here calls one.
  */
 import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
+import { copperStack } from '../ir/layers.js';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -64,7 +65,7 @@ function familyKey(v: string): string {
   return v.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 5);
 }
 
-const copperLayers = (d: PcbDesign) => d.board.layers.filter((l) => l.kind === 'copper').length;
+const copperLayers = (d: PcbDesign) => copperStack(d).length;
 
 /** Cut a block out of `src` around `srcAnchor`: every part sharing a net with it within 15 mm. */
 export function cutBlock(src: PcbDesign, srcAnchor: ComponentInstance): { members: ComponentInstance[]; edges: ReferenceBlock['edges'] } {

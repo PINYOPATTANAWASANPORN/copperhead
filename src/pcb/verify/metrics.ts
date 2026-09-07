@@ -6,6 +6,7 @@
  * code). The rest are copperhead's own.
  */
 import type { PcbDesign } from '../ir/types.js';
+import { copperStack } from '../ir/layers.js';
 import { capsule, distance as polyDistance } from '../ir/geometry.js';
 import type { VerifyResult } from './index.js';
 
@@ -113,7 +114,7 @@ export function placementMetrics(input: { design: PcbDesign; verify: VerifyResul
   // capacity is how many tracks at width + clearance fit across the cell per copper layer
   const cell = 2_000_000;
   const rules = design.board.rules;
-  const copperLayers = design.board.layers.filter((l) => l.kind === 'copper').length || 2;
+  const copperLayers = copperStack(design).length || 2;
   const capacity = Math.max(1, Math.floor(cell / (rules.trackWidthNm + rules.clearanceNm))) * copperLayers;
   const outline = design.board.outline.outer;
   const bx = { minX: Math.min(...outline.map((p) => p.x)), minY: Math.min(...outline.map((p) => p.y)), maxX: Math.max(...outline.map((p) => p.x)), maxY: Math.max(...outline.map((p) => p.y)) };

@@ -12,6 +12,7 @@
  *    rotation relative to the footprint is `rot − footprint rot`
  */
 import { parseSexp, children, child, isList, type SexpNode } from '../../../kicad/sexp.js';
+import { copperStack, defaultProfileIdFor } from '../layers.js';
 import { uuidv5 } from '../../../kicad/emit.js';
 import { mmToNm, degToMdeg, normMdeg, type Nm, type Mdeg } from '../units.js';
 import {
@@ -177,7 +178,9 @@ interface LayerTable {
 }
 
 function layerTable(layers: LayerDefinition[]): LayerTable {
-  const copper = layers.filter((l) => l.kind === 'copper').sort((a, b) => a.ordinal - b.ordinal).map((l) => l.id);
+  // stack order from the names, not the numbers: KiCad's legacy and current numberings disagree (add-multilayer-layout D1)
+  const named = copperStack(layers);
+  const copper = [...named, ...layers.filter((l) => l.kind === 'copper' && !named.includes(l.id)).map((l) => l.id)];
   const front = layers.find((l) => l.kind === 'copper' && l.side === 'front')?.id ?? 'F.Cu';
   const back = layers.find((l) => l.kind === 'copper' && l.side === 'back')?.id ?? 'B.Cu';
   const byCanonical = new Map<string, string>();
@@ -698,7 +701,7 @@ export function importBoard(input: ImportInput): ImportResult {
       importedAt: input.now ?? new Date().toISOString(),
       contentHash: '',
     },
-    board: { outline, cutouts, layers, ...(thicknessNm !== undefined ? { thicknessNm } : {}), keepouts, fabricationProfile: input.fabricationProfile ?? 'jlcpcb-2layer', rules },
+    board: { outline, cutouts, layers, ...(thicknessNm !== undefined ? { thicknessNm } : {}), keepouts, fabricationProfile: input.fabricationProfile ?? defaultProfileIdFor(copperStack(layers).length), rules },
     components,
     nets,
     constraints: [],

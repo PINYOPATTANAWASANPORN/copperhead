@@ -12,6 +12,7 @@
  * when the job preserves it.
  */
 import type { PcbDesign, PadDefinition, ComponentInstance } from '../../../ir/types.js';
+import { copperStack } from '../../../ir/layers.js';
 import { rotate, rotatePoint, translate, offset, bbox, area, type Polygon, type Point } from '../../../ir/geometry.js';
 import { mdegToDeg, normMdeg } from '../../../ir/units.js';
 
@@ -77,7 +78,7 @@ function topViewLayers(pad: PadDefinition, c: ComponentInstance, copper: string[
 }
 
 export function emitDsn(design: PcbDesign, opts: DsnOptions): string {
-  const copper = design.board.layers.filter((l) => l.kind === 'copper').map((l) => l.id);
+  const copper = copperStack(design);
   const rules = design.board.rules;
   const nets = new Map(design.nets.map((n) => [n.id, n]));
   const out: string[] = [];

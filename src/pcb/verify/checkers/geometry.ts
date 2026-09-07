@@ -3,6 +3,7 @@
  * DRC does not report on its own, computed from the IR alone.
  */
 import type { PcbDesign } from '../../ir/types.js';
+import { copperStack, isThroughVia } from '../../ir/layers.js';
 import { contains, intersects, intersection, area, bbox, bboxOf, bboxOverlap, rectFromBounds } from '../../ir/geometry.js';
 import type { Polygon } from '../../ir/geometry.js';
 import type { FabricationProfile } from '../profiles/index.js';
@@ -33,7 +34,8 @@ function fullyInside(poly: Polygon, outline: Polygon): boolean {
 export function checkGeometry(design: PcbDesign, profile: FabricationProfile): CheckResult {
   const d: Diagnostic[] = [];
   const outline = design.board.outline;
-  const copperLayers = new Set(design.board.layers.filter((l) => l.kind === 'copper').map((l) => l.id));
+  const stack = copperStack(design);
+  const copperLayers = new Set(stack);
   const netName = new Map(design.nets.map((n) => [n.id, n.name]));
 
   // footprints: outside the outline, inside a cutout, courtyard overlap
@@ -89,6 +91,9 @@ export function checkGeometry(design: PcbDesign, profile: FabricationProfile): C
     const net = netName.get(v.netId) ?? '?';
     if (v.layers[0] === v.layers[1] || !copperLayers.has(v.layers[0]) || !copperLayers.has(v.layers[1])) {
       d.push(make(GEOMETRY_CHECKER, 'geom.via-layers', { entityIds: [v.id], entityReferences: [net], message: `via on net ${net} does not span two copper layers of this board`, suggestedActions: ['rip-up-nets'] }));
+    } else if (!isThroughVia(v, stack)) {
+      // blind and buried vias wait on a profile and an engine that declare them (add-multilayer-layout D2)
+      d.push(make(GEOMETRY_CHECKER, 'geom.via-layers', { entityIds: [v.id], entityReferences: [net], message: `via on net ${net} spans ${v.layers[0]} to ${v.layers[1]}; only through vias (${stack[0]} to ${stack[stack.length - 1]}) are supported`, suggestedActions: ['rip-up-nets'] }));
     }
     if (v.size <= 0 || v.drill <= 0) d.push(make(GEOMETRY_CHECKER, 'geom.degenerate', { entityIds: [v.id], entityReferences: [net], message: `via on net ${net} has no size or drill`, suggestedActions: ['rip-up-nets'] }));
     if (!contains(outline, v.at)) d.push(make(GEOMETRY_CHECKER, 'geom.outside-board', { entityIds: [v.id], entityReferences: [net], message: `via on net ${net} lies outside the board outline`, suggestedActions: ['rip-up-nets'] }));

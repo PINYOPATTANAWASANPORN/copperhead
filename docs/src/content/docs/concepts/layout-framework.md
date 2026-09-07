@@ -20,11 +20,11 @@ copperhead does not place or route boards itself. It wraps engines that do, behi
 
 Published with the release, per RFC 11 §10.7. Anything outside it ends in `HOLD` or `REFUSE` with the reason.
 
-- Two copper layers, a single closed outline, fewer than 50 components.
+- Two, four, or six copper layers with through vias only (a blind or buried via fails the routing gate), a single closed outline, fewer than 50 components. The copper stack is read from the layer names, so KiCad's older numbering (`In1.Cu` 1, `B.Cu` 31) and its current one (`B.Cu` 2, `In1.Cu` 4) are the same board.
 - Low-speed digital and DC power only: no RF, no differential pairs, no length matching, no controlled impedance.
 - 48 V or less. Power nets need explicit geometry or a complete, approved fabrication and thermal rule set; a current figure alone gives an advisory width, not a hard one.
 - No copper pour generation: pours in the input are preserved, refilled, and verified.
-- One fabrication profile, `jlcpcb-2layer`; the stackup class exists so four layers can be added without changing the shape of anything.
+- Three fabrication profiles, `jlcpcb-2layer`, `jlcpcb-4layer`, and `jlcpcb-6layer`, chosen by the board's copper count unless the configuration names one; a configured profile for another layer count is a pre-flight refusal. On four and six layers the inner layers get alternating preferred directions by default (the intent file's `routing.layers` overrides them), and scoring drops the two-layer return-path terms because the plane layers carry the return path.
 
 ## Engines and how to set them up
 

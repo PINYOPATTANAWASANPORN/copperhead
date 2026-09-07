@@ -12,6 +12,7 @@
  * layer changes.
  */
 import type { EngineManifest, RoutingJob, RoutingResult, RouterPlugin, RunContext } from '../../contracts.js';
+import { copperStack } from '../../../ir/layers.js';
 import { ENGINE_SCHEMA_VERSION } from '../../contracts.js';
 import type { PcbDesign, TrackSegment, Via, PadDefinition } from '../../../ir/types.js';
 import { bbox, capsule, contains, type Point } from '../../../ir/geometry.js';
@@ -178,7 +179,7 @@ export class ReferenceRouter implements RouterPlugin {
   async route(job: RoutingJob, ctx: RunContext): Promise<RoutingResult> {
     const t0 = Date.now();
     const design = job.snapshot.design;
-    const layers = design.board.layers.filter((l) => l.kind === 'copper').map((l) => l.id).slice(0, 2);
+    const layers = copperStack(design).slice(0, 2);
     const rules = design.board.rules;
     const width = rules.trackWidthNm;
     const clearance = rules.clearanceNm + width / 2;

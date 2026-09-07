@@ -4,6 +4,7 @@
  * before any engine starts.
  */
 import type { PcbDesign } from '../../ir/types.js';
+import { copperStack, stackProblems } from '../../ir/layers.js';
 import type { CheckReport } from '../../../kicad/report.js';
 import type { FabricationProfile } from '../profiles/index.js';
 import { make, statusOf, type CheckResult, type Diagnostic } from '../diagnostic.js';
@@ -25,6 +26,10 @@ const ANNULAR_TOLERANCE_NM = 1000;
 
 export function checkPreflight(design: PcbDesign, profile: FabricationProfile, inputs: PreflightInputs = {}): CheckResult {
   const d: Diagnostic[] = [];
+  // the copper must be a stack this release can name and route (add-multilayer-layout D1, D3)
+  for (const why of stackProblems(design)) d.push(make(PREFLIGHT_CHECKER, 'preflight.stack', { entityIds: [], entityReferences: design.board.layers.filter((l) => l.kind === 'copper').map((l) => l.id), message: why, suggestedActions: ['request-user-action'] }));
+  const stackSize = copperStack(design).length;
+  if (stackSize >= 2 && profile.layers !== stackSize) d.push(make(PREFLIGHT_CHECKER, 'preflight.profile', { entityIds: [], entityReferences: [profile.id], measured: { value: stackSize, unit: 'count' }, allowed: { value: profile.layers, unit: 'count', relation: '==' }, message: `fabrication profile ${profile.id} is for ${profile.layers} copper layers; the board has ${stackSize}`, suggestedActions: ['request-user-action'] }));
   for (const c of design.components) {
     // logos, plain holes, and fiducials carry no copper: nothing to overlap, so no courtyard is owed
     if (!c.footprint.courtyard && c.pads.some((p) => p.type !== 'np_thru_hole' && p.layers.length)) {

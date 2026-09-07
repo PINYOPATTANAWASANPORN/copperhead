@@ -4,6 +4,7 @@
  * the runtime ships, and a test holds the two equal.
  */
 import type { Nm } from '../../ir/units.js';
+import { defaultProfileIdFor } from '../../ir/layers.js';
 
 export interface FabricationProfile {
   id: string;
@@ -80,7 +81,44 @@ export const JLCPCB_2LAYER: FabricationProfile = {
   rotationsFile: 'jlcpcb-rotations.yaml',
 };
 
-const PROFILES: Record<string, FabricationProfile> = { [JLCPCB_2LAYER.id]: JLCPCB_2LAYER };
+/** JLCPCB four-layer, 1 oz outer / 0.5 oz inner copper: the `4layer_1oz` block of the same vendored table (add-multilayer-layout, design D3). */
+export const JLCPCB_4LAYER: FabricationProfile = {
+  ...JLCPCB_2LAYER,
+  id: 'jlcpcb-4layer',
+  description:
+    'JLCPCB 4-layer, 1 oz outer and 0.5 oz inner copper. Values vendored from kicad-tools manufacturers/data/jlcpcb.yaml block 4layer_1oz (source: https://jlcpcb.com/capabilities/pcb-capabilities, last verified upstream 2026-01-16).',
+  layers: 4,
+  minTrackNm: 101600,
+  minClearanceNm: 101600,
+  minViaDrillNm: 200000,
+  minViaDiameterNm: 450000,
+  minAnnularNm: 100000,
+  minHoleNm: 200000,
+  holeEdgeClearanceNm: 400000,
+  druFile: 'jlcpcb-4layer-1oz.kicad_dru',
+};
+
+/** JLCPCB six-layer, 1 oz outer / 0.5 oz inner copper: the `6layer_1oz` block of the same vendored table. */
+export const JLCPCB_6LAYER: FabricationProfile = {
+  ...JLCPCB_4LAYER,
+  id: 'jlcpcb-6layer',
+  description:
+    'JLCPCB 6-layer, 1 oz outer and 0.5 oz inner copper. Values vendored from kicad-tools manufacturers/data/jlcpcb.yaml block 6layer_1oz (source: https://jlcpcb.com/capabilities/pcb-capabilities, last verified upstream 2026-01-16).',
+  layers: 6,
+  minTrackNm: 88900,
+  minClearanceNm: 88900,
+  minAnnularNm: 150000,
+  druFile: 'jlcpcb-6layer-1oz.kicad_dru',
+};
+
+const PROFILES: Record<string, FabricationProfile> = { [JLCPCB_2LAYER.id]: JLCPCB_2LAYER, [JLCPCB_4LAYER.id]: JLCPCB_4LAYER, [JLCPCB_6LAYER.id]: JLCPCB_6LAYER };
+
+/** The default profile for a copper count: the IR's naming convention, which must name a registered profile. */
+export function defaultProfileFor(copperLayers: number): string {
+  const id = defaultProfileIdFor(copperLayers);
+  if (!PROFILES[id]) throw new Error(`no fabrication profile registered for ${copperLayers} copper layers ("${id}")`);
+  return id;
+}
 
 export function loadProfile(id: string): FabricationProfile {
   const p = PROFILES[id];

@@ -82,6 +82,8 @@ export const CODES: Record<string, CodeInfo> = {
   'preflight.parity': { category: 'preflight', severity: 'error', gate: 'preflight', summary: 'board and schematic disagree' },
   'preflight.pad-count': { category: 'preflight', severity: 'error', gate: 'preflight', summary: 'footprint pad count differs from the symbol pin count' },
   'preflight.unconnected-pin': { category: 'preflight', severity: 'error', gate: 'preflight', summary: 'a pin with no net and no no-connect flag' },
+  'preflight.stack': { category: 'preflight', severity: 'error', gate: 'preflight', summary: 'the copper layers are not a stack this release supports (F.Cu, In1..InN.Cu, B.Cu; up to six)' },
+  'preflight.profile': { category: 'preflight', severity: 'error', gate: 'preflight', summary: 'the configured fabrication profile is for a different layer count than the board' },
   'intent.mechanical.fixed': { category: 'intent', severity: 'error', gate: 'placement', summary: 'a part is not at its fixed position' },
   'intent.mechanical.edge': { category: 'intent', severity: 'error', gate: 'placement', summary: 'a part constrained to a board edge is not on it' },
   'intent.mechanical.orientation': { category: 'intent', severity: 'info', gate: 'none', summary: 'orientation is declared but not evaluated in this release' },

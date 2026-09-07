@@ -6,6 +6,7 @@
  * board. CPU-only by default; `strategy.gpu: true` asks for CUDA. ADR 0010.
  */
 import { execa } from 'execa';
+import { copperStack } from '../../../ir/layers.js';
 import { existsSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -84,7 +85,7 @@ export class OrthorouteRouter implements RouterPlugin {
     if (res.failed && /ENOENT/.test(String((res as { code?: string }).code ?? ''))) throw new EngineError('no-runtime', `python not found at "${python}"`, 'create bench/var/tools/or-venv with numpy and scipy, or set COPPERHEAD_ORTHOROUTE_PYTHON');
     if (res.exitCode !== 0 && !existsSync(orsPath)) throw new EngineError('process-failed', `OrthoRoute exited ${res.exitCode}: ${`${res.stderr ?? ''}`.trim().split('\n').slice(-3).join(' | ').slice(0, 300)}`, 'see orthoroute.log in the run directory');
     if (!existsSync(orsPath)) throw new EngineError('no-output', 'OrthoRoute exited clean but wrote no solution file', 'see orthoroute.log in the run directory');
-    const copperLayers = design.board.layers.filter((l) => l.kind === 'copper').map((l) => l.id);
+    const copperLayers = copperStack(design);
     const parsed = parseOrs(await readFile(orsPath), { copperLayers, netIdByName: new Map(design.nets.map((n) => [n.name, n.id])), rules: design.board.rules, namespace: `${design.designId}/${job.runId}` });
     const routable = design.nets.filter((n) => n.padIds.length >= 2 && (!job.scope.netIds || job.scope.netIds.includes(n.id)));
     // the engine emits pad-escape stubs on nets it never finished, so a net counts only when its copper reaches two of its pads
@@ -99,7 +100,7 @@ export class OrthorouteRouter implements RouterPlugin {
       vias: parsed.vias,
       unroutedNetIds: unrouted,
       diagnostics: nothing
-        ? [{ code: 'quality.engine_no_copper', category: 'quality', severity: 'info', entityIds: [], entityReferences: [], message: `OrthoRoute routed none of ${routable.length} net(s) in ${parsed.iterations ?? '?'} iteration(s): it routes on inner layers only, and this board has ${copperLayers.length}`, suggestedActions: [], sourceChecker: { id: ORTHOROUTE_MANIFEST.id, version: '1' } }]
+        ? [{ code: 'quality.engine_no_copper', category: 'quality', severity: 'info', entityIds: [], entityReferences: [], message: copperLayers.length < 4 ? `OrthoRoute routed none of ${routable.length} net(s) in ${parsed.iterations ?? '?'} iteration(s): it routes on inner layers only, and this board has ${copperLayers.length}` : `OrthoRoute routed none of ${routable.length} net(s) in ${parsed.iterations ?? '?'} iteration(s) on ${copperLayers.length} layers; see orthoroute.log`, suggestedActions: [], sourceChecker: { id: ORTHOROUTE_MANIFEST.id, version: '1' } }]
         : [],
       runtime: { wallSeconds: wall, engineSeconds: wall },
       provenance: { engineId: ORTHOROUTE_MANIFEST.id, engineVersion: ORTHOROUTE_MANIFEST.version, adapterVersion: '1', invocation: { binary: python, args, envKeys: ['PATH', 'HOME', 'PYTHONUNBUFFERED'] }, seed: job.seed, exitCode: res.exitCode ?? -1, startedAt: new Date(t0).toISOString(), finishedAt: new Date().toISOString() },

@@ -41,6 +41,11 @@ describe('suites', () => {
     const qual = await loadSuite(path.join(ROOT, 'bench/suites/pcbench-qual.json'));
     expect(qual.corpus).toBe('pcbench');
     expect(qual.boards!.length).toBe(20);
+    // add-multilayer-layout: the multilayer golden cases live in their own suite so the two-layer numbers never mix
+    const multi = await loadSuite(path.join(ROOT, 'bench/suites/multilayer-microboards.json'));
+    expect(multi.cases).toEqual(['four-layer', 'six-layer', 'via-span']);
+    for (const c of multi.cases!) expect(existsSync(path.join(ROOT, 'bench/golden', c, 'expected.json')), c).toBe(true);
+    expect(multi.routers).toContain('router-orthoroute');
   });
 });
 

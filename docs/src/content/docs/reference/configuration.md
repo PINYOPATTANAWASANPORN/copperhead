@@ -48,8 +48,8 @@ Every key is optional.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `profile` | `jlcpcb-2layer` | Fabrication profile: rules, critical DRC list, allowed rotations. |
-| `scoring` | `default-low-speed-2-layer` | Scoring profile used to rank candidates. |
+| `profile` | by copper count | Fabrication profile: rules, critical DRC list, allowed rotations. `jlcpcb-2layer`, `jlcpcb-4layer`, or `jlcpcb-6layer`; the default follows the board's copper count, and a profile for another count is refused at pre-flight. |
+| `scoring` | by copper count | Scoring profile used to rank routing candidates: `default-low-speed-2-layer`, `-4-layer`, or `-6-layer` (the multilayer ones carry no bottom-layer return-path terms). |
 | `routers` | every built-in router | Engine ids in preference order. |
 | `mode` | `single` | `single`, `race`, `ensemble`, or `staged`. |
 | `budgetSeconds` | `600` | Engine-second and wall-clock budget per `route`. |

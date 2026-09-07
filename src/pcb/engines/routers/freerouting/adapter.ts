@@ -5,6 +5,7 @@
  * never masquerades as a routed board.
  */
 import { execa } from 'execa';
+import { copperStack } from '../../../ir/layers.js';
 import { existsSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -138,7 +139,7 @@ export class FreeroutingRouter implements RouterPlugin {
     if (res.exitCode !== 0 && !existsSync(sesPath)) throw new EngineError('process-failed', `Freerouting exited ${res.exitCode}: ${combined.trim().split('\n').slice(-3).join(' | ').slice(0, 300)}`, 'see freerouting.log in the run directory');
     if (!existsSync(sesPath)) throw new EngineError('no-output', 'Freerouting exited clean but wrote no session file', 'see freerouting.log in the run directory');
     const ses = await readFile(sesPath, 'utf8');
-    const copperLayers = design.board.layers.filter((l) => l.kind === 'copper').map((l) => l.id);
+    const copperLayers = copperStack(design);
     const parsed = parseSes(ses, { copperLayers, netIdByName: new Map(design.nets.map((n) => [n.name, n.id])), rules: design.board.rules, namespace: `${design.designId}/${job.runId}`, minWidthNm: typeof job.strategy.trackWidthNm === 'number' ? job.strategy.trackWidthNm : design.board.rules.trackWidthNm });
     const routable = design.nets.filter((n) => n.padIds.length >= 2 && (!job.scope.netIds || job.scope.netIds.includes(n.id)));
     if (!parsed.segments.length && routable.length) throw new EngineError('empty-result', 'the session carries no wires for a board with nets to route', 'see freerouting.log; the DSN may have been rejected');

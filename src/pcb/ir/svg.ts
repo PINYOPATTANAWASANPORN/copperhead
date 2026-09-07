@@ -5,6 +5,7 @@
  * render cannot show a diagnostic.
  */
 import type { PcbDesign } from './types.js';
+import { copperStack } from './layers.js';
 import type { Polygon } from './geometry.js';
 import { bbox, bboxOf } from './geometry.js';
 /** The slice of a verify diagnostic the renderer needs; kept structural so ir never depends on verify. */
@@ -25,7 +26,7 @@ export interface SvgOptions {
   legend?: boolean;
 }
 
-const COLORS: Record<string, string> = { 'F.Cu': '#c83434', 'B.Cu': '#3455c8' };
+const COLORS: Record<string, string> = { 'F.Cu': '#c83434', 'B.Cu': '#3455c8', 'In1.Cu': '#3c9a5a', 'In2.Cu': '#8a4bc4', 'In3.Cu': '#2a9d9d', 'In4.Cu': '#9a6a2a' };
 const mm = (nm: number) => (nm / 1e6).toFixed(4);
 
 function pathOf(poly: Polygon): string {
@@ -54,15 +55,22 @@ export function renderSvg(design: PcbDesign, opts: SvgOptions = {}): string {
   out.push(`<path d="${pathOf(design.board.outline)}" fill="#1f5c2e" stroke="#c9a400" stroke-width="0.15"/>`);
   for (const c of design.board.cutouts) out.push(`<path d="${pathOf(c)}" fill="#f6f4ee" stroke="#c9a400" stroke-width="0.15"/>`);
   for (const k of design.board.keepouts) out.push(`<path d="${pathOf(k.polygon)}" fill="none" stroke="#ff66cc" stroke-width="0.12" stroke-dasharray="0.4 0.2"/>`);
-  // back copper first, front on top
-  for (const layer of ['B.Cu', 'F.Cu']) {
+  // the stack back to front: B.Cu, the inner layers from the deepest up, F.Cu on top; inner copper a little lighter
+  const stack = copperStack(design);
+  const order = [...stack].reverse();
+  const drawn = new Set<string>();
+  for (const layer of order) {
     const color = COLORS[layer] ?? '#888';
+    const inner = layer !== stack[0] && layer !== stack[stack.length - 1];
     for (const s of design.routing.segments.filter((s) => s.layer === layer)) {
-      out.push(`<line x1="${mm(s.a.x)}" y1="${mm(s.a.y)}" x2="${mm(s.b.x)}" y2="${mm(s.b.y)}" stroke="${color}" stroke-width="${mm(s.width)}" stroke-linecap="round" opacity="0.9"/>`);
+      out.push(`<line x1="${mm(s.a.x)}" y1="${mm(s.a.y)}" x2="${mm(s.b.x)}" y2="${mm(s.b.y)}" stroke="${color}" stroke-width="${mm(s.width)}" stroke-linecap="round" opacity="${inner ? '0.75' : '0.9'}"/>`);
     }
     for (const c of design.components) {
       for (const p of c.pads) {
-        if (!p.layers.includes(layer)) continue;
+        if (!p.layers.includes(layer) || drawn.has(p.id)) continue;
+        // a through-hole pad sits on every layer; draw it once, with the outer colour
+        if (p.layers.length > 1 && layer !== stack[stack.length - 1]) continue;
+        drawn.add(p.id);
         out.push(`<path d="${pathOf(p.copper)}" fill="${p.layers.length > 1 ? '#d9b13b' : color}" stroke="none" opacity="0.95"/>`);
         if (p.drill) out.push(`<circle cx="${mm(p.at.x)}" cy="${mm(p.at.y)}" r="${mm(p.drill.d / 2)}" fill="#f6f4ee"/>`);
       }

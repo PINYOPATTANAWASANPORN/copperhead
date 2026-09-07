@@ -5,6 +5,7 @@
  * authority (ADR 0002: KiCad's ratsnest is cross-checked, not trusted alone).
  */
 import type { PcbDesign, ZoneFill } from '../../ir/types.js';
+import { copperStack, viaSpan } from '../../ir/layers.js';
 import { capsule, circle, intersects, bbox, bboxOverlap, type Polygon, type BBox } from '../../ir/geometry.js';
 import { arcPoints } from '../../ir/kicad/import.js';
 import { make, statusOf, type CheckResult, type Diagnostic } from '../diagnostic.js';
@@ -63,9 +64,11 @@ export function checkConnectivity(design: PcbDesign, fills: ZoneFill[] = []): Ch
       objs.push({ id: `${a.id}#${i}`, kind: 'arc', netId: a.netId || null, layers: [a.layer], poly, box: bbox(poly), ref: netName.get(a.netId) ?? '?' });
     }
   }
+  const stack = copperStack(design);
   for (const v of design.routing.vias) {
     const poly = circle(v.at.x, v.at.y, v.size);
-    objs.push({ id: v.id, kind: 'via', netId: v.netId || null, layers: [...new Set(v.layers)], poly, box: bbox(poly), ref: netName.get(v.netId) ?? '?' });
+    // a via joins every layer between its ends (a through via on four layers reaches In1.Cu and In2.Cu)
+    objs.push({ id: v.id, kind: 'via', netId: v.netId || null, layers: viaSpan(v, stack), poly, box: bbox(poly), ref: netName.get(v.netId) ?? '?' });
   }
   for (const f of fills) {
     const net = zoneNet.get(f.zoneId);
@@ -140,7 +143,17 @@ export function checkConnectivity(design: PcbDesign, fills: ZoneFill[] = []): Ch
       if (!groups.has(r)) groups.set(r, []);
       groups.get(r)!.push(i);
     }
-    const missing = groups.size - 1;
+    // copper of the net touching no pad is an island of its own, as KiCad counts it (a stub between two buried vias owes a connection at each end)
+    let copperIslands = 0;
+    const seen = new Set(groups.keys());
+    objs.forEach((o, i) => {
+      if (o.netId !== net.id || o.kind === 'pad' || o.kind === 'fill') return;
+      const r = uf.find(i);
+      if (seen.has(r)) return;
+      seen.add(r);
+      copperIslands++;
+    });
+    const missing = groups.size + copperIslands - 1;
     const hasCopper = objs.some((o) => o.kind !== 'pad' && o.netId === net.id);
     if (missing > 0) {
       unroutedTotal += missing;

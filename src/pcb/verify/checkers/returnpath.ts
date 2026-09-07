@@ -7,6 +7,7 @@
  * sensitive (Phase 4).
  */
 import type { PcbDesign, ZoneFill } from '../../ir/types.js';
+import { copperStack } from '../../ir/layers.js';
 import { area, contains, centroid, bbox, type Polygon } from '../../ir/geometry.js';
 import { make, statusOf, type CheckResult, type Diagnostic } from '../diagnostic.js';
 
@@ -15,9 +16,9 @@ export const RETURNPATH_CHECKER = { id: 'copperhead-returnpath', version: '1' };
 const GROUND = /^(GND|GNDA|GNDD|AGND|DGND|PGND|VSS|0V|GROUND)$/i;
 
 export function checkReturnPath(design: PcbDesign, fills: ZoneFill[], opts: { sensitiveNetIds?: Set<string> } = {}): CheckResult {
-  const copper = design.board.layers.filter((l) => l.kind === 'copper');
-  const bottom = copper.find((l) => l.side === 'back')?.id;
-  const top = copper.find((l) => l.side === 'front')?.id;
+  const copper = copperStack(design);
+  const top = copper[0];
+  const bottom = copper[copper.length - 1];
   const d: Diagnostic[] = [];
   const metrics: Record<string, number> = {};
   if (!bottom || !top || copper.length !== 2) return { checker: RETURNPATH_CHECKER, status: 'NOT_APPLICABLE', diagnostics: [], metrics: {}, evidence: [{ kind: 'note', note: 'return-path checks apply to two-layer boards' }] };
