@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="72.12 96.50 95.77 61.50" width="1532" height="984">
+<rect x="72.12" y="96.50" width="95.77" height="61.50" fill="#11151c"/>
+<rect x="100" y="100" width="40" height="50" fill="#171c25" stroke="#e8c15a" stroke-width="0.3"/>
+<rect x="100.00" y="100.00" width="14.1" height="30.6" fill="#1a4533" stroke="#57db8e" stroke-width="0.22" stroke-dasharray="1.6 1.2"/>
+<text x="100.80" y="102.20" text-anchor="start" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="1.6" font-weight="bold" fill="#57db8e">power-input</text>
+<rect x="100.00" y="130.60" width="14.1" height="5.1" fill="#1a2f4a" stroke="#5795db" stroke-width="0.22" stroke-dasharray="1.6 1.2"/>
+<text x="100.80" y="132.80" text-anchor="start" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="1.6" font-weight="bold" fill="#5795db">regulation</text>
+<rect x="114.10" y="100.00" width="25.9" height="50" fill="#341d4a" stroke="#ad57db" stroke-width="0.22" stroke-dasharray="1.6 1.2"/>
+<text x="114.90" y="102.20" text-anchor="start" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="1.6" font-weight="bold" fill="#ad57db">mcu</text>
+<rect x="109.40" y="135.70" width="4.7" height="14.3" fill="#421d2b" stroke="#db5776" stroke-width="0.22" stroke-dasharray="1.6 1.2"/>
+<text x="110.20" y="137.90" text-anchor="start" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="1.6" font-weight="bold" fill="#db5776">amplifier</text>
+<rect x="100.00" y="135.70" width="9.4" height="14.3" fill="#424022" stroke="#dbcc57" stroke-width="0.22" stroke-dasharray="1.6 1.2"/>
+<text x="100.80" y="137.90" text-anchor="start" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="1.6" font-weight="bold" fill="#dbcc57">speaker-output</text>
+<rect x="130.55" y="127.95" width="2.00" height="1.25" fill="#82354b" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="101.25" y="138.59" width="2.54" height="10.16" fill="#673587" stroke="#0d0f13" stroke-width="0.16"/>
+<text x="102.52" y="144.12" text-anchor="middle" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="0.79375" font-weight="bold" fill="#f2f5fa">J3</text>
+<rect x="108.13" y="135.79" width="1.00" height="0.50" fill="#827b38" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="113.05" y="112.28" width="2.00" height="1.25" fill="#673587" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="121.32" y="127.90" width="1.05" height="0.54" fill="#82354b" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="123.16" y="145.63" width="4.50" height="3.20" fill="#348459" stroke="#0d0f13" stroke-width="0.16"/>
+<text x="125.41" y="147.67" text-anchor="middle" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="1.40625" font-weight="bold" fill="#f2f5fa">F1</text>
+<rect x="123.25" y="129.60" width="1.05" height="0.54" fill="#82354b" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="104.41" y="144.45" width="2.00" height="0.90" fill="#827b38" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="114.24" y="110.53" width="1.00" height="0.50" fill="#673587" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="123.54" y="127.35" width="2.00" height="1.25" fill="#345a87" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="132.55" y="143.21" width="6.20" height="5.54" fill="#827b38" stroke="#0d0f13" stroke-width="0.16"/>
+<text x="135.65" y="146.43" text-anchor="middle" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="1.5" font-weight="bold" fill="#f2f5fa">J2</text>
+<rect x="125.43" y="137.88" width="2.80" height="1.80" fill="#348459" stroke="#0d0f13" stroke-width="0.16"/>
+<text x="126.83" y="139.22" text-anchor="middle" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="0.8749999999999999" font-weight="bold" fill="#f2f5fa">D1</text>
+<rect x="110.90" y="123.35" width="4.20" height="2.80" fill="#673587" stroke="#0d0f13" stroke-width="0.16"/>
+<text x="113.00" y="125.20" text-anchor="middle" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="1.3125" font-weight="bold" fill="#f2f5fa">SW1</text>
+<rect x="129.46" y="141.40" width="8.94" height="7.35" fill="#348459" stroke="#0d0f13" stroke-width="0.16"/>
+<text x="133.93" y="145.52" text-anchor="middle" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="1.5" font-weight="bold" fill="#f2f5fa">J1</text>
+<rect x="114.19" y="108.45" width="1.05" height="0.54" fill="#673587" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="135.16" y="139.09" width="1.05" height="0.54" fill="#348459" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="114.24" y="109.26" width="1.00" height="0.50" fill="#673587" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="116.80" y="132.54" width="6.60" height="6.60" fill="#348459" stroke="#0d0f13" stroke-width="0.16"/>
+<text x="120.10" y="136.29" text-anchor="middle" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="1.5" font-weight="bold" fill="#f2f5fa">CP1</text>
+<rect x="118.06" y="127.33" width="1.60" height="0.80" fill="#345a87" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="119.20" y="123.55" width="1.60" height="2.90" fill="#345a87" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="101.50" y="135.88" width="2.00" height="0.90" fill="#827b38" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="130.50" y="129.60" width="1.05" height="0.54" fill="#82354b" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="110.90" y="114.88" width="4.20" height="2.80" fill="#673587" stroke="#0d0f13" stroke-width="0.16"/>
+<text x="113.00" y="116.73" text-anchor="middle" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="1.3125" font-weight="bold" fill="#f2f5fa">SW2</text>
+<rect x="125.90" y="123.50" width="3.00" height="3.00" fill="#82354b" stroke="#0d0f13" stroke-width="0.16"/>
+<text x="127.40" y="125.45" text-anchor="middle" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="0.9375" font-weight="bold" fill="#f2f5fa">U3</text>
+<rect x="127.15" y="127.66" width="1.00" height="0.50" fill="#82354b" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="112.06" y="130.67" width="1.60" height="0.82" fill="#345a87" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="117.00" y="100.75" width="18.00" height="25.50" fill="#673587" stroke="#0d0f13" stroke-width="0.16"/>
+<text x="126.00" y="113.95" text-anchor="middle" font-family="'Latin Modern Mono', 'CMU Typewriter Text', 'DejaVu Sans Mono', monospace" font-size="1.5" font-weight="bold" fill="#f2f5fa">U1</text>
+<rect x="112.06" y="130.69" width="1.60" height="0.80" fill="#345a87" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="101.18" y="135.79" width="1.00" height="0.50" fill="#827b38" stroke="#0d0f13" stroke-width="0.16"/>
+<rect x="132.16" y="139.09" width="1.05" height="0.54" fill="#348459" stroke="#0d0f13" stroke-width="0.16"/>
+<line x1="75.62" y1="152.10" x2="164.38" y2="152.10" stroke="#313b4a" stroke-width="0.14"/>
+<text x="120.00" y="155.00" text-anchor="middle" font-family="'Latin Modern Roman', 'CMU Serif', Georgia, serif" font-size="2.3" font-weight="bold" fill="#f2f5fa">Figure 6. (e)  23% in block  ·  5 overlaps  ·  8/18 attachments missed  ·  pyplacer</text>
+</svg>

@@ -78,7 +78,46 @@ export function rank(inputs: ScoredInput[], profile: ScoringProfile): Ranking {
     const pareto = x.eligible && !eligible.some((o) => o.c.id !== x.c.id && dominates(vectors.get(o.c.id)!, vectors.get(x.c.id)!));
     return { ...x.c, eligible: x.eligible, profileGateFailures: x.profileGateFailures, pareto, score: x.eligible ? score(x.c.id) : null, rank: 0, reason: '' };
   });
-  // lexicographic: eligible, completion desc, hard intent asc, soft intent asc, score asc
+  /**
+   * A tier's value for one candidate: its metrics normalised across the
+   * eligible set and summed, with `higherIsBetter` metrics already negated by
+   * the vector above. A metric no candidate carries contributes nothing.
+   */
+  const tierValue = (id: string, tier: string[]): number | null => {
+    let sum = 0;
+    let counted = 0;
+    for (const k of tier) {
+      const i = keys.indexOf(k);
+      let value: number;
+      if (i >= 0) {
+        const range = maxs[i]! - mins[i]!;
+        value = range > 0 ? (vectors.get(id)![i]! - mins[i]!) / range : 0;
+      } else {
+        // a tier may name a metric the profile does not weight; normalise it here
+        const raw = eligible.map((x) => (profile.higherIsBetter.includes(k) ? -(x.c.metrics[k] ?? 0) : (x.c.metrics[k] ?? 0)));
+        const lo = Math.min(...raw), hi = Math.max(...raw);
+        const own = withFlags.find((x) => x.c.id === id)?.c.metrics[k];
+        if (own === undefined) continue;
+        const v = profile.higherIsBetter.includes(k) ? -own : own;
+        value = hi > lo ? (v - lo) / (hi - lo) : 0;
+      }
+      sum += value;
+      counted++;
+    }
+    return counted ? sum : null;
+  };
+  const tolerance = profile.tierTolerance ?? 0.02;
+  const byTier = (a: RankedCandidate, b: RankedCandidate): number => {
+    for (const tier of profile.tiers ?? []) {
+      const va = tierValue(a.id, tier);
+      const vb = tierValue(b.id, tier);
+      if (va === null || vb === null) continue;
+      if (Math.abs(va - vb) > tolerance) return va - vb;
+    }
+    return 0;
+  };
+
+  // lexicographic: eligible, completion desc, hard intent asc, soft intent asc, tiers, score asc
   ranked.sort((a, b) => {
     if (a.eligible !== b.eligible) return a.eligible ? -1 : 1;
     const ca = a.metrics.completion_rate ?? 0;
@@ -90,6 +129,10 @@ export function rank(inputs: ScoredInput[], profile: ScoringProfile): Ranking {
     const sa = a.softIntentViolations ?? 0;
     const sb = b.softIntentViolations ?? 0;
     if (sa !== sb) return sa - sb;
+    if (a.eligible && b.eligible && profile.tiers?.length) {
+      const t = byTier(a, b);
+      if (t !== 0) return t;
+    }
     return (a.score ?? Infinity) - (b.score ?? Infinity);
   });
   ranked.forEach((c, i) => {

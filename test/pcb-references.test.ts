@@ -18,7 +18,7 @@ import { importBoard } from '../src/pcb/ir/kicad/import.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
-const GOLDEN = path.join(ROOT, 'bench', 'golden');
+const GOLDEN = path.join(ROOT, 'test', 'fixtures', 'microboards');
 const SUBSYSTEMS = '# Subsystems\n\n## MCU\n\n## Power\n';
 const INTENT = { version: 1, parts: [{ ref: 'U1', libId: 'x', value: 'x', group: 'MCU' }, { ref: 'C1', libId: 'x', value: 'x', group: 'MCU' }, { ref: 'R1', libId: 'x', value: 'x', group: 'MCU' }, { ref: 'Y1', libId: 'x', value: 'x', group: 'MCU' }, { ref: 'R2', libId: 'x', value: 'x', group: 'Power' }], nets: [] };
 

@@ -25,7 +25,7 @@ import { mmToNm } from '../src/pcb/ir/units.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
-const GOLDEN = path.join(ROOT, 'bench', 'golden');
+const GOLDEN = path.join(ROOT, 'test', 'fixtures', 'microboards');
 const mm = mmToNm;
 
 async function haveKicad(): Promise<boolean> {
@@ -98,7 +98,7 @@ describe('routeBoard', () => {
       expect(res.ranking.selected).toBe('router-reference');
       expect(res.candidates[0]!.verify.gates.routing.passed).toBe(true);
       expect(res.candidates[0]!.drc!.violations).toEqual([]);
-      for (const f of ['snapshot.json', 'ranking.json', 'outcome.json', 'events.jsonl']) expect(existsSync(path.join(res.runDir, f)), f).toBe(true);
+      for (const f of ['snapshot.json', 'ranking.json', 'outcome.json', 'events.jsonl', 'board.svg']) expect(existsSync(path.join(res.runDir, f)), f).toBe(true);
       const cand = (await readdir(path.join(res.runDir, 'candidates')))[0]!;
       for (const f of ['job.json', 'result.json', 'provenance.json', 'candidate.kicad_pcb', 'candidate.json', 'diagnostics.json', 'metrics.json']) expect(existsSync(path.join(res.runDir, 'candidates', cand, f)), f).toBe(true);
       const metrics = JSON.parse(await readFile(path.join(res.runDir, 'candidates', cand, 'metrics.json'), 'utf8'));
@@ -109,6 +109,22 @@ describe('routeBoard', () => {
     }
   }, 300_000);
 
+  it('a refused board is drawn with the gate failure marked', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-routeboard-'));
+    try {
+      const res = await routeBoard({ repoRoot: ROOT, boardPath: path.join(GOLDEN, 'overlap', 'board.kicad_pcb'), runDir: path.join(dir, 'run'), routers: ['router-reference'], policy: { network: 'none', allowHarnessEngines: true, denyLicenses: [] }, noKicad: true });
+      expect(res.outcome.status).toBe('REFUSE');
+      expect(res.candidates).toEqual([]);
+      const svg = await readFile(path.join(res.runDir, 'board.svg'), 'utf8');
+      expect(svg).toContain('<svg');
+      // findings are drawn as markers (legend off): the overlapping part gets a red box and a numbered badge
+      expect(svg).toContain('stroke="#ff2d2d"');
+      expect(svg).toContain('fill="#ff2d2d"');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('refuses the harness engine by default and says so', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-routeboard-'));
     try {
@@ -116,6 +132,8 @@ describe('routeBoard', () => {
       const res = await routeBoard({ repoRoot: ROOT, boardPath: path.join(GOLDEN, 'completion', 'board.kicad_pcb'), runDir: path.join(dir, 'run'), routers: ['router-reference'], registry: reg, noKicad: true });
       expect(res.outcome.status).toBe('UNSUPPORTED');
       expect(res.ineligible[0]!.reasons[0]).toMatch(/harness-only/);
+      // a run that never routed still draws the board it was given
+      expect(existsSync(path.join(res.runDir, 'board.svg'))).toBe(true);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

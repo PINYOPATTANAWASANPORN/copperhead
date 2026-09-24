@@ -29,6 +29,7 @@ import type { RoutingResult, RoutingStrategy } from './contracts.js';
 import { ReferenceRouter, REFERENCE_ROUTER_MANIFEST } from './routers/reference/adapter.js';
 import { FreeroutingRouter, FREEROUTING_MANIFEST } from './routers/freerouting/adapter.js';
 import { KicadToolsRouter, KICAD_TOOLS_MANIFEST } from './routers/kicad-tools/adapter.js';
+import { writeBoardRender } from './render.js';
 import { OrthorouteRouter, ORTHOROUTE_MANIFEST } from './routers/orthoroute/adapter.js';
 
 export interface RouteOptions {
@@ -112,6 +113,7 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
     const ranking: Ranking = rank([], scoring);
     await writeFile(path.join(run.root, 'ranking.json'), JSON.stringify(ranking, null, 2), 'utf8');
     await writeFile(path.join(run.root, 'outcome.json'), JSON.stringify({ ...outcome, diagnostics: outcome.diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message, entityReferences: d.entityReferences })) }, null, 2), 'utf8');
+    await writeBoardRender(run.root, design, pre.diagnostics, log);
     return { outcome, runDir: run.root, ranking, invocations: [], candidates: [], ineligible: unknown };
   }
   const budget = new Budget(snapshot.limits.engineSeconds, snapshot.limits.wallSeconds);
@@ -164,6 +166,9 @@ export async function routeBoard(opts: RouteOptions): Promise<RouteRun> {
   await writeFile(path.join(run.root, 'ranking.json'), JSON.stringify(ranking, null, 2), 'utf8');
   const outcome = outcomeOf(res.invocations, candidates, ranking, [...unknown, ...res.ineligible], judged);
   await writeFile(path.join(run.root, 'outcome.json'), JSON.stringify({ ...outcome, diagnostics: outcome.diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message, entityReferences: d.entityReferences })) }, null, 2), 'utf8');
+  // the run's render, whatever the outcome: the selected candidate, else the first candidate (it explains the failure), else the board as given
+  const drawn = (ranking.selected ? candidates.find((c) => c.engineId === ranking.selected) : undefined) ?? candidates[0];
+  await writeBoardRender(run.root, drawn ? drawn.design : design, drawn ? drawn.verify.diagnostics : outcome.diagnostics, log);
   return { outcome, runDir: run.root, ranking, invocations: res.invocations, candidates, ineligible: [...unknown, ...res.ineligible], ...(plan ? { plan } : {}) };
 }
 

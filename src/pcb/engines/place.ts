@@ -31,13 +31,18 @@ import { PyplacerPlacer, PYPLACER_MANIFEST } from './placers/pyplacer/adapter.js
 import { KicadToolsPlacer, KCT_PHYSICS_MANIFEST, KCT_EVOLUTIONARY_MANIFEST } from './placers/kicad-tools/adapter.js';
 import { AnchorsPlacer, ANCHORS_PLACER_MANIFEST } from './placers/anchors/adapter.js';
 import { AttachPlacer, ATTACH_PLACER_MANIFEST, type AttachedConstraint } from './placers/attach/adapter.js';
+import { ReuseCopyPlacer, REUSE_COPY_MANIFEST } from './placers/reuse-copy/adapter.js';
+import { ReusePackPlacer, REUSE_PACK_MANIFEST } from './placers/reuse-pack/adapter.js';
+import { HeuristicPlacer, HEURISTIC_PLACER_MANIFEST } from './placers/heuristic/adapter.js';
+import type { PlacementPlan as LayoutPlan } from './reuse/plan.js';
 import type { LayoutBlockSpec } from './placers/layout-reuse/adapter.js';
 import { applyCandidate } from '../ir/kicad/export.js';
+import { writeBoardRender } from './render.js';
 import { bbox, bboxOf, type Polygon } from '../ir/geometry.js';
 import type { PlacedComponent, ComponentInstance, PcbDesign } from '../ir/types.js';
-import type { Block } from '../intent/blocks.js';
+import { connectorEdgeConstraints, type Block } from '../intent/blocks.js';
 import { loadConstraints } from '../intent/load.js';
-import { placeMechanical, legalizeKeepouts, legalizeSeparation, legalizeEdge } from './legalize.js';
+import { placeMechanical, legalizeKeepouts, legalizeRegions, legalizeSeparation, legalizeEdge } from './legalize.js';
 import type { Constraint } from '../../memory/constraints.js';
 
 export interface PlaceOptions {
@@ -59,13 +64,21 @@ export interface PlaceOptions {
   registry?: EngineRegistry;
   noKicad?: boolean;
   /** Routability probe per candidate (spec §5.3); false to skip. */
-  probe?: { routerId?: string; budgetSeconds?: number; registry?: EngineRegistry } | false;
+  probe?: { routerId?: string; budgetSeconds?: number; registry?: EngineRegistry; maxCandidates?: number } | false;
   /**
    * Functional blocks: turns the run into the staged plan (RFC 11 §8.5): locked
    * parts stay, each block's anchor is placed at its region centroid first and
    * locked, then the wrapped placers place the remainder.
    */
   blocks?: Block[];
+  /**
+   * The placement plan the engines place from (`layout.plan`): subsystems,
+   * anchors, connector edges, critical relationships, phase order. A model may
+   * write one with `copperhead pcb plan`; reading it here keeps this command
+   * LLM-free and network-free, as its contract requires. Not to be confused
+   * with the intent file, which is the constraint registry (`intentPath`).
+   */
+  layoutPlan?: LayoutPlan;
   /** Stage 3 inputs: reference blocks to copy around their anchors, and single attachments (`relative.attached`). */
   reuse?: LayoutBlockSpec[];
   attached?: Omit<AttachedConstraint, 'kind'>[];
@@ -104,6 +117,11 @@ export function defaultPlacerRegistry(repoRoot: string): EngineRegistry {
   r.register(new KicadToolsPlacer('evolutionary', { repoRoot }), KCT_EVOLUTIONARY_MANIFEST);
   r.register(new FixedPlacer(), FIXED_PLACER_MANIFEST);
   r.register(new ReferencePlacer(), REFERENCE_PLACER_MANIFEST);
+  // the reuse placers only do anything with a reference board in the job (add-reuse-placer)
+  r.register(new ReuseCopyPlacer(), REUSE_COPY_MANIFEST);
+  r.register(new ReusePackPlacer(), REUSE_PACK_MANIFEST);
+  // the engineer's basic rules; it needs no reference board, only an intent (its own when none is given)
+  r.register(new HeuristicPlacer(), HEURISTIC_PLACER_MANIFEST);
   return r;
 }
 
@@ -135,6 +153,17 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
       constraints = loaded.registry;
       for (const h of loaded.holds) log(`intent: ${h}`);
       if (loaded.intentPath) log(`intent: ${path.relative(opts.repoRoot, loaded.intentPath)} (${Object.keys(constraints).filter((k) => k.startsWith('layout.')).length} constraint(s) with the board's own rules)`);
+    }
+  }
+  // A connector belongs on a board edge. The classifier already knows which
+  // parts are connectors, but nothing turned that into a position unless a
+  // hand-written intent file said `placement.fixed[].edge`, so an intent-less
+  // board got its receptacles packed mid-board. Derive the missing ones from
+  // the blocks' signal-flow regions; anything the registry already states wins.
+  if (opts.blocks?.length && opts.constraints !== null) {
+    for (const [k, c] of Object.entries(connectorEdgeConstraints(opts.blocks, design, constraints))) {
+      constraints[k] = c;
+      log(`intent: ${c.scope?.refs?.[0]} -> ${c.parameters?.edge} edge (derived from its block region)`);
     }
   }
   // stage-3 attachments from the registry (relative.attached, hard or soft), unless the caller supplied its own
@@ -212,26 +241,32 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
     const ranking = rank([], scoring);
     await writeFile(path.join(run.root, 'ranking.json'), JSON.stringify(ranking, null, 2), 'utf8');
     await writeFile(path.join(run.root, 'outcome.json'), JSON.stringify(slim(outcome), null, 2), 'utf8');
+    await writeBoardRender(run.root, design, pre.diagnostics, log);
     return { outcome, runDir: run.root, ranking, invocations: [], candidates: [], ineligible: unknown, movableIds, ...(plan ? { plan } : {}) };
   }
   const budget = new Budget(snapshot.limits.engineSeconds, snapshot.limits.wallSeconds);
   const res = await runPlacement({
     run, sourceText: text, design, ...(projectText ? { projectText } : {}), snapshotFileHash: run.fileHash, snapshot, budget, engines, mode: opts.mode ?? 'single', policy: opts.policy ?? DEFAULT_POLICY, ...(opts.maxParallel ? { maxParallel: opts.maxParallel } : {}),
-    job: { movableComponentIds: movableIds, constraints: (opts.blocks ?? []).map((block) => ({ kind: 'functional.group', block })), objectives: [], seed: opts.seed ?? 0, limits: snapshot.limits },
+    job: { movableComponentIds: movableIds, constraints: [...(opts.blocks ?? []).map((block) => ({ kind: 'functional.group', block })), ...(opts.layoutPlan ? [{ kind: 'layout.plan', value: opts.layoutPlan }] : [])], objectives: [], seed: opts.seed ?? 0, limits: snapshot.limits },
     log,
   });
   const hasCopper = design.routing.segments.length + design.routing.arcs.length + design.routing.vias.length > 0;
   const candidates: MaterializedCandidate[] = [];
   const scored = [];
+  let probed = 0;
   for (const inv of res.invocations) {
     if (!inv.result || inv.snapshotViolation) continue;
     if (inv.result.status === 'failed' || inv.result.status === 'unsupported') continue;
-    // rule stages on the engine's result: out of keepouts, blocks apart, in from the edge; what moved is recorded on the candidate
+    // rule stages on the engine's result: out of keepouts, into their regions,
+    // blocks apart, in from the edge; what moved is recorded on the candidate.
+    // Regions run before separation and the edge so those two get the last
+    // word: a region is where a part belongs, the outline is where it may be.
     const movableNow = new Set(movableIds);
     const k = legalizeKeepouts(design, constraints, movableNow, inv.result.placements);
-    const sep = legalizeSeparation(design, constraints, movableNow, k.placements);
+    const reg = legalizeRegions(design, constraints, movableNow, k.placements);
+    const sep = legalizeSeparation(design, constraints, movableNow, reg.placements);
     const edge = legalizeEdge(design, movableNow, sep.placements);
-    const legalizeNotes = [...k.notes, ...sep.notes, ...edge.notes];
+    const legalizeNotes = [...k.notes, ...reg.notes, ...sep.notes, ...edge.notes];
     if (legalizeNotes.length) {
       inv.result = { ...inv.result, placements: edge.placements };
       for (const n of legalizeNotes) log(`${inv.engineId}: legalized: ${n}`);
@@ -246,8 +281,17 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
     const candidate = { placement: inv.result.placements, ...(hasCopper && moved ? { routing: { segments: [], arcs: [], vias: [], preserveIds: new Set<string>() } } : {}) };
     const cand = await materialize(inv, candidate, { sourceText: text, design, ...(projectText ? { projectText } : {}), profile, kicadVersion, ...(opts.noKicad ? { noKicad: true } : {}), ...(Object.keys(constraints).length ? { constraints } : {}) });
     candidates.push(cand);
-    const metrics: Record<string, number> = { ...placementMetrics({ design: cand.design, verify: cand.verify, runtimeSeconds: inv.result.runtime.wallSeconds }), unplaced_count: inv.result.unplacedComponentIds.length, refused_count: cand.refused.length, intent_hard_violations: cand.verify.metrics.intent_hard_violations ?? 0, intent_soft_violations: cand.verify.metrics.intent_soft_violations ?? 0, intent_hard_total: cand.verify.metrics.intent_hard_total ?? 0, intent_compliance: cand.verify.metrics.intent_compliance ?? 1, legalized_moves: legalizeNotes.length };
-    if (opts.probe !== false && cand.verify.gates.placement.passed) {
+    const metrics: Record<string, number> = { ...placementMetrics({ design: cand.design, verify: cand.verify, runtimeSeconds: inv.result.runtime.wallSeconds }), unplaced_count: inv.result.unplacedComponentIds.length, refused_count: cand.refused.length, intent_hard_violations: cand.verify.metrics.intent_hard_violations ?? 0, intent_soft_violations: cand.verify.metrics.intent_soft_violations ?? 0, intent_hard_total: cand.verify.metrics.intent_hard_total ?? 0, intent_compliance: cand.verify.metrics.intent_compliance ?? 1, legalized_moves: legalizeNotes.length,
+      // what the tiered profiles rank on (RFC 14 §8.9); absent when nothing measured them
+      ...(cand.verify.metrics.loop_area_mm2 !== undefined ? { loop_area_mm2: cand.verify.metrics.loop_area_mm2 } : {}),
+      ...(cand.verify.metrics.isolation_min_mm !== undefined ? { isolation_min_mm: cand.verify.metrics.isolation_min_mm } : {}),
+      ...(cand.verify.metrics.chain_order_violations !== undefined ? { chain_order_violations: cand.verify.metrics.chain_order_violations } : {}),
+      ...(cand.verify.metrics.intrusion_count !== undefined ? { intrusion_count: cand.verify.metrics.intrusion_count } : {}),
+      ...(cand.verify.metrics.drc_placement_critical_count !== undefined ? { drc_placement_critical_count: cand.verify.metrics.drc_placement_critical_count } : {}) };
+    // the probe is the expensive check: a cap keeps a wide sweep affordable
+    const probeCap = opts.probe === false ? 0 : opts.probe?.maxCandidates ?? Infinity;
+    if (opts.probe !== false && cand.verify.gates.placement.passed && probed < probeCap) {
+      probed++;
       try {
         const p = await routabilityProbe({ repoRoot: opts.repoRoot, pcbPath: cand.pcbPath, workDir: inv.workDir, ...(opts.probe?.routerId ? { routerId: opts.probe.routerId } : {}), ...(opts.probe?.budgetSeconds ? { budgetSeconds: opts.probe.budgetSeconds } : {}), registry: opts.probe?.registry ?? defaultRouterRegistry(opts.repoRoot), policy: opts.policy ?? DEFAULT_POLICY, ...(opts.noKicad ? { noKicad: true } : {}), log: (l) => log(`  probe: ${l}`) });
         metrics.routability_completion = p.routability_completion;
@@ -264,6 +308,9 @@ export async function placeBoard(opts: PlaceOptions): Promise<PlaceRun> {
   await writeFile(path.join(run.root, 'ranking.json'), JSON.stringify(ranking, null, 2), 'utf8');
   const outcome = outcomeOf(res.invocations, candidates, ranking, [...unknown, ...res.ineligible]);
   await writeFile(path.join(run.root, 'outcome.json'), JSON.stringify(slim(outcome), null, 2), 'utf8');
+  // the run's render, whatever the outcome: the selected candidate, else the first candidate (it explains the failure), else the board as given
+  const drawn = (ranking.selected ? candidates.find((c) => c.engineId === ranking.selected) : undefined) ?? candidates[0];
+  await writeBoardRender(run.root, drawn ? drawn.design : design, drawn ? drawn.verify.diagnostics : outcome.diagnostics, log);
   return { outcome, runDir: run.root, ranking, invocations: res.invocations, candidates, ineligible: [...unknown, ...res.ineligible], movableIds, ...(plan ? { plan } : {}) };
 }
 

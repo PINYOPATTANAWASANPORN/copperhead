@@ -83,6 +83,10 @@ export interface PadDefinition {
   drill?: { d: Nm; offset?: Point; slot?: { w: Nm; h: Nm } };
   /** Copper outline in board coordinates, computed at import for every shape. */
   copper: Polygon;
+  /** The schematic pin's name (`(pinfunction …)`), when the board carries it (add-reuse-placer). */
+  pinFunction?: string;
+  /** The schematic pin's electrical type (`(pintype …)`), when the board carries it. */
+  pinType?: string;
 }
 
 export interface FootprintDefinition {
@@ -103,6 +107,10 @@ export interface ComponentInstance {
   rotation: Mdeg;
   attributes: { side: 'front' | 'back'; locked: boolean; throughHole: boolean; excludeFromBom: boolean; dnp: boolean };
   semanticRoles: string[];
+  /** The schematic symbol path (`(path …)`), stable across revisions when the footprint UUID is not (add-reuse-placer). */
+  symbolPath?: string;
+  /** The hierarchical sheet the symbol sits on (`(sheetname …)`, `(sheetfile …)`), when the board carries it. */
+  sheet?: { name: string; file?: string };
 }
 
 export interface NetDefinition {

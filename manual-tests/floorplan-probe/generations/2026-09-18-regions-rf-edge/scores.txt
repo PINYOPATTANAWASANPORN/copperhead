@@ -1,0 +1,30 @@
+
+Intent conformance, per floorplan candidate. Cleanest placement of each.
+──────────────────────────────────────────────────────────────────────────────────────────────
+  cand  engine                    in-block  overflow  antenna  ant.gap  facing  attach   overlaps  score
+  ──────────────────────────────────────────────────────────────────────────────────────────
+  (f)   pyplacer                47%     9.5mm  100%    0.8mm   67%   8/18        9  0.5372
+  (b)   pyplacer                37%     7.6mm  100%    0.8mm   67%   8/18        7  0.6371
+  (d)   pyplacer                37%     8.0mm  100%    0.8mm   67%   8/18        7  0.6371
+  (a)   fixed                   23%    12.5mm  100%    0.8mm   67%   8/18        5  0.7705
+  (e)   pyplacer                23%    11.8mm  100%    0.8mm   67%   8/18        5  0.7705
+  (c)   fixed                   17%    10.7mm  100%    0.8mm   67%   8/18        5  0.8371
+
+Best: (f). Its findings:
+  · F1 is 18.3 mm outside power-input
+  · D1 is 9.1 mm outside power-input
+  · J1 is 18.1 mm outside power-input
+  · R2 is 9.1 mm outside power-input
+  · CP1 is 10.3 mm outside power-input
+  · R1 is 9.1 mm outside power-input
+  · C2 is 3.4 mm outside regulation
+  · C1 is 8.3 mm outside regulation
+  · U2 is 7.7 mm outside regulation
+  · U1 is 9.6 mm outside mcu
+  · C7 is 7.8 mm outside amplifier
+  · R5 is 7.8 mm outside amplifier
+  · R6 is 6.2 mm outside amplifier
+  · R7 is 6.2 mm outside amplifier
+  · … and 14 more
+
+Worst: (c), score 0.8371, 37 findings.

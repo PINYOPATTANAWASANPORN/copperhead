@@ -8,7 +8,7 @@ import type { PcbDesign } from '../ir/types.js';
 import { topLevelBlocks } from '../ir/kicad/blocks.js';
 import { toolsDirs } from './tools.js';
 
-/** kct: COPPERHEAD_KCT > bench/var/tools/kt-venv (target repo, then the copperhead package) > PATH. */
+/** kct: COPPERHEAD_KCT > vendor/tools/kt-venv (target repo, then the copperhead package) > PATH. */
 export function resolveKct(env = process.env, repoRoot = process.cwd()): string {
   if (env.COPPERHEAD_KCT?.trim()) return env.COPPERHEAD_KCT.trim();
   for (const dir of toolsDirs(repoRoot)) {

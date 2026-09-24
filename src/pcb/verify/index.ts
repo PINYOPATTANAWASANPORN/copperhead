@@ -12,6 +12,7 @@ import { fromDrcReport } from './checkers/kicad-drc.js';
 import { checkPreflight, type PreflightInputs } from './checkers/preflight.js';
 import { checkReturnPath } from './checkers/returnpath.js';
 import { checkIntent } from './checkers/intent.js';
+import { checkPlacementIntent } from './checkers/placement-intent.js';
 import type { Constraint } from '../../memory/constraints.js';
 import { preflightGate, placementGate, routingGate, type GateResult } from './gates.js';
 import type { CheckResult, Diagnostic } from './diagnostic.js';
@@ -52,7 +53,10 @@ export function verifyDesign(input: VerifyInput): VerifyResult {
     checkReturnPath(input.design, input.fills ?? []),
   ];
   if (input.drc) results.push(fromDrcReport(input.drc, profile, input.kicadVersion));
-  if (input.constraints && Object.keys(input.constraints).length) results.push(checkIntent(input.design, input.constraints));
+  if (input.constraints && Object.keys(input.constraints).length) {
+    results.push(checkIntent(input.design, input.constraints));
+    results.push(checkPlacementIntent(input.design, input.constraints));
+  }
   const diagnostics = results.flatMap((r) => r.diagnostics);
   const metrics: Record<string, number> = {};
   for (const r of results) for (const [k, v] of Object.entries(r.metrics)) metrics[k] = v;

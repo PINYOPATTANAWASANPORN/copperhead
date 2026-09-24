@@ -11,15 +11,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execa } from 'execa';
-import { deriveBlocks, blocksToConstraints, subsystemHeadings, slugify } from '../src/pcb/intent/blocks.js';
+import { deriveBlocks, blocksToConstraints, subsystemHeadings, slugify, connectorEdgeConstraints, wantsBoardEdge } from '../src/pcb/intent/blocks.js';
 import { placeBoard } from '../src/pcb/engines/place.js';
 import { defaultRegistry as routerRegistry } from '../src/pcb/engines/route.js';
 import { importBoard } from '../src/pcb/ir/kicad/import.js';
-import { centroid } from '../src/pcb/ir/geometry.js';
+import { centroid, bbox } from '../src/pcb/ir/geometry.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
-const GOLDEN = path.join(ROOT, 'bench', 'golden');
+const GOLDEN = path.join(ROOT, 'test', 'fixtures', 'microboards');
 const SUBSYSTEMS = '# Subsystems\n\n## Power\n\nRegulator and its capacitor.\n\n## MCU\n\nThe controller and its crystal.\n';
 const INTENT = { version: 1, parts: [{ ref: 'U1', libId: 'x', value: 'x', group: 'MCU' }, { ref: 'Y1', libId: 'x', value: 'x', group: 'MCU' }, { ref: 'C1', libId: 'x', value: 'x', group: 'Power' }, { ref: 'R1', libId: 'x', value: 'x', group: 'Power' }], nets: [] };
 
@@ -86,6 +86,60 @@ describe('deriveBlocks', () => {
     expect(mcu.parameters!.anchor).toBe('U1');
     expect(typeof mcu.parameters!.region).toBe('string');
     expect(JSON.parse(mcu.parameters!.region as string)).toHaveLength(4);
+  });
+});
+
+describe('connectorEdgeConstraints', () => {
+  // the fixture's J1 names no subsystem, so give it one: the rule reads the
+  // block regions, and only a named block ever gets a region
+  const WITH_J1 = { ...INTENT, parts: [...INTENT.parts, { ref: 'J1', libId: 'x', value: 'x', group: 'Power' }] };
+  it('gives every connector the edge its block region is nearest, with the region centre along it', async () => {
+    const { design } = await completion();
+    const blocks = deriveBlocks({ design, subsystemsMd: SUBSYSTEMS, schematicIntent: WITH_J1 });
+    const reg = connectorEdgeConstraints(blocks, design);
+    const ob = bbox(design.board.outline);
+    expect(Object.keys(reg).length).toBeGreaterThan(0);
+    for (const [key, c] of Object.entries(reg)) {
+      expect(key).toMatch(/^layout\.mechanical\.edge\./);
+      expect(c).toMatchObject({ class: 'mechanical', severity: 'hard', approvedBy: 'rule' });
+      expect(['north', 'south', 'east', 'west']).toContain(c.parameters!.edge);
+      // the along-edge coordinate is a real board coordinate on the free axis
+      const along = c.parameters!.along_nm as number;
+      const horizontal = c.parameters!.edge === 'west' || c.parameters!.edge === 'east';
+      expect(along).toBeGreaterThanOrEqual(horizontal ? ob.minY : ob.minX);
+      expect(along).toBeLessThanOrEqual(horizontal ? ob.maxY : ob.maxX);
+    }
+    expect(connectorEdgeConstraints(blocks, design)).toEqual(reg); // deterministic
+  });
+  it('leaves a stated edge or fixed position alone, and never claims a switch, hole or test point', async () => {
+    const { design } = await completion();
+    const blocks = deriveBlocks({ design, subsystemsMd: SUBSYSTEMS, schematicIntent: INTENT });
+    const conn = design.components.find((c) => wantsBoardEdge(c))!;
+    expect(conn.reference).toBe('J1');
+    const blocksJ1 = deriveBlocks({ design, subsystemsMd: SUBSYSTEMS, schematicIntent: WITH_J1 });
+    expect(Object.keys(connectorEdgeConstraints(blocksJ1, design))).toEqual(['layout.mechanical.edge.J1']);
+    // user intent wins, by either key
+    expect(connectorEdgeConstraints(blocksJ1, design, { [`layout.mechanical.edge.${conn.reference}`]: { source: 'intent', affects: ['board'], class: 'mechanical', severity: 'hard', scope: { refs: [conn.reference] }, parameters: { edge: 'north' }, priority: 90, confidence: 1, approvedBy: 'user' } })).toEqual({});
+    expect(connectorEdgeConstraints(blocksJ1, design, { [`layout.mechanical.fixed.${conn.reference}`]: { source: 'intent', affects: ['board'], class: 'mechanical', severity: 'hard', scope: { refs: [conn.reference] }, parameters: { x_nm: 1, y_nm: 2 }, priority: 100, confidence: 1, approvedBy: 'user' } })).toEqual({});
+    // a button is `mechanical` to the classifier and a connector to the refdes
+    // pattern, but it belongs beside the IC it interrupts, not on the perimeter
+    for (const [ref, lib] of [['SW1', 'Button_Switch_SMD:SW_Push'], ['H1', 'MountingHole:MountingHole_3.2mm'], ['TP1', 'TestPoint:TestPoint_Pad_D1.0mm']] as const) {
+      const c = { ...conn, reference: ref, footprint: { ...conn.footprint, libId: lib }, semanticRoles: [] };
+      expect(wantsBoardEdge(c)).toBe(false);
+    }
+  });
+  it('yields nothing when the blocks have no regions', async () => {
+    const { design } = await completion();
+    const blocks = deriveBlocks({ design, subsystemsMd: SUBSYSTEMS, schematicIntent: WITH_J1 }).map((b) => ({ ...b, region: null }));
+    expect(connectorEdgeConstraints(blocks, design)).toEqual({});
+  });
+  it('says nothing about a connector that names no subsystem: `unassigned` never gets a region', async () => {
+    const { design } = await completion();
+    // the documented limit of the rule, not an oversight: the edge comes from
+    // the block region, and a part in no subsystem is in no region
+    const blocks = deriveBlocks({ design, subsystemsMd: SUBSYSTEMS, schematicIntent: INTENT });
+    expect(blocks.find((b) => b.id === 'unassigned')!.members.map((id) => design.components.find((c) => c.id === id)!.reference)).toContain('J1');
+    expect(connectorEdgeConstraints(blocks, design)).toEqual({});
   });
 });
 

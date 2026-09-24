@@ -9,8 +9,19 @@ import type { CheckReport } from '../../../kicad/report.js';
 import type { FabricationProfile } from '../profiles/index.js';
 import { make, statusOf, type CheckResult, type Diagnostic } from '../diagnostic.js';
 import { projectSeverity } from './geometry.js';
+import { area, bboxOf } from '../../ir/geometry.js';
 
 export const PREFLIGHT_CHECKER = { id: 'copperhead-preflight', version: '1' };
+
+/**
+ * Feasibility (add-reuse-placer, RFC 14 §7.1): courtyard area over board area.
+ * Measured on 23 designer boards with courtyards on at least 90 % of parts:
+ * median 48 %, p90 62 %, maximum 93 %. Above the warning share a placer is
+ * working past what designers ship on this outline; above the maximum no
+ * legal placement exists for it, so the run is refused before an engine starts.
+ */
+export const UTILISATION_WARN = 0.62;
+export const UTILISATION_MAX = 0.95;
 
 export interface PreflightInputs {
   /** Symbol pin counts by refdes from the schematic, when one is configured. */
@@ -66,5 +77,35 @@ export function checkPreflight(design: PcbDesign, profile: FabricationProfile, i
     if (!/parity|schematic/i.test(v.type + v.description)) continue;
     d.push(make(PREFLIGHT_CHECKER, 'preflight.parity', { entityIds: [], entityReferences: v.items.map((i) => i.description), message: v.description, suggestedActions: ['request-user-action'] }));
   }
-  return { checker: PREFLIGHT_CHECKER, status: statusOf(d), diagnostics: d, metrics: {}, evidence: [] };
+  const metrics: Record<string, number> = {};
+  const boardArea = Math.abs(area(design.board.outline)) - design.board.cutouts.reduce((a, c) => a + Math.abs(area(c)), 0);
+  if (boardArea > 0) {
+    // one share per side: a part only competes for room with the parts it shares a side with
+    for (const side of ['front', 'back'] as const) {
+      const parts = design.components.filter((c) => c.attributes.side === side);
+      if (!parts.length) continue;
+      const used = parts.reduce((a, c) => {
+        if (c.footprint.courtyard) return a + Math.abs(area(c.footprint.courtyard));
+        if (!c.pads.length) return a;
+        const b = bboxOf(c.pads.map((p) => p.copper));
+        return a + (b.maxX - b.minX) * (b.maxY - b.minY);
+      }, 0);
+      const share = used / boardArea;
+      metrics[`utilisation_${side}`] = Number(share.toFixed(4));
+      if (share < UTILISATION_WARN) continue;
+      const over = share > UTILISATION_MAX;
+      d.push(make(PREFLIGHT_CHECKER, 'preflight.utilisation', {
+        severity: over ? 'error' : 'warning',
+        entityIds: [],
+        entityReferences: [side],
+        measured: { value: Math.round(share * 1000), unit: 'ratio' },
+        allowed: { value: Math.round((over ? UTILISATION_MAX : UTILISATION_WARN) * 1000), unit: 'ratio', relation: '<=' },
+        message: over
+          ? `${side} courtyards cover ${(share * 100).toFixed(0)} % of the board; no legal placement exists on this outline`
+          : `${side} courtyards cover ${(share * 100).toFixed(0)} % of the board, above the ${(UTILISATION_WARN * 100).toFixed(0)} % ninetieth percentile of designer boards; placement may need a larger outline`,
+        suggestedActions: ['request-user-action'],
+      }));
+    }
+  }
+  return { checker: PREFLIGHT_CHECKER, status: statusOf(d), diagnostics: d, metrics, evidence: [] };
 }

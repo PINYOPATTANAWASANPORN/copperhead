@@ -350,7 +350,7 @@ pcbGroup
       else {
         console.log(`${res.outcome.status}: ${res.outcome.summary}`);
         for (const d of res.outcome.detail) console.log(`  ${d}`);
-        console.log(`  run: ${path.relative(repo, res.runDir)}`);
+        console.log(`  run: ${path.relative(repo, res.runDir)}; render ${path.relative(repo, path.join(res.runDir, "board.svg"))}`);
       }
       pcbExit(res.outcome.status);
     } catch (err) {
@@ -363,6 +363,7 @@ pcbGroup
   .description('place the board through the wrapped placers, verify every candidate, and rank them (no model)')
   .option('--board <path>', 'board to place (default: the configured board)')
   .option('--placers <ids>', 'comma-separated engine ids in preference order (default: config or every built-in placer)')
+  .option('--plan <path>', 'placement plan written by copperhead pcb plan (subsystems, anchors, connector edges); read as data, so this command stays LLM-free')
   .option('--mode <mode>', 'single | race | ensemble (default: config or single)')
   .option('--movable <refs>', 'comma-separated refdes to move (default: every part not locked in KiCad)')
   .option('--seed <n>', 'seed for seeded engines', '0')
@@ -374,7 +375,7 @@ pcbGroup
   .option('--references', 'apply the approved (or permissively licensed) cached reference block per anchor as stage 3; implies --blocks', false)
   .option('--apply', 'write the selected candidate over the board file', false)
   .option('--run-dir <path>', 'where to write the run (default: .copperhead/runs/<ts>/placement)')
-  .action(async (opts: { board?: string; placers?: string; mode?: string; movable?: string; seed: string; budgetSeconds?: string; probe: boolean; probeRouter: string; allowHarnessEngines: boolean; blocks: boolean; references: boolean; apply: boolean; runDir?: string }) => {
+  .action(async (opts: { board?: string; placers?: string; plan?: string; mode?: string; movable?: string; seed: string; budgetSeconds?: string; probe: boolean; probeRouter: string; allowHarnessEngines: boolean; blocks: boolean; references: boolean; apply: boolean; runDir?: string }) => {
     const repo = repoOf(program.opts());
     const json = Boolean(program.opts().json);
     try {
@@ -387,6 +388,12 @@ pcbGroup
       const runDir = opts.runDir ? path.resolve(repo, opts.runDir) : path.join(repo, '.copperhead', 'runs', new Date().toISOString().replace(/[:.]/g, '-'), 'placement');
       const placers = opts.placers?.split(',').map((s) => s.trim()).filter(Boolean) ?? pcb.placers;
       const mode = (opts.mode ?? (pcb.mode === 'staged' ? 'single' : pcb.mode) ?? 'single') as 'single' | 'race' | 'ensemble';
+      let layoutPlan;
+      if (opts.plan) {
+        const { readFile } = await import('node:fs/promises');
+        layoutPlan = JSON.parse(await readFile(path.resolve(repo, opts.plan), 'utf8')) as import('./pcb/engines/reuse/plan.js').PlacementPlan;
+        if (!json) console.error(`plan: ${layoutPlan.subsystems.length} subsystem(s), ${layoutPlan.fixed.filter((f) => f.edge).length} connector edge(s) from ${opts.plan}`);
+      }
       let blocks;
       if (opts.blocks || opts.references) {
         const { readFile } = await import('node:fs/promises');
@@ -426,7 +433,7 @@ pcbGroup
         }
       }
       const res = await placeBoard({
-        repoRoot: repo, boardPath, runDir, ...(placers ? { placers } : {}), mode, ...(opts.movable ? { movableReferences: opts.movable.split(',').map((s) => s.trim()) } : {}), ...(reuse?.length ? { reuse } : {}), seed: Number(opts.seed), limits: { engineSeconds: budget, wallSeconds: budget }, ...(pcb.profile ? { profile: pcb.profile } : {}), ...(pcb.maxParallelEngines ? { maxParallel: pcb.maxParallelEngines } : {}),
+        repoRoot: repo, boardPath, runDir, ...(placers ? { placers } : {}), ...(layoutPlan ? { layoutPlan } : {}), mode, ...(opts.movable ? { movableReferences: opts.movable.split(',').map((s) => s.trim()) } : {}), ...(reuse?.length ? { reuse } : {}), seed: Number(opts.seed), limits: { engineSeconds: budget, wallSeconds: budget }, ...(pcb.profile ? { profile: pcb.profile } : {}), ...(pcb.maxParallelEngines ? { maxParallel: pcb.maxParallelEngines } : {}),
         policy: { network: pcb.allowRemoteEngines ? 'required' : 'optional', allowHarnessEngines: opts.allowHarnessEngines || (pcb.allowHarnessEngines ?? false), denyLicenses: [] },
         probe: opts.probe ? { routerId: opts.probeRouter } : false,
         ...(blocks ? { blocks } : {}), ...(attached?.length ? { attached } : {}), docsDir: path.join(repo, config.docs), intentPath: pcb.intentPath ?? null,
@@ -443,7 +450,118 @@ pcbGroup
       else {
         console.log(`${res.outcome.status}: ${res.outcome.summary}`);
         for (const d of res.outcome.detail) console.log(`  ${d}`);
-        console.log(`  run: ${path.relative(repo, res.runDir)}`);
+        console.log(`  run: ${path.relative(repo, res.runDir)}; render ${path.relative(repo, path.join(res.runDir, "board.svg"))}`);
+      }
+      const { EXIT_CODE } = await import('./pcb/ir/status.js');
+      process.exit(EXIT_CODE[res.outcome.status]);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+pcbGroup
+  .command('plan')
+  .description('write the layout intent: subsystems, the IC at each one\'s centre, the edge each connector faces, the critical relationships (a model writes it with --model; the rules write it without, and it never contains coordinates)')
+  .option('--board <path>', 'board to plan (default: the configured board)')
+  .option('--movable <refs>', 'comma-separated refdes the placement may move (default: every part not locked in KiCad)')
+  .option('--model <route>', 'let a model write the intent; without this the rules write it and the run is network-free')
+  .option('--out <path>', 'where to write the plan (default: <board>.plan.json beside the board)')
+  .option('--record-dir <path>', 'where request/response records are kept, so the same board plans the same way twice')
+  .action(async (opts: { board?: string; movable?: string; model?: string; out?: string; recordDir?: string }) => {
+    const repo = repoOf(program.opts());
+    const json = Boolean(program.opts().json);
+    try {
+      const { boardPath, config } = await pcbBoard(repo, opts.board);
+      const path = await import('node:path');
+      const { pcbPlan } = await import('./commands/pcb-plan.js');
+      let provider = null;
+      if (opts.model) {
+        const { makeProvider } = await import('./agent/loop.js');
+        const { resolveCompatSettings } = await import('./config.js');
+        provider = await makeProvider(opts.model, false, resolveCompatSettings(config));
+      }
+      const res = await pcbPlan({
+        repoRoot: repo,
+        boardPath,
+        ...(opts.out ? { outPath: path.resolve(repo, opts.out) } : {}),
+        ...(opts.movable ? { movableReferences: opts.movable.split(',').map((s) => s.trim()) } : {}),
+        ...(provider ? { provider } : {}),
+        ...(opts.recordDir ? { recordDir: path.resolve(repo, opts.recordDir) } : {}),
+        log: json ? () => {} : (l) => console.error(l),
+      });
+      if (provider) await provider.close?.();
+      if (json) console.log(JSON.stringify({ source: res.source, reason: res.reason, out: path.relative(repo, res.outPath), summary: res.summary, warnings: res.warnings }, null, 2));
+      else {
+        console.log(`plan from the ${res.source}: ${res.summary}`);
+        console.log(`  ${res.reason}`);
+        for (const w of res.warnings) console.log(`  warning: ${w}`);
+        console.log(`  written to ${path.relative(repo, res.outPath)}; place with: copperhead pcb place --placers placer-heuristic --plan ${path.relative(repo, res.outPath)}`);
+      }
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+pcbGroup
+  .command('reuse')
+  .description('place the board by adapting a reference board\'s placement: screen variants, verify and probe the survivors, and end with options (no model unless --model)')
+  .option('--board <path>', 'board to place (default: the configured board)')
+  .option('--reference <path>', 'the board whose placement is reused (required)')
+  .option('--movable <refs>', 'comma-separated refdes to move (default: every part not locked in KiCad)')
+  .option('--keep <n>', 'how many screened variants to materialise', '8')
+  .option('--budget <kind>', 'quick | screen (how many variants to generate)', 'screen')
+  .option('--seed <n>', 'seed for seeded engines', '0')
+  .option('--budget-seconds <n>', 'engine-second and wall-clock budget')
+  .option('--no-probe', 'skip the routability probe on each option')
+  .option('--probe-router <id>', 'router for the probe', 'router-freerouting')
+  .option('--no-critical-route', 'skip routing the critical nets of each option')
+  .option('--critical-budget <n>', 'seconds for each critical-net routing run', '120')
+  .option('--critical-candidates <n>', 'how many options get their critical nets routed', '3')
+  .option('--apply', 'write the chosen option over the board file', false)
+  .option('--option <id>', 'which option to apply (default: the ranked winner)')
+  .option('--model <route>', 'let a model write the placement plan (it never gives coordinates); without this the rules plan and the run is network-free')
+  .option('--run-dir <path>', 'where to write the run (default: .copperhead/runs/<ts>/reuse)')
+  .action(async (opts: { board?: string; reference?: string; movable?: string; keep: string; budget: string; seed: string; budgetSeconds?: string; probe: boolean; probeRouter: string; criticalRoute: boolean; criticalBudget: string; criticalCandidates: string; apply: boolean; option?: string; model?: string; runDir?: string }) => {
+    const repo = repoOf(program.opts());
+    const json = Boolean(program.opts().json);
+    try {
+      if (!opts.reference) throw new Error('pcb reuse needs --reference <path>: the board whose placement is being reused');
+      const { boardPath, config } = await pcbBoard(repo, opts.board);
+      const path = await import('node:path');
+      const { pcbReuse } = await import('./commands/pcb-reuse.js');
+      const pcb = config.pcb ?? {};
+      const budget = Number(opts.budgetSeconds ?? pcb.budgetSeconds ?? 600);
+      const runDir = opts.runDir ? path.resolve(repo, opts.runDir) : path.join(repo, '.copperhead', 'runs', new Date().toISOString().replace(/[:.]/g, '-'), 'reuse');
+      let provider = null;
+      if (opts.model) {
+        const { makeProvider } = await import('./agent/loop.js');
+        const { resolveCompatSettings } = await import('./config.js');
+        provider = await makeProvider(opts.model, false, resolveCompatSettings(config));
+      }
+      const res = await pcbReuse({
+        repoRoot: repo,
+        boardPath,
+        referencePath: path.resolve(repo, opts.reference),
+        runDir,
+        ...(opts.movable ? { movableReferences: opts.movable.split(',').map((s) => s.trim()) } : {}),
+        keep: Number(opts.keep),
+        budget: opts.budget === 'quick' ? 'quick' : 'screen',
+        seed: Number(opts.seed),
+        limits: { engineSeconds: budget, wallSeconds: budget },
+        ...(pcb.profile ? { profile: pcb.profile } : {}),
+        probe: opts.probe ? { routerId: opts.probeRouter } : false,
+        criticalRoute: opts.criticalRoute ? { budgetSeconds: Number(opts.criticalBudget), maxCandidates: Number(opts.criticalCandidates) } : false,
+        apply: opts.apply,
+        ...(opts.option ? { option: opts.option } : {}),
+        ...(provider ? { provider } : {}),
+        log: json ? () => {} : (l) => console.error(l),
+      });
+      if (provider) await provider.close?.();
+      if (json) console.log(JSON.stringify({ ...res.outcome, diagnostics: res.outcome.diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message })), runDir, options: res.options.map((o) => ({ id: o.id, rank: o.rank, selected: o.selected, dir: path.relative(repo, o.dir) })), applied: res.applied, screened: res.run.screened.map((v) => ({ id: v.id, legal: v.metrics.legal, score: v.score, kept: v.kept, ...(v.sameAs ? { sameAs: v.sameAs } : {}) })) }, null, 2));
+      else {
+        console.log(`${res.outcome.status}: ${res.outcome.summary}`);
+        for (const d of res.outcome.detail) console.log(`  ${d}`);
+        console.log(`  plan from the ${res.run.planSource}; options: ${path.relative(repo, path.join(runDir, 'options.md'))}; delta: ${path.relative(repo, path.join(runDir, 'delta.md'))}`);
       }
       const { EXIT_CODE } = await import('./pcb/ir/status.js');
       process.exit(EXIT_CODE[res.outcome.status]);
@@ -589,7 +707,7 @@ pcbGroup
       else {
         console.log(`${res.outcome.status}: ${res.outcome.summary}`);
         for (const d of res.outcome.detail) console.log(`  ${d}`);
-        console.log(`  run: ${path.relative(repo, res.runDir)}${res.applied ? `; applied to ${path.relative(repo, boardPath)}, evidence in ${path.join(config.docs, 'LAYOUT.md')}` : ''}`);
+        console.log(`  run: ${path.relative(repo, res.runDir)}; render ${path.relative(repo, path.join(res.runDir, "board.svg"))}${res.applied ? `; applied to ${path.relative(repo, boardPath)}, evidence in ${path.join(config.docs, 'LAYOUT.md')}` : ''}`);
       }
       const { EXIT_CODE } = await import('./pcb/ir/status.js');
       process.exit(EXIT_CODE[res.outcome.status]);

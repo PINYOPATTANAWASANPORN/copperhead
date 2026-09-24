@@ -364,6 +364,8 @@ function readPad(pad: SexpNode[], fp: { id: string; at: Point; rot: Mdeg; ref: s
     if (off) drill.offset = off;
   }
   const netId = nets.resolve(child(pad, 'net'));
+  const pinFunction = atom(child(pad, 'pinfunction'), 1);
+  const pinType = atom(child(pad, 'pintype'), 1);
   return {
     id: uuidv5(`pad/${fp.id}/${number}/${ordinal}`),
     number,
@@ -376,6 +378,8 @@ function readPad(pad: SexpNode[], fp: { id: string; at: Point; rot: Mdeg; ref: s
     layers,
     ...(drill ? { drill } : {}),
     copper,
+    ...(pinFunction ? { pinFunction } : {}),
+    ...(pinType ? { pinType } : {}),
   };
 }
 
@@ -424,6 +428,10 @@ function readFootprint(block: Block, t: LayerTable, nets: NetIndex, lossy: strin
     const pad = readPad(p, { id, at, rot, ref: reference }, t, nets, lossy, ordinal++);
     if (pad) pads.push(pad);
   }
+  // schematic identity (add-reuse-placer): the symbol path survives a footprint swap; the sheet names the subsystem the designer drew
+  const symbolPath = atom(child(fp, 'path'), 1);
+  const sheetName = atom(child(fp, 'sheetname'), 1);
+  const sheetFile = atom(child(fp, 'sheetfile'), 1);
   return {
     id,
     reference,
@@ -440,6 +448,8 @@ function readFootprint(block: Block, t: LayerTable, nets: NetIndex, lossy: strin
       dnp: attr.has('dnp'),
     },
     semanticRoles: [],
+    ...(symbolPath ? { symbolPath } : {}),
+    ...(sheetName !== undefined ? { sheet: { name: sheetName, ...(sheetFile ? { file: sheetFile } : {}) } } : {}),
   };
 }
 
@@ -618,10 +628,19 @@ export function importBoard(input: ImportInput): ImportResult {
 
   // footprints
   const components: ComponentInstance[] = [];
+  const seenFootprintIds = new Set<string>();
   for (const b of blocks) {
     if (b.head !== 'footprint') continue;
-    const c = readFootprint(b, t, netIndex, lossy);
+    let c = readFootprint(b, t, netIndex, lossy);
     if (!c) continue;
+    // KiCad tolerates two footprints sharing a uuid (copy-paste in older files); every
+    // id-keyed map here does not, and the second part would silently take the first one's place
+    if (seenFootprintIds.has(c.id)) {
+      const id = uuidv5(`footprint/${c.id}/${components.length}`);
+      warnings.push(`${c.reference || id}: duplicate footprint uuid ${c.id}; re-keyed as ${id}`);
+      c = { ...c, id, pads: c.pads.map((p, i) => ({ ...p, id: uuidv5(`pad/${id}/${p.number}/${i}`) })) };
+    }
+    seenFootprintIds.add(c.id);
     components.push(c);
     for (const p of c.pads) if (p.netId) nets.find((n) => n.id === p.netId)?.padIds.push(p.id);
     if (!c.footprint.courtyard) warnings.push(`${c.reference || c.id}: no courtyard drawn`);

@@ -609,6 +609,26 @@
           "items": {
             "type": "string"
           }
+        },
+        "symbolPath": {
+          "type": "string",
+          "description": "The schematic symbol path (`(path …)`), stable across revisions when the footprint UUID is not (add-reuse-placer)."
+        },
+        "sheet": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "file": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false,
+          "description": "The hierarchical sheet the symbol sits on (`(sheetname …)`, `(sheetfile …)`), when the board carries it."
         }
       },
       "required": [
@@ -744,6 +764,14 @@
         "copper": {
           "$ref": "#/definitions/Polygon",
           "description": "Copper outline in board coordinates, computed at import for every shape."
+        },
+        "pinFunction": {
+          "type": "string",
+          "description": "The schematic pin's name (`(pinfunction …)`), when the board carries it (add-reuse-placer)."
+        },
+        "pinType": {
+          "type": "string",
+          "description": "The schematic pin's electrical type (`(pintype …)`), when the board carries it."
         }
       },
       "required": [

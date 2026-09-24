@@ -229,6 +229,7 @@ candidates/<engineId>-<n>/    one per engine invocation
 ranking.json                  Pareto frontier + selected candidate + reason
 outcome.json                  Outcome (2)
 events.jsonl                  runner events (engine start/stop, checker_disagreement, repair actions)
+board.svg                     the board the run ends with, findings marked: the selected candidate, else the first candidate, else the input; written on every outcome, REFUSE and TIMEOUT included
 ```
 
 The bundle (11) is this directory plus `LAYOUT.md`'s generated section.

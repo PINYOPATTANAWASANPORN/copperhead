@@ -40,11 +40,11 @@ export interface OrthoroutePaths {
   python: string;
 }
 
-/** `COPPERHEAD_ORTHOROUTE` (checkout) and `COPPERHEAD_ORTHOROUTE_PYTHON` override; else `bench/var/tools/orthoroute` with `or-venv`. */
+/** `COPPERHEAD_ORTHOROUTE` (checkout) and `COPPERHEAD_ORTHOROUTE_PYTHON` override; else `vendor/tools/orthoroute` with `or-venv`. */
 export function resolveOrthoroute(env = process.env, repoRoot = process.cwd()): OrthoroutePaths {
   const dirs = env.COPPERHEAD_ORTHOROUTE?.trim() ? [env.COPPERHEAD_ORTHOROUTE.trim()] : toolsDirs(repoRoot).map((d) => path.join(d, 'orthoroute'));
   const dir = dirs.find((d) => existsSync(path.join(d, 'main.py')));
-  if (!dir) throw new EngineError('no-binary', 'OrthoRoute checkout not found', 'git clone https://github.com/bbenchoff/OrthoRoute bench/var/tools/orthoroute, or set COPPERHEAD_ORTHOROUTE');
+  if (!dir) throw new EngineError('no-binary', 'OrthoRoute checkout not found', 'git clone https://github.com/bbenchoff/OrthoRoute vendor/tools/orthoroute, or set COPPERHEAD_ORTHOROUTE');
   const python = env.COPPERHEAD_ORTHOROUTE_PYTHON?.trim() || toolsDirs(repoRoot).map((d) => path.join(d, 'or-venv', 'bin', 'python')).find((p) => existsSync(p)) || 'python3';
   return { dir, python };
 }
@@ -82,7 +82,7 @@ export class OrthorouteRouter implements RouterPlugin {
     const res = await execa(python, args, { cwd: dir, reject: false, timeout: job.limits.wallSeconds * 1000, env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', PYTHONUNBUFFERED: '1' }, extendEnv: false, ...(ctx.signal ? { cancelSignal: ctx.signal } : {}) });
     await writeFile(path.join(ctx.workDir, 'orthoroute.log'), `${res.stdout ?? ''}\n${res.stderr ?? ''}`, 'utf8');
     if (res.timedOut) throw new EngineError('timeout', `OrthoRoute exceeded ${job.limits.wallSeconds}s`, 'raise the budget or lower iterations');
-    if (res.failed && /ENOENT/.test(String((res as { code?: string }).code ?? ''))) throw new EngineError('no-runtime', `python not found at "${python}"`, 'create bench/var/tools/or-venv with numpy and scipy, or set COPPERHEAD_ORTHOROUTE_PYTHON');
+    if (res.failed && /ENOENT/.test(String((res as { code?: string }).code ?? ''))) throw new EngineError('no-runtime', `python not found at "${python}"`, 'create vendor/tools/or-venv with numpy and scipy, or set COPPERHEAD_ORTHOROUTE_PYTHON');
     if (res.exitCode !== 0 && !existsSync(orsPath)) throw new EngineError('process-failed', `OrthoRoute exited ${res.exitCode}: ${`${res.stderr ?? ''}`.trim().split('\n').slice(-3).join(' | ').slice(0, 300)}`, 'see orthoroute.log in the run directory');
     if (!existsSync(orsPath)) throw new EngineError('no-output', 'OrthoRoute exited clean but wrote no solution file', 'see orthoroute.log in the run directory');
     const copperLayers = copperStack(design);

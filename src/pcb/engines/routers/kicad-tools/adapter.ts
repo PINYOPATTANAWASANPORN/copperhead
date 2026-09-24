@@ -69,7 +69,7 @@ export class KicadToolsRouter implements RouterPlugin {
     const res = await execa(kct, args, { cwd: ctx.workDir, reject: false, timeout: job.limits.wallSeconds * 1000, env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', VIRTUAL_ENV: process.env.VIRTUAL_ENV ?? '' }, extendEnv: false, ...(ctx.signal ? { cancelSignal: ctx.signal } : {}) });
     await writeFile(path.join(ctx.workDir, 'kct.log'), `${res.stdout ?? ''}\n${res.stderr ?? ''}`, 'utf8');
     if (res.timedOut) throw new EngineError('timeout', `kct route exceeded ${job.limits.wallSeconds}s`, 'raise the budget or use --strategy basic');
-    if (res.failed && /ENOENT/.test(String((res as { code?: string }).code ?? ''))) throw new EngineError('no-binary', `kct not found at "${kct}"`, 'run bench/corpora/tools.sh kicad-tools or pip install kicad-tools==0.20.0');
+    if (res.failed && /ENOENT/.test(String((res as { code?: string }).code ?? ''))) throw new EngineError('no-binary', `kct not found at "${kct}"`, 'run scripts/tools.sh kicad-tools or pip install kicad-tools==0.20.0');
     const combined = `${res.stdout ?? ''}\n${res.stderr ?? ''}`;
     // kct refuses a grid coarser than clearance/2 rather than route shorts (B4: dense boards at 0.2 mm); that is the engine's answer, not a crash
     if (!existsSync(outPath) && /safety rule rejects this grid|Auto-grid selected [^\n]* > clearance\/2/.test(combined)) {

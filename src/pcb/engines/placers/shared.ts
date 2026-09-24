@@ -60,6 +60,12 @@ export function specsOf(job: PlacementJob): LayoutBlockSpec[] {
   return job.constraints.filter((c): c is { kind: string; spec: LayoutBlockSpec } => typeof c === 'object' && c !== null && (c as { kind?: string }).kind === 'layout.reuse').map((c) => c.spec);
 }
 
+/** The first job constraint of a kind, typed by the caller (add-reuse-placer: the reference board, the plan, the registry). */
+export function constraintOf<T>(job: PlacementJob, kind: string): T | null {
+  const hit = job.constraints.find((c) => typeof c === 'object' && c !== null && (c as { kind?: string }).kind === kind);
+  return hit ? ((hit as { kind: string } & { value: T }).value ?? null) : null;
+}
+
 /** Place a spec's members around the anchor as it stands in `design`. Members that are not movable (or absent) are skipped and named. */
 export function applySpec(spec: LayoutBlockSpec, design: PcbDesign, movable: Set<string>): { placements: PlacedComponent[]; skipped: string[] } {
   const byRef = new Map(design.components.map((c) => [c.reference, c]));

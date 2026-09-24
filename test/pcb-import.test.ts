@@ -15,7 +15,7 @@ import { mmToNm } from '../src/pcb/ir/units.js';
 import { area, bbox, centroid } from '../src/pcb/ir/geometry.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const GOLDEN = path.join(HERE, '..', 'bench', 'golden');
+const GOLDEN = path.join(HERE, 'fixtures', 'microboards');
 const DEMOS = '/usr/share/kicad/demos';
 const mm = mmToNm;
 
@@ -96,7 +96,7 @@ describe('golden microboards import cleanly', () => {
     const dir = path.join(GOLDEN, name);
     const { design, warnings } = importBoard({
       boardText: await readFile(path.join(dir, 'board.kicad_pcb'), 'utf8'),
-      boardPath: `bench/golden/${name}/board.kicad_pcb`,
+      boardPath: `test/fixtures/microboards/${name}/board.kicad_pcb`,
       projectText: await readFile(path.join(dir, 'board.kicad_pro'), 'utf8'),
       now: 't',
     });

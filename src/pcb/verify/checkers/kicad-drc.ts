@@ -11,6 +11,13 @@ import { make, statusOf, type CheckResult, type Diagnostic } from '../diagnostic
 
 export const KICAD_DRC_CHECKER = { id: 'kicad-drc', version: 'kicad-cli' };
 
+/**
+ * KiCad 10 DRC keys a placement alone can violate (add-placement-benchmark,
+ * cascade stage V5). Fixed, whatever the profile, and counted across error and
+ * warning severities as `drc_placement_critical_count`.
+ */
+export const PLACEMENT_CRITICAL_DRC: readonly string[] = ['courtyards_overlap', 'pth_inside_courtyard', 'npth_inside_courtyard', 'items_not_allowed', 'copper_edge_clearance', 'hole_to_hole', 'invalid_outline'];
+
 function regionOf(v: Violation) {
   const item = v.items.find((i) => i.x !== undefined && i.y !== undefined);
   return item ? rect(mmToNm(item.x!), mmToNm(item.y!), mmToNm(0.1), mmToNm(0.1)) : undefined;
@@ -41,12 +48,16 @@ export function fromDrcReport(report: CheckReport, profile: FabricationProfile, 
   if (unrouted) {
     d.push(make(checker, 'conn.unrouted', { severity: 'info', entityIds: [], entityReferences: [...new Set(report.unrouted.flatMap(refsOf))], measured: { value: unrouted, unit: 'count' }, allowed: { value: 0, unit: 'count', relation: '==' }, message: `KiCad reports ${unrouted} unconnected item(s)`, suggestedActions: ['select-router'] }));
   }
-  const critical = report.violations.filter((v) => profile.criticalDrc.includes(v.type)).length;
+  // critical by key across both buckets: KiCad's default severity for some critical types
+  // (e.g. pth_inside_courtyard) is warning, and a project's rule_severities can demote others
+  const reported = [...report.violations, ...report.warnings];
+  const critical = reported.filter((v) => profile.criticalDrc.includes(v.type)).length;
+  const placementCritical = reported.filter((v) => PLACEMENT_CRITICAL_DRC.includes(v.type)).length;
   return {
     checker,
     status: statusOf(d),
     diagnostics: d,
-    metrics: { drc_error_count: report.violations.length, drc_critical_count: critical, drc_warning_count: report.warnings.length, kicad_unconnected: unrouted },
+    metrics: { drc_error_count: report.violations.length, drc_critical_count: critical, drc_placement_critical_count: placementCritical, drc_warning_count: report.warnings.length, kicad_unconnected: unrouted },
     evidence: [{ kind: 'kicad-drc-report', note: `${report.violations.length} errors, ${report.warnings.length} warnings, ${unrouted} unconnected` }],
   };
 }

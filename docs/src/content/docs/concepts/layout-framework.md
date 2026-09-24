@@ -30,15 +30,15 @@ Published with the release, per RFC 11 §10.7. Anything outside it ends in `HOLD
 
 | Engine | Kind | License | Runs as | Needs |
 | --- | --- | --- | --- | --- |
-| Freerouting 2.4.1 | router | GPL-3.0 | separate process | a JRE 25 and the jar (`bench/corpora/tools.sh jre freerouting`, or the KiCad Freerouting plugin, or `COPPERHEAD_FREEROUTING_JAR` / `COPPERHEAD_JAVA`) |
-| kicad-tools 0.20.0 | router and two placers | MIT | separate process | `kct` (`bench/corpora/tools.sh kicad-tools` or `pip install kicad-tools==0.20.0`, or `COPPERHEAD_KCT`) |
+| Freerouting 2.4.1 | router | GPL-3.0 | separate process | a JRE 25 and the jar (`scripts/tools.sh jre freerouting`, or the KiCad Freerouting plugin, or `COPPERHEAD_FREEROUTING_JAR` / `COPPERHEAD_JAVA`) |
+| kicad-tools 0.20.0 | router and two placers | MIT | separate process | `kct` (`scripts/tools.sh kicad-tools` or `pip install kicad-tools==0.20.0`, or `COPPERHEAD_KCT`) |
 | pyplacer | placer | BSD-3-Clause | separate process | Python 3.10+ with numpy; vendored under `vendor/pyplacer` with a `--fixed` patch |
 | the fixed placer | placer | Apache-2.0 | in process | nothing; it is the control |
 | reference placer and router | both | Apache-2.0 | in process | nothing; harness fixtures only, never eligible for a real board |
 
 Every engine gets a scrubbed environment (no `*_KEY`, `*_TOKEN`, `*_SECRET`, `PASSWORD`), an immutable input snapshot whose hash is checked afterwards, and a wall-clock and engine-second budget. An engine that is not installed makes the run `UNSUPPORTED` with the install hint; one that crashes makes it `ENGINE_ERROR`; one that touches its input makes it `INVALID_OUTPUT`. Copyleft engines are only ever run out of process.
 
-What the engines are actually good for is measured, not assumed: `copperbench` runs the golden microboards and a 20-board PCBench subset through the same code paths and the milestone reports under `bench/reports/` say what each engine did. At the time of writing, Freerouting routes most small two-layer boards clean; kicad-tools' routers and placers are usable on few real boards at this version; the human placement beats every wrapped placer on real boards, and the staged plan's rule stages are what satisfy declared intent.
+What the engines are actually good for is measured, not assumed: [copperbench](https://github.com/copperheadhq/copperbench), a separate repository, runs the golden microboards and a 20-board PCBench subset through these same code paths, and its milestone reports say what each engine did. At the time of writing, Freerouting routes most small two-layer boards clean; kicad-tools' routers and placers are usable on few real boards at this version; the human placement beats every wrapped placer on real boards, and the staged plan's rule stages are what satisfy declared intent.
 
 ## Configuration
 

@@ -67,7 +67,7 @@ export const JLCPCB_2LAYER: FabricationProfile = {
   minPadNm: 250000,
   viaInPad: 'forbidden',
   criticalDrc: [
-    'clearance', 'shorting_items', 'track_width', 'via_diameter', 'hole_clearance', 'hole_near_hole',
+    'clearance', 'shorting_items', 'track_width', 'via_diameter', 'hole_clearance', 'hole_to_hole',
     'annular_width', 'copper_edge_clearance', 'courtyards_overlap', 'pth_inside_courtyard',
     'items_not_allowed', 'invalid_outline', 'isolated_copper', 'zones_intersect', 'starved_thermal',
   ],

@@ -19,7 +19,7 @@ import { loadConfig } from '../src/config.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
-const GOLDEN = path.join(ROOT, 'bench', 'golden');
+const GOLDEN = path.join(ROOT, 'test', 'fixtures', 'microboards');
 
 async function haveKicad(): Promise<boolean> {
   try {

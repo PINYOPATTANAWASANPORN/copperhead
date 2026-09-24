@@ -13,7 +13,8 @@ manual-tests/runs/
 *.tgz
 .npmrc
 
-# benchmark corpora and runs (bench/corpora/*.sh fetch them)
-bench/var/
-bench/golden/*/*.kicad_prl
+# engine binaries fetched by scripts/tools.sh (Freerouting, a JRE, kicad-tools,
+# OrthoRoute, topola, pyplacer). The benchmark itself lives in copperbench.
+vendor/tools/
+vendor/tools-fetch.log
 *.lck

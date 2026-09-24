@@ -30,8 +30,7 @@
     "node": ">=20"
   },
   "bin": {
-    "copperhead": "dist/cli.js",
-    "copperbench": "dist/bench/cli.js"
+    "copperhead": "dist/cli.js"
   },
   "files": [
     "dist",
@@ -46,25 +45,27 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run postbuild",
-    "postbuild": "node -e \"for (const f of ['dist/cli.js','dist/bench/cli.js']) require('fs').chmodSync(f, 0o755)\"",
+    "postbuild": "node -e \"require('fs').chmodSync('dist/cli.js', 0o755)\"",
     "prepublishOnly": "npm run typecheck && npm run build",
     "dev": "tsx src/cli.ts",
     "demo:simple": "bash scripts/demo-simple.sh",
     "demo:ui": "tsx scripts/ui-demo.ts",
-    "lint:md": "markdownlint-cli2 \"**/*.md\" \"#node_modules/**\" \"#**/node_modules/**\" \"#dist/**\" \"#**/dist/**\" \"#docs/.astro/**\" \"#demo-runs/**\" \"#.copperhead/runs/**\" \"#_site/**\"",
+    "lint:md": "markdownlint-cli2 \"**/*.md\" \"#node_modules/**\" \"#**/node_modules/**\" \"#dist/**\" \"#**/dist/**\" \"#docs/.astro/**\" \"#demo-runs/**\" \"#.copperhead/runs/**\" \"#_site/**\" \"#vendor/tools/**\"",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "docs:dev": "npm --prefix docs run dev",
     "docs:build": "npm --prefix docs run build",
     "docs:preview": "npm --prefix docs run preview",
+    "placeboards": "bash manual-tests/placement-boards/run.sh",
     "refboards": "bash scripts/draft-reference-boards.sh",
     "realdesigns": "tsx scripts/draft-real-designs.ts",
     "schemas": "node scripts/pcb-schemas.mjs",
-    "bench": "tsx src/bench/cli.ts"
+    "tools": "bash scripts/tools.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.113.0",
+    "@flatten-js/core": "1.6.14",
     "commander": "^12.1.0",
     "execa": "^9.5.2",
     "openai": "^6.49.0",

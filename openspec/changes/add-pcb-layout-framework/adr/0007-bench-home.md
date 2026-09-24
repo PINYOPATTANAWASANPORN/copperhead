@@ -1,6 +1,6 @@
 # ADR 0007: The benchmark lives in this repository
 
-**Status:** Accepted (2026-09-06)
+**Status:** Superseded by [ADR 0012](0012-bench-split.md) (2026-09-16)
 **RFC:** 11 §13, §14.1, Appendix C.2 item 10
 
 ## Decision

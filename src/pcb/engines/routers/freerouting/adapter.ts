@@ -39,7 +39,7 @@ export interface FreeroutingPaths {
   java: string;
 }
 
-/** Jar: COPPERHEAD_FREEROUTING_JAR > config > bench/var/tools (target repo, then the copperhead package) > the KiCad plugin install. */
+/** Jar: COPPERHEAD_FREEROUTING_JAR > config > vendor/tools (target repo, then the copperhead package) > the KiCad plugin install. */
 export async function resolveJar(configJar: string | null | undefined, env = process.env, repoRoot = process.cwd()): Promise<string> {
   const explicit = env.COPPERHEAD_FREEROUTING_JAR?.trim() || configJar?.trim();
   if (explicit) {
@@ -57,7 +57,7 @@ export async function resolveJar(configJar: string | null | undefined, env = pro
     for (const f of await walkJars(root, 4)) candidates.push(f);
   }
   candidates.sort((a, b) => versionOf(b) - versionOf(a));
-  if (!candidates[0]) throw new EngineError('no-binary', 'no Freerouting jar found', 'run bench/corpora/tools.sh freerouting, install the KiCad Freerouting plugin, or set COPPERHEAD_FREEROUTING_JAR');
+  if (!candidates[0]) throw new EngineError('no-binary', 'no Freerouting jar found', 'run scripts/tools.sh freerouting, install the KiCad Freerouting plugin, or set COPPERHEAD_FREEROUTING_JAR');
   return candidates[0];
 }
 
@@ -83,7 +83,7 @@ function versionOf(jar: string): number {
   return m ? Number(m[1]) * 1e6 + Number(m[2]) * 1e3 + Number(m[3]) : 0;
 }
 
-/** Java: COPPERHEAD_JAVA > bench/var/tools/jre25 > JAVA_HOME > PATH. */
+/** Java: COPPERHEAD_JAVA > vendor/tools/jre25 > JAVA_HOME > PATH. */
 export function resolveJava(env = process.env, repoRoot = process.cwd()): string {
   if (env.COPPERHEAD_JAVA?.trim()) return env.COPPERHEAD_JAVA.trim();
   for (const dir of toolsDirs(repoRoot)) {
@@ -131,10 +131,10 @@ export class FreeroutingRouter implements RouterPlugin {
     await writeFile(path.join(ctx.workDir, 'freerouting.log'), `${res.stdout ?? ''}\n${res.stderr ?? ''}`, 'utf8');
     const combined = `${res.stdout ?? ''}\n${res.stderr ?? ''}`;
     if (res.timedOut) throw new EngineError('timeout', `Freerouting exceeded ${job.limits.wallSeconds}s`, 'raise the budget or lower passes');
-    if (res.failed && /ENOENT/.test(String((res as { code?: string }).code ?? ''))) throw new EngineError('no-runtime', `java not found at "${java}"`, 'install a JRE 25 (bench/corpora/tools.sh jre) or set COPPERHEAD_JAVA');
+    if (res.failed && /ENOENT/.test(String((res as { code?: string }).code ?? ''))) throw new EngineError('no-runtime', `java not found at "${java}"`, 'install a JRE 25 (scripts/tools.sh jre) or set COPPERHEAD_JAVA');
     if (/UnsupportedClassVersionError/.test(combined)) {
       const m = /class file version (\d+)/.exec(combined);
-      throw new EngineError('runtime-too-old', `the JRE at "${java}" is too old for ${path.basename(jar)} (class file ${m?.[1] ?? '?'}: 69 needs Java 25, 65 needs Java 21)`, 'point COPPERHEAD_JAVA at a newer JRE or run bench/corpora/tools.sh jre');
+      throw new EngineError('runtime-too-old', `the JRE at "${java}" is too old for ${path.basename(jar)} (class file ${m?.[1] ?? '?'}: 69 needs Java 25, 65 needs Java 21)`, 'point COPPERHEAD_JAVA at a newer JRE or run scripts/tools.sh jre');
     }
     if (res.exitCode !== 0 && !existsSync(sesPath)) throw new EngineError('process-failed', `Freerouting exited ${res.exitCode}: ${combined.trim().split('\n').slice(-3).join(' | ').slice(0, 300)}`, 'see freerouting.log in the run directory');
     if (!existsSync(sesPath)) throw new EngineError('no-output', 'Freerouting exited clean but wrote no session file', 'see freerouting.log in the run directory');

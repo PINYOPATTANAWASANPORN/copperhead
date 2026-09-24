@@ -20,7 +20,7 @@ import { JLCPCB_2LAYER } from '../src/pcb/verify/profiles/index.js';
 import { runDrc } from '../src/kicad/cli.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const GOLDEN = path.join(HERE, '..', 'bench', 'golden');
+const GOLDEN = path.join(HERE, 'fixtures', 'microboards');
 const STICKHUB = '/usr/share/kicad/demos/stickhub/StickHub.kicad_pcb';
 const IMPLEMENTED = /^(geom|conn|drc|preflight|intent)\./;
 

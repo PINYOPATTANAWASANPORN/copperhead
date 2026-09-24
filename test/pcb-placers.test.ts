@@ -29,7 +29,7 @@ import type { PlacementJob, RunContext } from '../src/pcb/engines/contracts.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
-const GOLDEN = path.join(ROOT, 'bench', 'golden');
+const GOLDEN = path.join(ROOT, 'test', 'fixtures', 'microboards');
 const HARNESS = { network: 'none' as const, allowHarnessEngines: true, denyLicenses: [] };
 
 async function haveKicad(): Promise<boolean> {
@@ -153,6 +153,8 @@ describe('placeBoard', () => {
       const res = await placeBoard({ repoRoot: ROOT, boardPath: path.join(GOLDEN, 'completion', 'board.kicad_pcb'), runDir: path.join(dir, 'run'), placers: ['placer-reference', 'placer-nope'], registry: defaultPlacerRegistry(ROOT), noKicad: true, probe: false });
       expect(res.outcome.status).toBe('UNSUPPORTED');
       expect(res.ineligible.map((i) => i.engineId).sort()).toEqual(['placer-nope', 'placer-reference']);
+      // a run that never placed still draws the board it was given
+      expect(existsSync(path.join(res.runDir, 'board.svg'))).toBe(true);
       expect(res.ineligible.find((i) => i.engineId === 'placer-nope')!.reasons[0]).toMatch(/not registered/);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -160,7 +162,7 @@ describe('placeBoard', () => {
   });
 });
 
-describe('live placers (bench/corpora/tools.sh, vendor/pyplacer)', () => {
+describe('live placers (scripts/tools.sh, vendor/pyplacer)', () => {
   it('pyplacer moves the movable parts and honours --fixed (COPPERHEAD_TEST_PYPLACER=1)', async () => {
     if (process.env.COPPERHEAD_TEST_PYPLACER !== '1' || !existsSync(path.join(resolvePyplacer(), 'run.py'))) return;
     const { job, ctx } = await jobFor('completion', { lock: ['J1'] });

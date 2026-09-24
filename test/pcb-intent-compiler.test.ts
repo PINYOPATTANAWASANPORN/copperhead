@@ -14,7 +14,7 @@ import type { Provider, Msg, Turn } from '../src/agent/types.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
-const GOLDEN = path.join(ROOT, 'bench', 'golden');
+const GOLDEN = path.join(ROOT, 'test', 'fixtures', 'microboards');
 const SUBSYSTEMS = '# Subsystems\n\n## MCU\n\n## Power\n';
 const INTENT = { version: 1, parts: [{ ref: 'U1', libId: 'x', value: 'x', group: 'MCU' }, { ref: 'C1', libId: 'x', value: 'x', group: 'MCU' }, { ref: 'Y1', libId: 'x', value: 'x', group: 'MCU' }, { ref: 'R2', libId: 'x', value: 'x', group: 'Power' }], nets: [] };
 
@@ -80,7 +80,7 @@ describe('intent compiler', () => {
         { yaml: 'placement:\n  attachments:\n    - component: C1\n      target: { component: U1, pins: ["8"] }\n      max_distance_mm: 1\n      priority: critical\n', cite: 'datasheet U1 p.12', confidence: 0.9 },
         { yaml: 'placement:\n  attachments:\n    - component: R2\n      target: { component: U1 }\n      max_distance_mm: 5\n', cite: 'BOM.md R2', confidence: 0.3 },
         { yaml: 'placement:\n  attachments:\n    - component: C9\n      target: { component: U1 }\n      max_distance_mm: 2\n', cite: 'datasheet', confidence: 0.9 },
-        { yaml: 'placement:\n  thermal: []\n', cite: 'x', confidence: 1 },
+        { yaml: 'placement:\n  cooling: []\n', cite: 'x', confidence: 1 },
         { yaml: 'placement:\n  attachments:\n    - component: Y1\n      target: { component: U1 }\n      max_distance_mm: 3\n', confidence: 1 },
       ] }),
     ]);
@@ -92,7 +92,7 @@ describe('intent compiler', () => {
     // the model's R2 rule lands soft-then-advisory at confidence 0.3, with its citation as source
     expect(res.registry['layout.relative.attached.R2']).toMatchObject({ severity: 'advisory', source: 'intent-compiler:BOM.md R2', confidence: 0.3 });
     expect(res.holds.some((h) => /R2.*confidence 0\.3/.test(h))).toBe(true);
-    expect(res.rejected.map((r) => r.reason)).toEqual(expect.arrayContaining([expect.stringMatching(/not on the board: C9/), expect.stringMatching(/unknown key placement\.thermal/), 'no citation']));
+    expect(res.rejected.map((r) => r.reason)).toEqual(expect.arrayContaining([expect.stringMatching(/not on the board: C9/), expect.stringMatching(/unknown key placement\.cooling/), 'no citation']));
     expect(res.report).toContain('## Rejected proposals');
   });
   it('a model answer that is not JSON degrades to the deterministic result', async () => {

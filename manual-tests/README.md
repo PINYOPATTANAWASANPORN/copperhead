@@ -12,6 +12,10 @@ Sandboxes for exercising the CLI end to end, by hand, against a real git reposit
 
 `manual-tests/reference-boards/` holds committed reference projects for the deterministic drafting engine, with symbols vendored from the real KiCad libraries. `npm run refboards` re-drafts each board, byte-compares against its reference, and renders a PNG for visual comparison; `npm run refboards -- --update` regenerates the references after a deliberate engine change. The byte contract also runs in CI (`test/draft-reference-boards.test.ts`). See [reference-boards/README.md](reference-boards/README.md).
 
+## Placement boards
+
+`manual-tests/placement-boards/` holds committed projects for exercising the placement side of the layout framework: a drafted schematic plus the board as `populateBoard` bootstraps it (every footprint on a shelf-pack grid), which is the state `copperhead pcb place` is measured from. `manual-tests/placement-boards/run.sh` copies a board into `manual-tests/runs/placement/`, places it, renders before/after, and prints one row per engine; `--save` archives the result as a committed generation so the next build can be compared against it. Nothing here is byte-compared and nothing runs in CI — a placement is judged by its numbers and by eye. See [placement-boards/README.md](placement-boards/README.md).
+
 ## Real designs
 
 `manual-tests/real-designs/` drafts boards nobody wrote for us, read from a local KiCad install, and puts the engine's drawing next to the one a person made of the same circuit. Nothing is committed and nothing is byte-compared: a human's schematic and the engine's are different drawings of the same netlist, so the netlist equality is checked by machine and the drawing by eye. `npm run realdesigns` runs the sweep into `manual-tests/runs/real-designs/`. See [real-designs/README.md](real-designs/README.md).

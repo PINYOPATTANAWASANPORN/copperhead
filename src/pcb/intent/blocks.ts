@@ -26,12 +26,27 @@ export interface Block {
   notes: string[];
 }
 
+/** An attachment, as far as block membership is concerned. */
+export interface AttachmentHint {
+  ref: string;
+  /** Refdes, or `REF.PIN`. */
+  to: string;
+  maxDistanceNm: number;
+}
+
 export interface DeriveInput {
   design: PcbDesign;
   /** docs/SUBSYSTEMS.md text; `## Heading` per subsystem. */
   subsystemsMd?: string | null;
   /** schematic.intent.json: parts carry `group` naming a heading. */
   schematicIntent?: { parts: { ref: string; group?: string }[]; hints?: { groupOrder?: string[] } } | null;
+  /**
+   * Attachments the intent states, so a part can be moved to the block it is
+   * electrically tied to rather than the one it was drawn on.
+   */
+  attachments?: AttachmentHint[];
+  /** Below this, an attachment is close enough to decide membership. Default 15 mm. */
+  attachmentReassignNm?: number;
 }
 
 export function slugify(s: string): string {
@@ -115,6 +130,7 @@ export function deriveBlocks(input: DeriveInput): Block[] {
     for (const m of members) claimed.add(m);
     blocks.push(makeBlock(slugify(title), title, members, design, sharedNets));
   }
+  reassignByAttachment(blocks, design, input);
   const unassigned = design.components.filter((c) => !claimed.has(c.id)).map((c) => c.id);
   if (unassigned.length) {
     const b = makeBlock('unassigned', 'unassigned', unassigned, design, sharedNets);
@@ -123,6 +139,46 @@ export function deriveBlocks(input: DeriveInput): Block[] {
   }
   assignRegions(blocks, design, sharedNets);
   return blocks;
+}
+
+/**
+ * Move a part to the block holding the part it is attached to.
+ *
+ * `group` in the schematic intent is the sheet a part was drawn on, and a
+ * schematic sheet grouping is not a floorplan grouping. On esp32-amp, CP1 is the
+ * class-D bulk capacitor for U3 but is filed under *Power Input*: the region
+ * constraint is hard and the 12 mm attachment is not, so CP1 ends up 24 mm from
+ * the pin it serves and the switching loop measures 94 mm² against a 40 mm²
+ * budget — the most important physical relationship on that board, lost to a
+ * drawing convention.
+ *
+ * A tight attachment is the stronger statement. Only tight ones move a part:
+ * a 12 mm bulk cap is saying "I belong beside this pin", a 30 mm one is not.
+ * Anchors never move — they define their block — and a part is moved at most
+ * once, so two attachments cannot fight over it.
+ */
+function reassignByAttachment(blocks: Block[], design: PcbDesign, input: DeriveInput): void {
+  const atts = input.attachments ?? [];
+  if (!atts.length) return;
+  const limit = input.attachmentReassignNm ?? 15_000_000;
+  const idOf = new Map(design.components.map((c) => [c.reference, c.id]));
+  const blockOf = new Map<string, Block>();
+  for (const b of blocks) for (const m of b.members) blockOf.set(m, b);
+  const anchors = new Set(blocks.map((b) => b.anchor).filter((a): a is string => !!a));
+
+  for (const a of [...atts].sort((x, y) => x.maxDistanceNm - y.maxDistanceNm || x.ref.localeCompare(y.ref))) {
+    if (a.maxDistanceNm > limit) continue;
+    const id = idOf.get(a.ref), targetId = idOf.get(a.to.split('.')[0] ?? '');
+    if (!id || !targetId || anchors.has(id)) continue;
+    const from = blockOf.get(id), to = blockOf.get(targetId);
+    if (!from || !to || from === to) continue;
+    from.members = from.members.filter((m) => m !== id);
+    to.members.push(id);
+    blockOf.set(id, to);
+    to.notes.push(`${a.ref} moved here from ${from.id}: attached to ${a.to} within ${(a.maxDistanceNm / 1e6).toFixed(1)} mm`);
+  }
+  // a block emptied by reassignment is not a block
+  for (let i = blocks.length - 1; i >= 0; i--) if (!blocks[i]!.members.length) blocks.splice(i, 1);
 }
 
 function makeBlock(id: string, title: string, members: string[], design: PcbDesign, sharedNets: (a: string, b: string) => number): Block {
@@ -202,6 +258,95 @@ export function blocksToConstraints(blocks: Block[], design: PcbDesign, source =
       confidence: 1,
       approvedBy: source,
     };
+  }
+  return out;
+}
+
+/** Board edges, in the order a tie is broken (a middle slot is equidistant from north and south). */
+export const EDGE_ORDER = ['south', 'north', 'west', 'east'] as const;
+export type BoardEdge = (typeof EDGE_ORDER)[number];
+
+/**
+ * A connector proper: something a cable, plug or wire reaches from off-board.
+ *
+ * Deliberately narrower than `isConnector`, whose refdes pattern also catches
+ * `SW` so that `partKind` classifies a push-button as a connector. A button
+ * belongs beside the IC it interrupts, not on the perimeter, and a mounting
+ * hole, test point or jumper belongs wherever the board needs it.
+ */
+export function wantsBoardEdge(c: ComponentInstance): boolean {
+  if (/Button|Switch|MountingHole|TestPoint|Jumper/i.test(c.footprint.libId)) return false;
+  if (/^(SW|S|H|MH|TP|JP)\d/i.test(c.reference)) return false;
+  return c.semanticRoles.includes('connector') || /^(J|P|CON|X|USB)\d/i.test(c.reference) || /Connector|USB|Jack|Header|Socket|TerminalBlock/i.test(c.footprint.libId);
+}
+
+/**
+ * The edge each connector belongs on, for the connectors nobody placed.
+ *
+ * "A connector sits on a board edge" is a fact about the part, not a
+ * preference, but the only way to state it used to be `placement.fixed[].edge`
+ * in a hand-written intent file. The classifier tags a connector `mechanical`
+ * (`partKind` -> `critical.ts`), which orders it into the first placement phase
+ * and nothing more, so a board with no intent file had its USB receptacle
+ * packed into the middle like a resistor — 2.7 mm of bare board in front of it,
+ * where no plug can reach.
+ *
+ * The edge comes from the signal-flow regions `assignRegions` has already
+ * computed: they are equal-width vertical slots across the outline, so the
+ * leftmost block's centroid is nearest the west edge, the rightmost's nearest
+ * the east, and a block in between is nearest north or south. A tie goes to
+ * whichever of those edges carries the fewest connectors so far, then to
+ * `EDGE_ORDER` — deterministic, and it spreads them instead of stacking them.
+ *
+ * Needs regions, so it yields nothing for a run without blocks — and nothing
+ * for a connector in the `unassigned` block, which never gets a region. A
+ * connector that names no subsystem therefore keeps today's behaviour; say
+ * where it goes in the intent file, or give it a subsystem. Never overwrites:
+ * a `fixed` position or an `edge` already in the registry wins, as does a part
+ * locked in KiCad.
+ */
+export function connectorEdgeConstraints(
+  blocks: Block[],
+  design: PcbDesign,
+  existing: Record<string, Constraint> = {},
+  source = 'blocks',
+): Record<string, Constraint> {
+  const out: Record<string, Constraint> = {};
+  const ob = bbox(design.board.outline);
+  const byId = new Map(design.components.map((c) => [c.id, c]));
+  // count what the registry already spoke for, so a derived edge spreads away from it
+  const taken: Record<BoardEdge, number> = { south: 0, north: 0, west: 0, east: 0 };
+  for (const [k, c] of Object.entries(existing)) {
+    const e = c.parameters?.edge;
+    if (k.startsWith('layout.mechanical.edge.') && typeof e === 'string' && e in taken) taken[e as BoardEdge] += 1;
+  }
+  for (const b of blocks) {
+    if (!b.region) continue;
+    const rb = bbox(b.region);
+    const cx = (rb.minX + rb.maxX) / 2, cy = (rb.minY + rb.maxY) / 2;
+    const gap: Record<BoardEdge, number> = { south: ob.maxY - cy, north: cy - ob.minY, west: cx - ob.minX, east: ob.maxX - cx };
+    for (const id of b.members) {
+      const c = byId.get(id);
+      if (!c || c.attributes.locked || !wantsBoardEdge(c)) continue;
+      if (existing[`layout.mechanical.edge.${c.reference}`] || existing[`layout.mechanical.fixed.${c.reference}`]) continue;
+      const edge = [...EDGE_ORDER].sort((p, q) => gap[p] - gap[q] || taken[p] - taken[q] || EDGE_ORDER.indexOf(p) - EDGE_ORDER.indexOf(q))[0]!;
+      taken[edge] += 1;
+      // Where along that edge: the block's own region centre. Without it the
+      // part keeps whatever coordinate the bootstrap grid gave it, which is
+      // meaningless and lands it on whatever the anchors stage puts there next.
+      const along = Math.round(edge === 'west' || edge === 'east' ? cy : cx);
+      out[`layout.mechanical.edge.${c.reference}`] = {
+        source,
+        affects: ['board'],
+        class: 'mechanical',
+        severity: 'hard',
+        scope: { refs: [c.reference] },
+        parameters: { edge, orientation: 'outward', along_nm: along },
+        priority: 70, // below a user-authored edge (90); it never competes anyway, the key is skipped
+        confidence: 0.8,
+        approvedBy: 'rule',
+      };
+    }
   }
   return out;
 }

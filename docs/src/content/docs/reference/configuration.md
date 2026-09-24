@@ -39,7 +39,6 @@ Written by `copperhead init`. Every key is optional; the defaults below apply wh
 | `budgets` | `{}` | Free-form hard constraints, surfaced verbatim into every run's system prompt. |
 | `baseURL` | unset | Base URL of an OpenAI-compatible endpoint. Read **only** by the `compat` model route. |
 | `apiKeyEnv` | `OPENAI_API_KEY` | Name of the environment variable holding that endpoint's key. The name, never the key itself. |
-
 | `pcb` | `{}` | Layout harness settings for `copperhead pcb` (below). |
 
 ### `pcb`
@@ -54,8 +53,8 @@ Every key is optional.
 | `mode` | `single` | `single`, `race`, `ensemble`, or `staged`. |
 | `budgetSeconds` | `600` | Engine-second and wall-clock budget per `route`. |
 | `maxParallelEngines` | `2` | Engines in flight at once in `race`/`ensemble`. |
-| `freeroutingJar` | auto | Path to `freerouting-*.jar`; otherwise `COPPERHEAD_FREEROUTING_JAR`, `bench/var/tools/`, then KiCad's plugin directories. |
-| `java` | auto | JRE used for Freerouting; otherwise `COPPERHEAD_JAVA`, `bench/var/tools/jre25`, `JAVA_HOME`, then `PATH`. |
+| `freeroutingJar` | auto | Path to `freerouting-*.jar`; otherwise `COPPERHEAD_FREEROUTING_JAR`, `vendor/tools/` (and the legacy `bench/var/tools/`), then KiCad's plugin directories. |
+| `java` | auto | JRE used for Freerouting; otherwise `COPPERHEAD_JAVA`, `vendor/tools/jre25`, `JAVA_HOME`, then `PATH`. |
 | `freerouting.passes` | `20` | Autorouter passes. |
 | `allowRemoteEngines` | `false` | Whether engines that need the network are eligible. Never on the `check` path. |
 | `allowHarnessEngines` | `false` | Let the harness-only reference router compete. For test fixtures; it is not a router for real boards. |

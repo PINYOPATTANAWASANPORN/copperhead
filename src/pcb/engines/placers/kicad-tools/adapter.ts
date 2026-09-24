@@ -60,7 +60,7 @@ export class KicadToolsPlacer implements PlacerPlugin {
     await writeFile(path.join(ctx.workDir, 'kct.log'), `${res.stdout ?? ''}\n${res.stderr ?? ''}`, 'utf8');
     const combined = `${res.stdout ?? ''}\n${res.stderr ?? ''}`;
     if (res.timedOut) throw new EngineError('timeout', `kct placement optimize exceeded ${job.limits.wallSeconds}s`, 'raise the budget or lower iterations');
-    if (res.failed && /ENOENT/.test(String((res as { code?: string }).code ?? ''))) throw new EngineError('no-binary', `kct not found at "${kct}"`, 'run bench/corpora/tools.sh kicad-tools or pip install kicad-tools==0.20.0');
+    if (res.failed && /ENOENT/.test(String((res as { code?: string }).code ?? ''))) throw new EngineError('no-binary', `kct not found at "${kct}"`, 'run scripts/tools.sh kicad-tools or pip install kicad-tools==0.20.0');
     if (res.exitCode !== 0) throw new EngineError('process-failed', `kct placement optimize exited ${res.exitCode}: ${combined.trim().split('\n').slice(-3).join(' | ').slice(0, 300)}`, 'see kct.log in the run directory');
     if (!existsSync(outPath)) throw new EngineError('no-output', 'kct exited clean but wrote no board', 'see kct.log in the run directory');
     const output = importBoard({ boardText: await readFile(outPath, 'utf8'), boardPath: outPath, now: design.source.importedAt }).design;

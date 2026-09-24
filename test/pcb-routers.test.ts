@@ -3,7 +3,7 @@
  * exporter conventions (verified against pcbnew when COPPERHEAD_TEST_PCBNEW=1),
  * the session parser is pinned to a real Freerouting 2.4.1 session captured
  * on the completion golden board, every failure kind is named, and the live
- * runs need the tools from bench/corpora/tools.sh.
+ * runs need the tools from scripts/tools.sh.
  */
 import { describe, it, expect } from 'vitest';
 import { readFile, writeFile, mkdtemp, mkdir, rm, chmod } from 'node:fs/promises';
@@ -28,7 +28,7 @@ import type { RoutingJob, RunContext } from '../src/pcb/engines/contracts.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
-const GOLDEN = path.join(ROOT, 'bench', 'golden');
+const GOLDEN = path.join(ROOT, 'test', 'fixtures', 'microboards');
 const FIX = path.join(HERE, 'fixtures', 'pcb');
 const mm = mmToNm;
 
@@ -272,8 +272,8 @@ describe('router-orthoroute (ADR 0010)', () => {
   }, 600_000);
 });
 
-describe('live engines (bench/corpora/tools.sh)', () => {
-  const tools = path.join(ROOT, 'bench', 'var', 'tools');
+describe('live engines (scripts/tools.sh)', () => {
+  const tools = path.join(ROOT, 'vendor', 'tools');
   it('Freerouting routes the completion board (COPPERHEAD_TEST_FREEROUTING=1)', async () => {
     if (process.env.COPPERHEAD_TEST_FREEROUTING !== '1' || !existsSync(path.join(tools, 'jre25', 'bin', 'java'))) return;
     const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-fr-live-'));
@@ -335,12 +335,5 @@ describe('real-world board dialects', () => {
     expect(back.source.netDialect).toBe('code');
     expect(back.nets.map((n) => n.name).sort()).toEqual(design.nets.map((n) => n.name).sort());
     expect(back.components.flatMap((c) => c.pads.map((p) => p.netId && back.nets.find((n) => n.id === p.netId)!.name))).toEqual(design.components.flatMap((c) => c.pads.map((p) => p.netId && design.nets.find((n) => n.id === p.netId)!.name)));
-  });
-  it('chains an outline with a legacy 2.5 µm gap', async () => {
-    const p = path.join(ROOT, 'bench', 'var', 'corpora', 'pcbench-upgraded', 'kitspace_piezo_amplifier.kicad_pcb');
-    if (!existsSync(p)) return;
-    const { design, warnings } = importBoard({ boardText: await readFile(p, 'utf8'), boardPath: p, now: 't' });
-    expect(warnings.filter((w) => /unclosed/.test(w))).toEqual([]);
-    expect(design.board.outline.outer.length).toBeGreaterThanOrEqual(4);
   });
 });

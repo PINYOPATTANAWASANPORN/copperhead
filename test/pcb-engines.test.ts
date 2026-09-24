@@ -22,7 +22,7 @@ import { loadProfile } from '../src/pcb/verify/profiles/index.js';
 import type { EngineManifest } from '../src/pcb/engines/contracts.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const GOLDEN = path.join(HERE, '..', 'bench', 'golden');
+const GOLDEN = path.join(HERE, 'fixtures', 'microboards');
 
 async function haveKicad(): Promise<boolean> {
   try {

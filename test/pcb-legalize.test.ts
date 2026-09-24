@@ -18,7 +18,7 @@ import { applyCandidate } from '../src/pcb/ir/kicad/export.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
-const GOLDEN = path.join(ROOT, 'bench', 'golden');
+const GOLDEN = path.join(ROOT, 'test', 'fixtures', 'microboards');
 const HARNESS = { network: 'none' as const, allowHarnessEngines: true, denyLicenses: [] };
 
 async function haveKicad(): Promise<boolean> {

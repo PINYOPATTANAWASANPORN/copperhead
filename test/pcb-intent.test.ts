@@ -18,7 +18,7 @@ import { mmToNm } from '../src/pcb/ir/units.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
-const GOLDEN = path.join(ROOT, 'bench', 'golden');
+const GOLDEN = path.join(ROOT, 'test', 'fixtures', 'microboards');
 
 async function design(caseName: string) {
   const p = path.join(GOLDEN, caseName, 'board.kicad_pcb');
@@ -40,8 +40,8 @@ describe('intent language', () => {
     expect(JSON.parse(reg['layout.routing.priority']!.parameters!.order as string)).toEqual([['3V3', 'GND'], ['remaining']]);
   });
   it('reports unknown keys and malformed entries instead of ignoring them', () => {
-    const parsed = parseIntent('placement:\n  fixed:\n    - component: J1\n      side: left\n    - edge: west\n  thermal: []\nfoo: 1\n');
-    expect(parsed.unknown).toEqual(['foo', 'placement.thermal', 'placement.fixed[0].side']);
+    const parsed = parseIntent('placement:\n  fixed:\n    - component: J1\n      side: left\n    - edge: west\n  cooling: []\nfoo: 1\n');
+    expect(parsed.unknown).toEqual(['foo', 'placement.cooling', 'placement.fixed[0].side']);
     expect(parsed.errors).toEqual(['placement.fixed[0]: J1 needs an edge or an at', 'placement.fixed[1]: no component']);
   });
 });
@@ -129,7 +129,7 @@ describe('copperhead pcb verify with intent', () => {
     const out = await execa('npx', ['tsx', 'src/cli.ts', '--json', '--repo', ROOT, 'pcb', 'verify', path.join(GOLDEN, 'decoupling-far', 'board.kicad_pcb'), '--no-kicad'], { cwd: ROOT, reject: false });
     const j = JSON.parse(out.stdout);
     expect(j.status).toBe('REFUSE');
-    expect(j.intent).toBe('bench/golden/decoupling-far/intent.yaml');
+    expect(j.intent).toBe('test/fixtures/microboards/decoupling-far/intent.yaml');
     expect(j.diagnostics.some((x: { code: string }) => x.code === 'intent.relative.attached')).toBe(true);
   }, 120_000);
 });

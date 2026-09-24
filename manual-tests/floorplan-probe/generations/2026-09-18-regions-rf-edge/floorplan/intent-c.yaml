@@ -1,0 +1,297 @@
+# Generated from floorplan candidate (c) for a 40 x 50 mm outline.
+# Do not hand-edit: regenerate with manual-tests/floorplan-probe/run.sh --emit-intent.
+#
+# Board origin (100, 100) mm; `at` below is absolute, regions are local to the outline.
+#
+# Regions, per block, as the floorplan placed them:
+#   power-input      14.1 x  30.6 mm at (0.0, 0.0)
+#   regulation       14.1 x   5.1 mm at (0.0, 30.6)
+#   mcu              25.9 x  50.0 mm at (14.1, 0.0)
+#   amplifier        14.1 x   4.8 mm at (0.0, 35.7)
+#   speaker-output   14.1 x   9.5 mm at (0.0, 40.5)
+# Cost 1.324 = adjacency 1.23 + flow 0.16 + aspect 0.00 + edge 0.00 + keep-out 0.00.
+placement:
+  fixed:
+    - component: J1
+      edge: south
+      orientation: outward
+    - component: J2
+      edge: east
+      orientation: outward
+    - component: J3
+      edge: west
+      orientation: outward
+  rf:
+    - ref: U1
+      edge: north
+      clearance_mm: 21
+  edge_distance:
+    - ref: U3
+      min_mm: 3
+  attachments:
+    - component: C3
+      target:
+        component: U1
+        pins:
+          - "2"
+      max_distance_mm: 2
+      priority: critical
+    - component: C4
+      target:
+        component: U1
+        pins:
+          - "2"
+      max_distance_mm: 6
+    - component: R4
+      target:
+        component: U1
+        pins:
+          - "3"
+      max_distance_mm: 6
+    - component: C5
+      target:
+        component: U1
+        pins:
+          - "3"
+      max_distance_mm: 6
+    - component: SW2
+      target:
+        component: U1
+        pins:
+          - "3"
+      max_distance_mm: 12
+    - component: SW1
+      target:
+        component: U1
+        pins:
+          - "27"
+      max_distance_mm: 12
+    - component: C1
+      target:
+        component: U2
+        pins:
+          - "1"
+      max_distance_mm: 3
+      priority: critical
+    - component: C2
+      target:
+        component: U2
+        pins:
+          - "5"
+      max_distance_mm: 3
+      priority: critical
+    - component: C6
+      target:
+        component: U3
+        pins:
+          - "7"
+      max_distance_mm: 1.5
+      priority: critical
+    - component: C7
+      target:
+        component: U3
+        pins:
+          - "8"
+      max_distance_mm: 4
+    - component: CP1
+      target:
+        component: U3
+        pins:
+          - "7"
+      max_distance_mm: 12
+    - component: R5
+      target:
+        component: U3
+        pins:
+          - "2"
+      max_distance_mm: 4
+    - component: R6
+      target:
+        component: U3
+        pins:
+          - "4"
+      max_distance_mm: 5
+    - component: R7
+      target:
+        component: U3
+        pins:
+          - "4"
+      max_distance_mm: 5
+    - component: R1
+      target:
+        component: J1
+        pins:
+          - A5
+      max_distance_mm: 6
+    - component: R2
+      target:
+        component: J1
+        pins:
+          - B5
+      max_distance_mm: 6
+    - component: D1
+      target:
+        component: J1
+        pins:
+          - A4
+      max_distance_mm: 8
+      priority: critical
+    - component: F1
+      target:
+        component: J1
+        pins:
+          - A4
+      max_distance_mm: 10
+  groups:
+    - id: output-filter
+      components:
+        - FB1
+        - FB2
+        - C8
+        - C9
+        - J2
+      max_spread_mm: 14
+    - id: i2s-link
+      components:
+        - U1
+        - U3
+      max_spread_mm: 32
+    - id: power-input
+      components:
+        - J1
+        - CP1
+        - F1
+        - D1
+        - R1
+        - R2
+      region:
+        - 100
+        - 100
+        - 14.09
+        - 30.61
+    - id: regulation
+      components:
+        - U2
+        - C2
+        - C1
+        - D2
+        - R3
+      region:
+        - 100
+        - 130.61
+        - 14.09
+        - 5.12
+    - id: mcu
+      components:
+        - U1
+        - J3
+        - SW1
+        - SW2
+        - C4
+        - R4
+        - C3
+        - C5
+      region:
+        - 114.09
+        - 100
+        - 25.91
+        - 50
+    - id: amplifier
+      components:
+        - U3
+        - C7
+        - R5
+        - R6
+        - R7
+        - C6
+      region:
+        - 100
+        - 135.73
+        - 14.09
+        - 4.76
+    - id: speaker-output
+      components:
+        - J2
+        - FB1
+        - FB2
+        - C8
+        - C9
+      region:
+        - 100
+        - 140.49
+        - 14.09
+        - 9.51
+  chains:
+    - order:
+        - U3
+        - FB1
+        - C8
+        - J2
+      max_length_mm: 18
+    - order:
+        - U3
+        - FB2
+        - C9
+        - J2
+      max_length_mm: 18
+  hot_loops:
+    - kind: class-d-output
+      parts:
+        - U3
+        - C6
+        - C7
+        - CP1
+      max_area_mm2: 40
+  isolation:
+    - noisy:
+        - U3
+        - FB1
+        - FB2
+        - C8
+        - C9
+      sensitive:
+        - U1
+      min_mm: 8
+  thermal:
+    - hot:
+        - U3
+      protect:
+        - CP1
+      min_mm: 5
+  exposed_pads:
+    - U3
+routing:
+  currents:
+    - net: VBUS
+      amps: 1.1
+      rise_c: 10
+    - net: +5V
+      amps: 1.1
+      rise_c: 10
+    - net: /SPK_P
+      amps: 1.2
+      rise_c: 10
+    - net: /SPK_N
+      amps: 1.2
+      rise_c: 10
+    - net: +3V3
+      amps: 0.5
+      rise_c: 10
+  priorities:
+    - - GND
+    - - +5V
+      - +3V3
+      - VBUS
+    - - /SPK_P
+      - /SPK_N
+    - - /BCLK
+      - /LRCLK
+      - /DIN
+    - - /USB_DP
+      - /USB_DM
+    - - remaining
+electrical:
+  voltages:
+    VBUS: 5
+    +5V: 5
+    +3V3: 3.3

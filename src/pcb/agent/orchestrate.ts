@@ -16,7 +16,7 @@ import type { Outcome, LayoutStatus } from '../ir/status.js';
 import type { Diagnostic } from '../verify/diagnostic.js';
 import { importBoard } from '../ir/kicad/import.js';
 import { applyCandidate } from '../ir/kicad/export.js';
-import { renderSvg } from '../ir/svg.js';
+import { writeBoardRender } from '../engines/render.js';
 import { verifyDesign } from '../verify/index.js';
 import { extractFills } from '../ir/kicad/zones.js';
 import { deriveBlocks } from '../intent/blocks.js';
@@ -127,6 +127,7 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
   if (holds.length) {
     const outcome: Outcome<Diagnostic> = { status: 'HOLD', summary: `intent holds: ${holds[0]}${holds.length > 1 ? ` (+${holds.length - 1})` : ''}`, detail: holds, diagnostics: [] };
     await writeFile(path.join(opts.runDir, 'outcome.json'), JSON.stringify(outcome, null, 2), 'utf8');
+    await writeBoardRender(opts.runDir, first.design, [], log);
     return { outcome, runDir: opts.runDir, boardPath: work, applied: false, evidence: null, verdict: null, cycles, placement: null, routing: null, holds };
   }
 
@@ -308,14 +309,14 @@ export async function layoutBoard(opts: LayoutOptions): Promise<LayoutResult> {
       if (applied) verdict = await recordEvidence(opts.repoRoot, opts.config.docs, target, evidence);
       else await writeFile(path.join(opts.runDir, 'evidence.json'), JSON.stringify(evidence, null, 2), 'utf8');
     }
-    // the result, drawn: board.svg beside the working board, findings marked
+    // the result, drawn: board.svg beside the working board, findings marked; a render failure never fails the run
     try {
       const text = await readFile(work, 'utf8');
       const d = importBoard({ boardText: text, boardPath: work }).design;
       const v = verifyDesign({ design: d, fills: extractFills(text), constraints: loaded.registry });
-      await writeFile(path.join(opts.runDir, 'board.svg'), renderSvg(d, { diagnostics: v.diagnostics, legend: false, scale: 12 }), 'utf8');
-    } catch {
-      // a render failure never fails the run
+      await writeBoardRender(opts.runDir, d, v.diagnostics, log);
+    } catch (err) {
+      log(`render failed: ${(err as Error).message}`);
     }
     const detail = [...o.detail, ...cycles.map((c) => `cycle ${c.n}${c.action ? ` ${c.action.type}` : ''}: ${c.status}, ${c.errors} error(s), ${c.owed} owed, ${c.seconds.toFixed(1)} s`)];
     const outcome: Outcome<Diagnostic> = { ...o, detail };

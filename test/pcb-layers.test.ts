@@ -22,7 +22,7 @@ import { routeBoard } from '../src/pcb/engines/route.js';
 import type { RoutingJob, RunContext } from '../src/pcb/engines/contracts.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const GOLDEN = path.join(HERE, '..', 'bench', 'golden');
+const GOLDEN = path.join(HERE, 'fixtures', 'microboards');
 
 async function golden(name: string) {
   const pcb = path.join(GOLDEN, name, 'board.kicad_pcb');

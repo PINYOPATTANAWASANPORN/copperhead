@@ -37,7 +37,7 @@
     "track_width",
     "via_diameter",
     "hole_clearance",
-    "hole_near_hole",
+    "hole_to_hole",
     "annular_width",
     "copper_edge_clearance",
     "courtyards_overlap",
