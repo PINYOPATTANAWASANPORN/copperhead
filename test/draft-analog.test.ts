@@ -122,6 +122,28 @@ describe('feedback around the amplifier', () => {
     expectNoLabelOnForeignWire(p);
   });
 
+  it('names a net that is only the feedback loop once', async () => {
+    const p = await place({
+      version: 1,
+      parts: [
+        { ref: 'J1', libId: 'Connector_Generic:Conn_01x02', value: 'IN', group: 'Buffer' },
+        { ref: 'U1', libId: 'CopperAmp:OpAmp', value: 'AMP', group: 'Buffer' },
+        { ref: 'R1', libId: 'Device:R', value: '1k', group: 'Buffer' },
+        { ref: 'C9', libId: 'Device:C', value: '100n', group: 'Buffer' },
+      ],
+      nets: [
+        { name: 'IN', pins: ['J1.1', 'R1.1'] },
+        { name: 'NIN', pins: ['R1.2', 'U1.3'] },
+        { name: 'FB', pins: ['U1.1', 'U1.2'] },
+        { name: 'VCC', pins: ['U1.8', 'C9.1'] },
+        { name: 'GND', pins: ['J1.2', 'U1.4', 'C9.2'] },
+      ],
+    });
+    expect(wiredTogether(p, pinXY(p, 'U1', '1'), pinXY(p, 'U1', '2'))).toBe(true);
+    expect(p.model.labels.filter((l) => l.name === 'FB')).toHaveLength(1);
+    expectNoLabelOnForeignWire(p);
+  });
+
   it.each(['CopperAmp:OpAmp', 'CopperAmp:OpAmpIN'])('bridges the gain resistor across the amplifier (%s)', async (libId) => {
     const p = await place(inverting(libId));
     const u1 = p.model.symbols.find((s) => s.ref === 'U1')!;
@@ -192,6 +214,21 @@ describe('group colours', () => {
     const text = emitSchematic(p.model);
     expect(text).toContain('(stroke (width 0.3) (type dash) (color 220 110 20 1))');
     expect(text).toContain('(fill (type color) (color 220 110 20 0.08))');
+  });
+
+  it.each(['Test Points', 'Test-Points', 'test_point'])('colours a test-point group neutral (%s)', async (group) => {
+    const p = await place({
+      version: 1,
+      parts: [
+        { ref: 'J1', libId: 'Connector_Generic:Conn_01x02', value: 'TP', group },
+        { ref: 'R1', libId: 'Device:R', value: '10k', group: 'Amp' },
+      ],
+      nets: [
+        { name: 'SIG', pins: ['J1.1', 'R1.1'] },
+        { name: 'GND', pins: ['J1.2', 'R1.2'] },
+      ],
+    });
+    expect(p.model.rectangles.find((r) => r.name === group)!.color).toEqual([72, 72, 72]);
   });
 
   it('escapes a line break in emitted text', async () => {

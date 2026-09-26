@@ -619,7 +619,7 @@ const GROUP_PALETTE: [number, number, number][] = [
   [110, 120, 0],
 ];
 const POWER_GROUP = /\b(power|ldo|regulators?|regulation|reg|buck|boost|supply|psu|battery|charger|charging|vin|vbus)\b|\d(\.\d+)?\s*v\b/i;
-const NEUTRAL_GROUP = /\b(connector|connectors|header|headers|mounting|mechanical|stemma|qwiic|jack|io|i\/o|usb|debug|swd|jtag|test\s*points?)\b/i;
+const NEUTRAL_GROUP = /\b(connector|connectors|header|headers|mounting|mechanical|stemma|qwiic|jack|io|i\/o|usb|debug|swd|jtag|test[\s_-]*points?)\b/i;
 function groupColorsOf(groups: string[]): Record<string, [number, number, number]> {
   const out: Record<string, [number, number, number]> = {};
   let next = 0;
@@ -877,7 +877,9 @@ export function draftSchematicPlacement(validated: ValidatedIntent, projectName:
     ...validated.intent.parts.filter((p) => unsettled.has(p.ref) && twoLead(p.ref)).flatMap((p) => [[p.ref, 90], [p.ref, 180], [p.ref, 270]] as [string, Orient][]),
   ];
   trace(`placement search: ${unsettled.size} of ${validated.intent.parts.length} parts unsettled, ${trials.length} trials`);
-  if (!trials.length) return fitted;
+  // with nothing to turn the search still labels away the crossings that
+  // remain; only a sheet with neither has nothing to try
+  if (!trials.length && !wireCrossings(fitted.model).length) return fitted;
   // Trials are ranked on one draft pass each, the fitting rounds (re-tiling,
   // the measured look) left out: they settle the page, not the parts, and
   // multiply every trial's cost. The kept orientations are then drafted in
@@ -4673,6 +4675,9 @@ function draftOnce(
       // second FILT label landed on the first)
       commitRoute([o, m], r, stubs.length <= 2);
       fedBack.add(m);
+      // a net that is only the loop is named once, by the loop: its output
+      // left in for the rest of the net took a second flag of its own
+      if (stubs.length <= 2) fedBack.add(o);
     }
     const sorted: Stub[] = stubs.filter((s) => !fedBack.has(s)).sort((a, b) => a.end.x - b.end.x || a.end.y - b.end.y);
     const clusters: Stub[][] = [];
