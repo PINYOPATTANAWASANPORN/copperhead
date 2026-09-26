@@ -2,7 +2,10 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { emitSchematic } from '../emit.js';
+import { parseSexp, child, isList } from '../sexp.js';
+import { childSpans, listEnd } from '../spans.js';
 import { SymbolSource } from './symsource.js';
+import type { FootprintResolver } from '../footprints.js';
 import { parseIntent, validateIntent, formatIrFindings, INTENT_FILENAME, type IrFinding } from './ir.js';
 import { draftSchematicPlacement, type SchematicDraftReport, type NetClass, type NetClassBasis } from './engine.js';
 
@@ -23,6 +26,12 @@ export interface SchematicDraftOptions {
   symbolDirs?: string[];
   /** Stable date stamp for the title block (callers pass a fixed value in tests). */
   today?: string;
+  /**
+   * Check every part's symbol pins against its footprint's pads (#314). The
+   * agent's draft tool passes one; standalone drafts and the reference-board
+   * corpus do not, since they carry no board.
+   */
+  footprints?: FootprintResolver;
 }
 
 export type SchematicDraftResult =
@@ -55,11 +64,11 @@ export async function draftSchematicToText(opts: SchematicDraftOptions): Promise
   // vendor: false — this path is documented as not touching disk, and it backs
   // read-shaped callers (the stage-4 staleness probe); `draftSchematic` re-resolves
   // with a vendoring source after it decides to write
-  const symsource = new SymbolSource(opts.repoRoot, opts.symbolDirs, false);
+  const symsource = new SymbolSource(opts.repoRoot, opts.symbolDirs, false, path.dirname(path.join(opts.repoRoot, opts.schematic)));
   // docsDir may arrive repo-relative (config.docs); resolve against the repo
   const docsDir =
     opts.docsDir === undefined || opts.docsDir === null ? null : path.resolve(opts.repoRoot, opts.docsDir);
-  const { ok, findings, validated } = await validateIntent(intent, symsource, docsDir);
+  const { ok, findings, validated } = await validateIntent(intent, symsource, docsDir, opts.footprints);
   if (!ok || !validated) return { ok: false, findings, message: formatIrFindings(findings) };
 
   const projectName = path.basename(opts.schematic).replace(/\.kicad_sch$/, '');
@@ -106,16 +115,28 @@ export async function draftSchematicToText(opts: SchematicDraftOptions): Promise
 export async function draftSchematic(opts: SchematicDraftOptions): Promise<SchematicDraftResult> {
   const res = await draftSchematicToText(opts);
   if (!res.ok) return res;
+  const schDir = path.dirname(path.join(opts.repoRoot, opts.schematic));
+  // Read the user's table before writing anything: a table this cannot parse
+  // is refused, never rewritten, so its rows are not lost.
+  const tablePath = path.join(schDir, 'sym-lib-table');
+  let userRows: { name: string; text: string }[] = [];
+  if (existsSync(tablePath)) {
+    try {
+      userRows = symLibTableRows(await readFile(tablePath, 'utf8'));
+    } catch (e) {
+      const detail = `${path.relative(opts.repoRoot, tablePath)} is not a readable library table (${(e as Error).message}); fix or remove it, then draft again`;
+      return { ok: false, findings: [{ detail }], message: detail };
+    }
+  }
   await writeFile(res.schematicPath, res.text, 'utf8');
 
   // Vendor the engine-generated power symbols and point a project
   // sym-lib-table at every vendored nickname: without the table, ERC raises a
   // lib_symbol_issues warning per symbol ("configuration does not include the
   // library"), and `ok` requires a violation-free report.
-  const symsource = new SymbolSource(opts.repoRoot, opts.symbolDirs);
+  const symsource = new SymbolSource(opts.repoRoot, opts.symbolDirs, true, schDir);
   for (const lib of res.generatedLibs) await symsource.vendorGenerated(lib.libId, lib.sourceText);
   for (const libId of res.vendoredLibIds) await symsource.resolve(libId);
-  const schDir = path.dirname(path.join(opts.repoRoot, opts.schematic));
   // Without a project file KiCad never loads the project sym-lib-table (or
   // resolves ${KIPRJMOD}), so every embedded symbol raises a lib_symbol_issues
   // warning and ERC can never report clean. The create pipeline's bootstrap
@@ -132,14 +153,42 @@ export async function draftSchematic(opts: SchematicDraftOptions): Promise<Schem
     await writeFile(proPath, JSON.stringify(pro, null, 2) + '\n', 'utf8');
   }
   const cacheRel = path.relative(schDir, symsource.cacheDir()).split(path.sep).join('/');
-  const rows = symsource
-    .vendoredLibs()
+  const vendored = new Set(symsource.vendoredLibs());
+  // Rows the user added (a project-local vendor library, #314) survive the
+  // rewrite verbatim, however they are laid out; only nicknames now served
+  // from the cache, and the rows copperhead wrote before, are replaced.
+  const kept = userRows.filter((r) => !vendored.has(r.name) && !r.text.includes('copperhead vendored')).map((r) => `\t${r.text}`);
+  const rows = [...vendored]
     .map(
       (lib) =>
         `\t(lib (name "${lib}")(type "KiCad")(uri "\${KIPRJMOD}/${cacheRel ? cacheRel + '/' : ''}${lib}.kicad_sym")(options "")(descr "copperhead vendored"))`,
     );
-  await writeFile(path.join(schDir, 'sym-lib-table'), `(sym_lib_table\n\t(version 7)\n${rows.join('\n')}\n)\n`, 'utf8');
+  await writeFile(path.join(schDir, 'sym-lib-table'), `(sym_lib_table\n\t(version 7)\n${[...kept, ...rows].join('\n')}\n)\n`, 'utf8');
   return res;
+}
+
+/**
+ * Each top-level `(lib …)` row of a `sym-lib-table`, with its nickname and its
+ * exact source text (a row may span lines). Throws on a file that is not
+ * exactly one balanced `(sym_lib_table …)` list: anything else before or
+ * after it is content the rewrite would drop, so the file is refused instead.
+ */
+export function symLibTableRows(text: string): { name: string; text: string }[] {
+  const open = text.indexOf('(sym_lib_table');
+  if (open < 0) throw new Error('no (sym_lib_table …) list');
+  if (text.slice(0, open).trim()) throw new Error('content before the (sym_lib_table …) list');
+  const tail = text.slice(listEnd(text, open)).trim();
+  if (tail) throw new Error(`content after the (sym_lib_table …) list: ${tail.slice(0, 40)}`);
+  const rows: { name: string; text: string }[] = [];
+  for (const span of childSpans(text, open)) {
+    if (span.tag !== 'lib') continue;
+    const row = text.slice(span.start, span.end);
+    const node = parseSexp(row)[0];
+    const name = node && isList(node) ? child(node, 'name')?.[1] : undefined;
+    if (typeof name !== 'string' || !name) throw new Error(`a (lib …) row has no name: ${row.slice(0, 80)}`);
+    rows.push({ name, text: row });
+  }
+  return rows;
 }
 
 export function formatSchematicDraftReport(report: SchematicDraftReport): string {

@@ -1,6 +1,6 @@
 import { execa, ExecaError } from 'execa';
 import { existsSync, readdirSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { normalizeReport, type CheckReport } from './report.js';
@@ -233,6 +233,7 @@ async function runKicad(args: string[], opts?: { reject?: boolean }): Promise<Aw
 /** Test helper: clear the resolved-binary cache. */
 export function resetKicadCliCache(): void {
   cachedBinary = undefined;
+  cachedMajor = undefined;
 }
 
 /**
@@ -256,6 +257,24 @@ export function setKicadFallbackWinRoots(roots?: readonly string[]): void {
 export async function kicadCliVersion(): Promise<string> {
   const res = await runKicad(['version']);
   return String(res.stdout ?? '').trim();
+}
+
+let cachedMajor: Promise<number | null> | undefined;
+
+/**
+ * The running kicad-cli's major version (10 for "10.0.4"), or null when it
+ * cannot be read. Library lookups use it to read the same KiCad's config and
+ * libraries that DRC will, not whichever install is newest. Cached per process.
+ */
+export function kicadMajorVersion(): Promise<number | null> {
+  cachedMajor ??= kicadCliVersion().then(
+    (v) => {
+      const major = Number(/(\d+)\.\d+/.exec(v)?.[1]);
+      return Number.isFinite(major) ? major : null;
+    },
+    () => null,
+  );
+  return cachedMajor;
 }
 
 async function runCheck(
@@ -328,6 +347,38 @@ export async function kicadLoadError(filePath: string): Promise<string | null> {
 
 export function runDrc(pcbPath: string): Promise<CheckReport> {
   return runCheck('drc', pcbPath);
+}
+
+/**
+ * Unrouted connections on a board given as text (a run's starting board, say).
+ * Connectivity depends only on the board's own copper, so a lone temp copy
+ * gives the same count as the board in place.
+ */
+export async function unroutedCount(boardText: string): Promise<number> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-unrouted-'));
+  try {
+    const probe = path.join(dir, 'baseline.kicad_pcb');
+    await writeFile(probe, boardText, 'utf8');
+    return (await runDrc(probe)).unrouted ?? 0;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** The schematic's KiCad netlist (kicadsexpr), as text. Throws kicad-cli's own error. */
+export async function exportNetlist(schPath: string): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-netlist-'));
+  const out = path.join(dir, 'board.net');
+  try {
+    const res = await runKicad(['sch', 'export', 'netlist', '--output', out, schPath], { reject: false });
+    if (res.exitCode !== 0 || !existsSync(out)) {
+      const detail = [res.stderr, res.stdout].filter(Boolean).join('\n').trim();
+      throw new Error(`kicad-cli could not export the schematic netlist: ${detail || `exit ${res.exitCode}`}`);
+    }
+    return await readFile(out, 'utf8');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 export interface FabExportResult {

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { parseSexp, children, child, isList, type SexpNode, type Bounds } from '../sexp.js';
 import { symbolSearchDirs, findLibraryFile, findSymbolAcrossLibraries, closestSymbolNames } from '../symlib.js';
 import { EMIT_VERSION, renameSymbolBlock } from '../emit.js';
+import { libTableRows } from '../libtable.js';
 
 /**
  * Symbol resolution for the drafting engine, with hermetic vendoring (design
@@ -282,6 +283,26 @@ async function crossLibrarySuggestions(name: string, lib: string, dirs: string[]
 
 export class SymbolSource {
   private cache = new Map<string, ResolvedSymbol>();
+  private projectLibs: Promise<Map<string, string>> | null = null;
+
+  /**
+   * Libraries the project's own `sym-lib-table` names (#314): a project-local
+   * vendor library (an Espressif module, say) resolves without copying the
+   * stock set around it. Rows pointing into the vendored cache are skipped,
+   * since `resolve` reads the cache first anyway.
+   */
+  private async projectLibrary(lib: string): Promise<string | null> {
+    this.projectLibs ??= (async () => {
+      const { rows } = await libTableRows('sym', { projectDir: this.projectDir ?? this.repoRoot, global: false });
+      const cache = path.resolve(this.cacheDir());
+      const out = new Map<string, string>();
+      for (const [name, row] of rows) {
+        if (!path.resolve(row.uri).startsWith(cache + path.sep) && existsSync(row.uri)) out.set(name, row.uri);
+      }
+      return out;
+    })();
+    return (await this.projectLibs).get(lib) ?? null;
+  }
 
   /**
    * @param repoRoot project root; the vendored cache lives at `<root>/sym-lib-cache/`
@@ -290,11 +311,15 @@ export class SymbolSource {
    *   vendored cache or the installed libraries verbatim, but nothing is copied
    *   into `sym-lib-cache/`. For read-shaped callers (`draftSchematicToText`, staleness
    *   probes) that must not mutate the working tree.
+   * @param projectDir the directory holding the `.kicad_pro` (beside the
+   *   schematic): its `sym-lib-table` and `${KIPRJMOD}`. Defaults to `repoRoot`,
+   *   which is right only for a project at the repo root.
    */
   constructor(
     private readonly repoRoot: string,
     private readonly searchDirs?: string[],
     private readonly vendor: boolean = true,
+    private readonly projectDir?: string,
   ) {}
 
   cacheDir(): string {
@@ -391,13 +416,20 @@ export class SymbolSource {
     const vendored = path.join(this.cacheDir(), vendorFileName(lib));
     let block: string | null = null;
     let fromInstalled = false;
+    // a library the project's own sym-lib-table names is already project-local:
+    // it is read in place, never copied into the vendored cache, so the user's
+    // row stays the source and every symbol in it stays reachable (a partial
+    // cache under the same nickname would shadow the rest)
+    let fromProject = false;
     if (existsSync(vendored)) {
       block = extractSymbolBlock(await readFile(vendored, 'utf8'), name);
       if (block) this.libs.add(lib);
     }
     if (!block) {
       const dirs = this.searchDirs ?? (await symbolSearchDirs());
-      const file = await findLibraryFile(lib, dirs);
+      const project = await this.projectLibrary(lib);
+      fromProject = project !== null;
+      const file = project ?? (await findLibraryFile(lib, dirs));
       if (!file) {
         const elsewhere = await crossLibrarySuggestions(name, lib, dirs);
         if (elsewhere.length) throw new SymbolResolutionError(libId, 'found-elsewhere', elsewhere);
@@ -423,12 +455,12 @@ export class SymbolSource {
         throw new SymbolResolutionError(libId, 'no-symbol', candidates);
       }
       fromInstalled = true;
-      this.libs.add(lib);
+      if (!fromProject) this.libs.add(lib);
     }
 
     const node = parseSymbolNode(block);
     const inherited = await this.inherit(libId, lib, node, depth);
-    if (fromInstalled && this.vendor) {
+    if (fromInstalled && this.vendor && !fromProject) {
       // Derived symbols vendor FLATTENED under their own name, never as the
       // library's `extends` stub. A vendored stub makes the project
       // sym-lib-table resolve the derived name to base-geometry-plus-derived-
