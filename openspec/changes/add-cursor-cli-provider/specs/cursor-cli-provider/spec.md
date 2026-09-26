@@ -22,7 +22,6 @@ The `cursor` provider SHALL run the CLI in plan mode with sandbox enabled and an
 
 When the model reply does not contain a parseable copperhead tool-call JSON object, the provider SHALL return assistant text with empty `toolCalls` rather than throwing.
 
-
 ### Requirement: Fabricated tool results are discarded
 When the model's reply continues past its tool calls in the harness's own transcript format (a line holding only `[result of <tool>]` or `[user]`), the provider SHALL treat everything from that line on as fabricated: it SHALL dispatch only the tool calls before it, SHALL NOT return the discarded text as assistant content, and SHALL return a notice naming the number of discarded blocks and tool calls, which the loop sends to the model after the real tool results. The discarded text SHALL be recorded in the transcript. A marker inside a JSON string value, or not alone on its line, SHALL NOT cut the reply.
 
