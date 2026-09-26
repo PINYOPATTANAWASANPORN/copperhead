@@ -244,6 +244,32 @@ describe('CachingProvider', () => {
     }
   });
 
+  it('does not replay entries cached before the fabricated-result cut for text-protocol providers (#320)', async () => {
+    // A turn cached before #320 can hold tool calls planned after a result the model
+    // invented. The key for claude-code and cursor now carries the protocol version, so
+    // such an entry is never found; an openai entry keeps its old key and still replays.
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-cache-'));
+    try {
+      const legacyKey = (name: string) =>
+        createHash('sha256').update(JSON.stringify({ model: name, messages: msgs, tools: tools.map((t) => t.name) })).digest('hex');
+      for (const name of ['claude-code', 'openai']) {
+        await writeFile(path.join(dir, `${legacyKey(name)}.json`), JSON.stringify({ ...turn('legacy'), toolCalls: [{ id: 'x', name: 'edit_file', args: {} }] }), 'utf8');
+      }
+      let ccCalls = 0;
+      let oaCalls = 0;
+      const cc = new CachingProvider({ name: 'claude-code', chat: async () => (ccCalls++, turn('fresh')) }, dir);
+      const oa = new CachingProvider({ name: 'openai', chat: async () => (oaCalls++, turn('fresh')) }, dir);
+      const ccTurn = await cc.chat(msgs, tools);
+      const oaTurn = await oa.chat(msgs, tools);
+      expect(ccCalls).toBe(1); // the legacy entry is not found: the model is called
+      expect(ccTurn.text).toBe('fresh');
+      expect(oaCalls).toBe(0); // an openai entry keeps its key and replays as before
+      expect(oaTurn.text).toBe('legacy');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('does not share cached turns across compat endpoints with the same model id', async () => {
     // A model id like "compat:llama-3.1-8b-instant" is not unique across hosts
     // (Groq, OpenRouter, etc. all serve overlapping model ids), so two
