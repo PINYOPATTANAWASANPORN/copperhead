@@ -19,6 +19,16 @@ import type { ChatOpts, Msg, Provider, ToolSchema, Turn } from './types.js';
  * The key is a content hash of the full message history and the advertised tool
  * names, so any change to the conversation or available tools is a fresh call.
  */
+/**
+ * Providers that speak the text tool protocol (`renderConversation` / `parseToolCalls`).
+ * Their cache entries carry the protocol's parser version: a turn cached before the
+ * fabricated-result cut (#320) can hold tool calls the model planned after a result it
+ * invented, and replaying it would dispatch them again. Bumping the version orphans only
+ * these providers' entries; keyed and codex caches are untouched.
+ */
+const TEXT_PROTOCOL_PROVIDERS = new Set(['claude-code', 'cursor']);
+const TEXT_PROTOCOL_VERSION = 2;
+
 export class CachingProvider implements Provider {
   readonly name: string;
   private hits = 0;
@@ -55,6 +65,7 @@ export class CachingProvider implements Provider {
           // (F6/D2), or every pre-existing cache entry — not just compat ones —
           // is orphaned on the first run after upgrade.
           ...(this.baseURL ? { baseURL: this.baseURL } : {}),
+          ...(TEXT_PROTOCOL_PROVIDERS.has(this.name) ? { toolProtocol: TEXT_PROTOCOL_VERSION } : {}),
           messages,
           tools: tools.map((t) => t.name),
         }),
