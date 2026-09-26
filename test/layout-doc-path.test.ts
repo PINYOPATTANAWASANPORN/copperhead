@@ -16,6 +16,10 @@ describe('the layout document path is named everywhere the gate reads it (#310)'
     expect(prompt).toContain('"## Draft quality" section in docs/LAYOUT.md');
     expect(prompt).toContain('including the repository root, is not read');
     expect(layout.prompt('brief', 'design/notes')).toContain('section in design/notes/LAYOUT.md');
+    // a root docs dir: the root file IS the document, so no warning against it
+    const root = layout.prompt('brief', '.');
+    expect(root).toContain('section in LAYOUT.md (at the repository root)');
+    expect(root).not.toContain('is not read');
   });
 
   it('the stage prompt says edit_file is the tool for tracks, zones and reference text', () => {
