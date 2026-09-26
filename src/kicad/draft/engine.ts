@@ -5702,22 +5702,19 @@ function draftOnce(
         const rowH = lines.map((row) => Math.max(...row.map((r) => r.y2 - r.y1)));
         const colW: number[] = [];
         for (const row of lines) row.forEach((r, j) => (colW[j] = Math.max(colW[j] ?? 0, r.x2 - r.x1)));
-        // The widest span grid-aligned boxes can take inside the frame: the
-        // first and last grid lines within it, not the frame itself (a row
-        // 0.14 mm inside A4's frame still ran 0.02 mm past it once its left
-        // edge landed on the first grid line in). A row wider than that
-        // closes its gaps, down to a unit, before it overruns the frame.
-        const span = grid(Math.floor((fit.paper.w - FRAME) / U + 1e-6)) - grid(Math.ceil(FRAME / U - 1e-6));
+        // Neighbours always stand the full gap apart. A row that then runs
+        // past the frame is not squeezed to fit (closing its gaps to a unit
+        // made royalblue's top row read as one block): the box crossing the
+        // frame shrinks the usable frame and the sheet is tiled again, which
+        // re-wraps the row or takes a larger sheet.
         const layOut = (asGrid: boolean): void => {
           let y = top0;
           lines.forEach((row, i) => {
             const widths = row.map((r, j) => (asGrid ? colW[j]! : r.x2 - r.x1));
-            const room = span - widths.reduce((a, w) => a + w, 0);
-            const gap = row.length > 1 && room < lineGap * (row.length - 1) ? Math.max(U, grid(Math.floor(room / (row.length - 1) / U + 1e-6))) : lineGap;
             let x = left0;
             row.forEach((r, j) => {
               place(r, x, y);
-              x += widths[j]! + gap;
+              x += widths[j]! + lineGap;
             });
             y += rowH[i]! + lineGap;
           });

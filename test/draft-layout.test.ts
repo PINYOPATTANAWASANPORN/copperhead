@@ -855,6 +855,24 @@ describe('group boxes: tight, padded, on a sheet grid', () => {
     }
   });
 
+  it('keeps every gutter four units wide on a crowded sheet, re-tiling instead of squeezing a row', async () => {
+    // three to seven groups fill a row of A5 or A4 exactly; the rows used to
+    // close their gutters to two units to stay inside the frame
+    const dims: Record<string, { w: number; h: number }> = { A5: { w: 210, h: 148 }, A4: { w: 297, h: 210 }, A3: { w: 420, h: 297 }, A2: { w: 594, h: 420 } };
+    for (let n = 3; n <= 7; n++) {
+      const { model } = await place(ribbon(n));
+      const rects = model.rectangles;
+      for (const row of rowsOf(rects).map((names) => names.map((m) => rects.find((r) => r.name === m)!))) {
+        for (let j = 1; j < row.length; j++) expect(row[j]!.x1 - row[j - 1]!.x2, `${n} groups: ${row[j - 1]!.name} to ${row[j]!.name}`).toBeGreaterThanOrEqual(4 * U - 1e-6);
+      }
+      const paper = dims[model.paper]!;
+      for (const r of rects) {
+        expect(r.x1, `${n} groups: ${r.name}`).toBeGreaterThanOrEqual(10);
+        expect(r.x2, `${n} groups: ${r.name}`).toBeLessThanOrEqual(paper.w - 10);
+      }
+    }
+  }, 60000);
+
   it('pads a box evenly: the same room left and right, two units past the widest drawn item', async () => {
     const { model } = await place(ribbon(4));
     for (const r of model.rectangles) {
