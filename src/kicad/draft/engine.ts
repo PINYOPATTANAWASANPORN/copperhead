@@ -78,6 +78,9 @@ const LABEL_HEIGHT = 1.27;
  */
 const LABEL_ADVANCE = 0.8;
 const TEXT_RESERVE = LABEL_ADVANCE;
+/** The legibility checker's text advance per height (its TEXT_ADVANCE, set
+ * short so it never invents a collision). */
+const CHECKER_ADVANCE = 0.6;
 /** Advance of KiCad's stroke font for the upper-case pin names inside a
  * body, per height: wider than the mixed-case reserve above. */
 const NAME_ADVANCE = 1.0;
@@ -291,6 +294,9 @@ export interface SchematicDraftReport {
   labelOverlaps: { x: number; y: number; nets: string[] }[];
   /** Whether `labelOverlaps` exceeded the tolerated fraction of all labels. */
   labelOverlapBudgetExceeded: boolean;
+  /** Labels whose text lies over a part's body: what the placement search
+   * weighs with label overlaps (the checker reports each as text-collision). */
+  labelsOverBodies: number;
 }
 
 /**
@@ -823,8 +829,9 @@ export function draftSchematicPlacement(validated: ValidatedIntent, projectName:
   // smaller sheet with every gate holding and the connector still upright.
   const flips = new Map<string, Orient>();
   const fitted = draftFitted(validated, projectName, today, flips);
-  const score = (m: PlacementModel): { overlaps: number; crossings: number; length: number } => ({
-    overlaps: labelOverlaps(m),
+  const score = (m: PlacementModel, r: SchematicDraftReport): { overlaps: number; crossings: number; length: number } => ({
+    // a label on another label, on a foreign wire, or over a part's body
+    overlaps: labelOverlaps(m) + r.labelsOverBodies,
     crossings: wireCrossings(m).length,
     // a label costs as much as an inch of wire: measured on wire alone,
     // a net drawn as labels cost nothing, and the search traded wired runs
@@ -842,9 +849,12 @@ export function draftSchematicPlacement(validated: ValidatedIntent, projectName:
   // standing between two nodes on one row sent its lower lead's wire around
   // itself) and end for end (a collector's load resistor with its rail end
   // toward the transistor sent the collector's wire over it and back).
+  // A connector is never turned, only mirrored: a two-pin header is not a
+  // two-lead part here (Conn_01x02 was turned 90° by the orientation trials)
   const twoLead = (ref: string): boolean => {
     const sym = validated.symbols.get(ref);
-    return !!sym && !sym.multiUnit && sym.pins.length === 2 && !sym.isPower;
+    const part = validated.intent.parts.find((p) => p.ref === ref);
+    return !!sym && !sym.multiUnit && sym.pins.length === 2 && !sym.isPower && !part?.libId.startsWith('Connector');
   };
   // Only a part with work to do is tried: one with a pin whose wire bends
   // before it gets anywhere, or that is named by a label where a wire might
@@ -852,9 +862,13 @@ export function draftSchematicPlacement(validated: ValidatedIntent, projectName:
   const unsettled = unsettledParts(fitted.model, validated);
   // A crystal and the load caps on its pins belong to the flanking idiom,
   // which mirrors the caps about the crystal: turning either one broke the
-  // symmetry (C2 turned 270° beside a C1 still hanging below its pin)
+  // symmetry (C2 turned 270° beside a C1 still hanging below its pin). Only
+  // the crystal's signal nets count: a resonator's ground pin would
+  // otherwise take every grounded part out of the search.
   const isCrystal = (ref: string): boolean => /crystal|reson/i.test(validated.intent.parts.find((p) => p.ref === ref)?.libId ?? '');
+  const netClass = new Map(fitted.report.netClasses.map((n) => [n.name, n.class]));
   for (const net of validated.intent.nets) {
+    if (netClass.get(net.name) !== 'signal') continue;
     const refs = net.pins.map((ep) => String(ep).split('.')[0]!);
     if (refs.some(isCrystal)) for (const ref of refs) unsettled.delete(ref);
   }
@@ -872,12 +886,26 @@ export function draftSchematicPlacement(validated: ValidatedIntent, projectName:
   const once = (f: ReadonlyMap<string, Orient>, lab: ReadonlySet<string> = labelled): { model: PlacementModel; report: SchematicDraftReport } =>
     draftOnce(validated, projectName, today, new Map(), 0, undefined, 0, undefined, f, lab);
   let kept = once(flips);
-  let best = score(kept.model);
+  let best = score(kept.model, kept.report);
   const notes: string[] = [];
+  // Every trial is a full draft pass, so a large board could spend minutes
+  // here: the search stops after SEARCH_PASSES passes, spent in intent order
+  // so the result stays deterministic, and says so in the notes.
+  let passes = 0;
+  let exhausted = false;
+  const spend = (): boolean => {
+    if (passes >= SEARCH_PASSES) {
+      exhausted = true;
+      return false;
+    }
+    passes++;
+    return true;
+  };
   for (const [ref, axis] of trials) {
+    if (!spend()) break;
     const trial = new Map([...flips, [ref, axis]]);
     const t = once(trial);
-    const sc = score(t.model);
+    const sc = score(t.model, t.report);
     // a connector keeps its rotation; a turned part never stands with its
     // ground end up or its supply end down (a decoupling cap turned end for
     // end drew GND above it and VCC below)
@@ -900,10 +928,11 @@ export function draftSchematicPlacement(validated: ValidatedIntent, projectName:
     const nets = [...new Set(at.flatMap((c) => kept.model.wires.filter((w) => (Math.abs(w.x1 - w.x2) < 1e-6 ? Math.abs(w.x1 - c.x) < 1e-6 && Math.min(w.y1, w.y2) < c.y && c.y < Math.max(w.y1, w.y2) : Math.abs(w.y1 - c.y) < 1e-6 && Math.min(w.x1, w.x2) < c.x && c.x < Math.max(w.x1, w.x2))).map((w) => w.net)))].filter((n) => !labelled.has(n)).sort();
     let improved = false;
     for (const net of nets) {
+      if (!spend()) break;
       const lab = new Set([...labelled, net]);
       const t = once(flips, lab);
-      const sc = score(t.model);
-      if (t.report.mergedNets.length === 0 && !t.report.labelOverlapBudgetExceeded && better(sc, best) && paperIdx(t) <= paperIdx(kept)) {
+      const sc = score(t.model, t.report);
+      if (t.report.mergedNets.length === 0 && !t.report.labelOverlapBudgetExceeded && better(sc, best) && paperIdx(t) <= paperIdx(kept) && refusals(t) <= refusals(kept)) {
         trace(`${net} labelled between column parts: crossings ${best.crossings} to ${sc.crossings}`);
         notes.push(`${net} labelled`);
         labelled.add(net);
@@ -915,12 +944,16 @@ export function draftSchematicPlacement(validated: ValidatedIntent, projectName:
     }
     if (!improved) break;
   }
-  if (!flips.size && !labelled.size) return fitted;
+  if (exhausted) trace(`placement search: stopped after ${SEARCH_PASSES} passes`);
+  if (!flips.size && !labelled.size) {
+    if (exhausted) fitted.report.notes.push(`placement search: stopped after ${SEARCH_PASSES} trial passes; no orientation kept`);
+    return fitted;
+  }
   const final = draftFitted(validated, projectName, today, flips, labelled);
   // the full fit keeps the page the unturned draft had, or a smaller one,
   // and its gates; otherwise the unturned draft stands
-  const fb = score(fitted.model);
-  const fs = score(final.model);
+  const fb = score(fitted.model, fitted.report);
+  const fs = score(final.model, final.report);
   // gates judged against the unturned draft: a sheet already carrying a
   // box past the frame is not held to a cleaner sheet than it is
   const gates = (d: { report: SchematicDraftReport }): number =>
@@ -929,7 +962,7 @@ export function draftSchematicPlacement(validated: ValidatedIntent, projectName:
     trace(`placement search: the full fit of ${flips.size} orientation(s) is no better (${fs.overlaps}/${fs.crossings}/${fs.length.toFixed(0)} against ${fb.overlaps}/${fb.crossings}/${fb.length.toFixed(0)}); kept as drafted`);
     return fitted;
   }
-  final.report.notes.push(`placement search: ${notes.join(', ')}; label overlaps ${fb.overlaps} to ${fs.overlaps}, wire crossings ${fb.crossings} to ${fs.crossings}`);
+  final.report.notes.push(`placement search: ${notes.join(', ')}; label overlaps ${fb.overlaps} to ${fs.overlaps}, wire crossings ${fb.crossings} to ${fs.crossings}${exhausted ? `; stopped after ${SEARCH_PASSES} trial passes` : ''}`);
   return final;
 }
 
@@ -937,6 +970,14 @@ export function draftSchematicPlacement(validated: ValidatedIntent, projectName:
  * connector) or turned (a two-lead part). */
 type Orient = 'x' | 'y' | 90 | 180 | 270;
 
+/** An amplifier's input pin by name, and its inverting input: one pattern
+ * for bridges, feedback loops and the shelf, so an op-amp named IN-/IN+
+ * gets its bridge as well as its loop. */
+const AMP_INPUT = /^(\+|-|−|IN[+-]|IN−)$/i;
+const AMP_INVERTING = /^(-|−|IN-|IN−)$/i;
+/** Draft passes the placement search may spend on trials, orientation and
+ * labelled-net trials together. */
+const SEARCH_PASSES = 60;
 /** What a label is worth in the placement search, mm of wire. */
 const LABEL_COST = 25.4;
 /** What a bend is worth in the placement search, mm of wire: a turn has to
@@ -1888,7 +1929,7 @@ function draftOnce(
       for (const icKey of anchors) {
         const ic = instByKey.get(icKey)!;
         const outs = ic.sym.pins.filter((p) => p.etype === 'output' || p.etype === 'open_collector');
-        const ins = ic.sym.pins.filter((p) => /^[+-]$/.test(p.name) && outward(p).dx !== 0);
+        const ins = ic.sym.pins.filter((p) => AMP_INPUT.test(p.name) && outward(p).dx !== 0);
         for (const outPin of outs) {
           const outNet = netByEndpoint.get(`${ic.ref}.${outPin.number}`);
           if (!outNet || outward(outPin).dx === 0) continue;
@@ -2161,7 +2202,7 @@ function draftOnce(
             // output cap) sat where the loop has to go, and the loop went
             // over the top through the other input's stub instead.
             const pinNet = netByEndpoint.get(`${ic.ref}.${g[0]!.pin.number}`);
-            const feedsBack = g[0]!.pin.etype === 'output' && ic.sym.pins.some((p) => /^(-|IN-|−)$/i.test(p.name) && !!pinNet?.pins.includes(`${ic.ref}.${p.number}`));
+            const feedsBack = g[0]!.pin.etype === 'output' && ic.sym.pins.some((p) => AMP_INVERTING.test(p.name) && !!pinNet?.pins.includes(`${ic.ref}.${p.number}`));
             const straight = !feedsBack && !sidePinYs.some((y) => y !== rowY && y > top - 5 * U && y < bot + 5 * U);
             for (const hg of g) hg.straight = straight;
             if (straight) continue;
@@ -2605,15 +2646,37 @@ function draftOnce(
         // cells) on one row even when the circuit above it is narrower.
         const blockW = Math.max(64, colX - groupX);
         let capBudget = Math.min(bandW, blockW);
+        // A bank member with horizontal leads (a TVS diode drawn lying down)
+        // stands up like the caps beside it, its rail lead on top; lying in
+        // the row it carried its ground symbol sideways under the next cap's
+        // name. Each member is turned, and measured, by its own leads.
+        const bankRotOf = (ref: string): number => {
+          const inst = instByKey.get(ref)!;
+          if (inst.sym.pins.length !== 2 || !inst.sym.pins.every((p) => outward(p).dx !== 0)) return 0;
+          const railPin = inst.sym.pins.find((p) => (netClasses.get(netByEndpoint.get(`${inst.ref}.${p.number}`)?.name ?? '')?.cls ?? 'signal') === 'rail') ?? inst.sym.pins[0]!;
+          return orientFor(ref, railPin.number, { dx: 0, dy: -1 }) ?? 90;
+        };
+        // A cap's slot, in units: a measured cap takes the room its drawing
+        // needed (its own fields, the rail bar and name above, the ground
+        // below) plus the pad; an unmeasured one a unit of air, its body, its
+        // reference and value beside it, and a fixed gap past that text
+        // (measured by body alone, "100u/25V" ran into the next part and the
+        // gaps read uneven). The row estimate, the rail-run check and the
+        // slot itself all use this one width.
+        const capSlot = (ref: string): { w: number; left: number } => {
+          const inst = instByKey.get(ref)!;
+          const b = bodyBoundsOf(rotatedSym(inst.sym, bankRotOf(ref)));
+          const mo = measured?.get(ref);
+          if (mo) return { w: ceilU(mo.left) + ceilU(b.maxX - b.minX) + ceilU(mo.right) + 2 * MEASURE_PAD, left: ceilU(mo.left) + MEASURE_PAD };
+          const capText = Math.max(inst.ref.length, inst.part.value.length) * TEXT_RESERVE * LABEL_HEIGHT + U;
+          return { w: BANK_AIR + ceilU(b.maxX - b.minX) + ceilU(capText) + BANK_GAP, left: BANK_AIR };
+        };
         // Under a height budget the bank is part of the group's height too:
         // when its rows at the circuit's width would run past the budget,
         // widen the bank — only as far as the rows need, never past the
         // band — instead of letting it decide the sheet on its own.
         if (colBudgetH !== Infinity) {
-          const capWidths = capRefs.map((ref) => {
-            const b = bodyBoundsOf(instByKey.get(ref)!.sym);
-            return ceilU(b.maxX - b.minX) + 2 * MARGIN;
-          });
+          const capWidths = capRefs.map((ref) => capSlot(ref).w);
           const rowsAt = (budget: number): number => {
             let rows = 1;
             let x = 0;
@@ -2635,30 +2698,13 @@ function draftOnce(
         let capX = groupX;
         let capY = groupMaxY + MARGIN + 4;
         let bankRowH = 2 * MARGIN + 6;
-        // A bank member with horizontal leads (a TVS diode drawn lying down)
-        // stands up like the caps beside it, its rail lead on top; lying in
-        // the row it carried its ground symbol sideways under the next cap's
-        // name. Each member is turned, and measured, by its own leads.
-        const bankRotOf = (ref: string): number => {
-          const inst = instByKey.get(ref)!;
-          if (inst.sym.pins.length !== 2 || !inst.sym.pins.every((p) => outward(p).dx !== 0)) return 0;
-          const railPin = inst.sym.pins.find((p) => (netClasses.get(netByEndpoint.get(`${inst.ref}.${p.number}`)?.name ?? '')?.cls ?? 'signal') === 'rail') ?? inst.sym.pins[0]!;
-          return orientFor(ref, railPin.number, { dx: 0, dy: -1 }) ?? 90;
-        };
         for (const ref of capRefs) {
           const inst = instByKey.get(ref)!;
           const rot = bankRotOf(ref);
           const sym = rotatedSym(inst.sym, rot);
           const b = bodyBoundsOf(sym);
-          // a measured cap takes the room its drawing needed (its own fields,
-          // the rail bar and name above, the ground below), plus the pad
           const mo = measured?.get(ref);
-          // a cap's reference and value stand beside its body, and the next
-          // cap starts a fixed gap past that text: measured by body alone,
-          // "100u/25V" ran into the next part and the gaps read uneven
-          const capText = Math.max(inst.ref.length, inst.part.value.length) * TEXT_RESERVE * LABEL_HEIGHT + U;
-          const capW = mo ? ceilU(mo.left) + ceilU(b.maxX - b.minX) + ceilU(mo.right) + 2 * MEASURE_PAD : BANK_AIR + ceilU(b.maxX - b.minX) + ceilU(capText) + BANK_GAP;
-          const capLeft = mo ? ceilU(mo.left) + MEASURE_PAD : BANK_AIR;
+          const { w: capW, left: capLeft } = capSlot(ref);
           const capTop = mo ? ceilU(mo.top) + MEASURE_PAD : MARGIN;
           const capRowH = mo ? capTop + ceilU(b.maxY - b.minY) + ceilU(mo.bottom) + MEASURE_PAD : 2 * MARGIN + 6;
           bankRowH = Math.max(bankRowH, capRowH);
@@ -2670,11 +2716,7 @@ function draftOnce(
           const railStart = capRefs.indexOf(ref) === 0 || railOf(capRefs[capRefs.indexOf(ref) - 1]!) !== railOf(ref);
           let railRunW = 0;
           if (railStart) {
-            for (let k = capRefs.indexOf(ref); k < capRefs.length && railOf(capRefs[k]!) === railOf(ref); k++) {
-              const kb = bodyBoundsOf(rotatedSym(instByKey.get(capRefs[k]!)!.sym, bankRotOf(capRefs[k]!)));
-              const km = measured?.get(capRefs[k]!);
-              railRunW += km ? ceilU(km.left) + ceilU(kb.maxX - kb.minX) + ceilU(km.right) + 2 * MEASURE_PAD : ceilU(kb.maxX - kb.minX) + 2 * MARGIN;
-            }
+            for (let k = capRefs.indexOf(ref); k < capRefs.length && railOf(capRefs[k]!) === railOf(ref); k++) railRunW += capSlot(capRefs[k]!).w;
           }
           const needW = railStart && railRunW <= capBudget ? railRunW : capW;
           if (capX > groupX && capX + needW - groupX > capBudget) {
@@ -2682,7 +2724,7 @@ function draftOnce(
             capY += bankRowH;
             bankRowH = capRowH;
           }
-          const ox = mo ? grid(capX + capLeft - Math.floor(b.minX / U)) : grid(capX + MARGIN);
+          const ox = grid(capX + capLeft - Math.floor(b.minX / U));
           const oy = mo ? grid(capY + capTop + Math.ceil(b.maxY / U)) : grid(capY + MARGIN);
           placed.set(ref, {
             part: inst.part,
@@ -4616,7 +4658,7 @@ function draftOnce(
     // whatever sat on the other side (the preamp's mid-rail buffer ran pin 6
     // across the bias divider to C5).
     const fedBack = new Set<Stub>();
-    const inverting = (pin: DraftPin): boolean => /^(-|IN-|−)$/i.test(pin.name);
+    const inverting = (pin: DraftPin): boolean => AMP_INVERTING.test(pin.name);
     for (const o of stubs.filter((x) => x.ep.pin.etype === 'output')) {
       const m = stubs.find((x) => x !== o && x.ep.ref === o.ep.ref && inverting(x.ep.pin) && !fedBack.has(x));
       if (!m) continue;
@@ -5034,8 +5076,8 @@ function draftOnce(
       // CENTRED on its anchor line, so a wire continuing under its text
       // runs straight through the flag; only the wire on the pole side
       // (behind the flag's tip) is its attachment.
-      const attached = (w: { x1: number; y1: number; x2: number; y2: number }): boolean => {
-        if (!segContains(w, x, y)) return false;
+      const attached = (w: { x1: number; y1: number; x2: number; y2: number; net: string }): boolean => {
+        if (!segContains(w, x, y) || w.net !== lb.name) return false;
         if (lb.kind !== 'global') return true;
         const r = ((rot % 360) + 360) % 360;
         if (r === 0) return Math.max(w.x1, w.x2) <= x + 0.01;
@@ -5043,6 +5085,12 @@ function draftOnce(
         if (r === 90) return Math.min(w.y1, w.y2) >= y - 0.01;
         return Math.max(w.y1, w.y2) <= y + 0.01;
       };
+      // an anchor on another net's wire joins the two nets in KiCad (a run's
+      // name stood where its trunk crossed CLK-D1 on sonde xilinx's J1), and
+      // a plain label's text stands above its line, so the text box alone
+      // never sees a horizontal wire through the anchor
+      const foreign = wires.find((w) => w.net !== lb.name && segContains(w, x, y));
+      if (foreign) return blocked(`${foreign.net}'s wire at the anchor`);
       const hitBody = [...placed.entries()].find(([, pl]) => boundsOverlap(box, pl.body));
       if (hitBody) return blocked(`the body of ${hitBody[0]} (${JSON.stringify(hitBody[1].body)})`);
       if (textObstacles.some((b) => boundsOverlap(padBox(box), b))) return blocked('field text');
@@ -5052,7 +5100,8 @@ function draftOnce(
       return !labels.some((o, i) => {
         if (i === rec.label || o.name === lb.name) return false;
         const ob = labelTextBox(o.name, o.x, o.y, o.rot, o.kind);
-        const stack = lb.kind === 'global' && o.kind === 'global' && (rot === 0 || rot === 180) && (o.rot === 0 || o.rot === 180);
+        // on the same row two flags end to end would read as one name
+        const stack = lb.kind === 'global' && o.kind === 'global' && (rot === 0 || rot === 180) && (o.rot === 0 || o.rot === 180) && Math.abs(o.y - lb.y) > 1e-6;
         return boundsOverlap(stack ? box : padBox(box), ob);
       });
     };
@@ -5936,6 +5985,15 @@ function draftOnce(
   // is counted against a budget and named in the report, so a sheet never ships
   // a blemish silently and never stalls a run over one either.
   const labelOverlaps = findLabelOverlaps(labels);
+  // measured as the legibility checker measures text (its short advance),
+  // so the count is what the checker would report, not the reserve; the
+  // bodies were placed before the sheet shift, so the label is taken back
+  const labelsOverBodies = labels.filter((l) => {
+    const box = labelBoxAt(l.name, l.x - dx, l.y - dy, l.rot, l.kind, CHECKER_ADVANCE);
+    const hit = [...placed.entries()].find(([, pl]) => !pl.sym.isPower && boundsOverlap(box, pl.body));
+    if (hit) trace(`label ${l.name} at (${l.x}, ${l.y}, ${l.rot}) lies over the body of ${hit[0]}`);
+    return !!hit;
+  }).length;
   const labelOverlapBudgetExceeded =
     labels.length > 0 && labelOverlaps.length / labels.length > LABEL_OVERLAP_BUDGET;
   if (labelOverlaps.length) {
@@ -5999,6 +6057,7 @@ function draftOnce(
     mergedNets,
     labelOverlaps,
     labelOverlapBudgetExceeded,
+    labelsOverBodies,
   };
   return { model, report, rects: groupRects, measured: measuredOut, reach: reachOut, wrapped: fit.wrap !== null };
 }
