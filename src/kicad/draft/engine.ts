@@ -914,6 +914,9 @@ export function draftSchematicPlacement(validated: ValidatedIntent, projectName:
     if (upright && holds && better(sc, best) && paperIdx(t) <= paperIdx(kept) && refusals(t) <= refusals(kept)) {
       const what = typeof axis === 'number' ? `turned ${axis}°` : axis === 'x' ? 'mirrored top to bottom' : 'mirrored left for right';
       trace(`${ref} ${what}: overlaps ${best.overlaps} to ${sc.overlaps}, crossings ${best.crossings} to ${sc.crossings}, cost ${best.length.toFixed(1)} to ${sc.length.toFixed(1)} mm`);
+      // a part keeps one orientation: a later kept trial replaces the earlier
+      // one, and so does its note (J2 was reported mirrored both ways)
+      for (let i = notes.length - 1; i >= 0; i--) if (notes[i]!.startsWith(`${ref} `)) notes.splice(i, 1);
       notes.push(`${ref} ${what}`);
       flips.set(ref, axis);
       kept = t;
