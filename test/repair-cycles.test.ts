@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { countRepairCycle } from '../src/capabilities/handlers.js';
+import { repairBudgetExhausted } from '../src/agent/loop.js';
 import type { RunContext } from '../src/agent/context.js';
 import type { CheckReport } from '../src/kicad/report.js';
 
@@ -54,6 +55,15 @@ describe('countRepairCycle: only a fix that did not work costs a cycle (#331)', 
     const s = session();
     for (let i = 0; i < 7; i++) s.step(report({ clearance: 3 }));
     expect(s.ctx.repairCycles).toBe(6); // the first failing check has nothing to compare with
+  });
+
+  it('rolls back on the maxRepairCycles-th failed repair, and a limit of 0 allows none', () => {
+    expect(repairBudgetExhausted(4, 5)).toBe(false);
+    expect(repairBudgetExhausted(5, 5)).toBe(true);
+    expect(repairBudgetExhausted(0, 0)).toBe(false);
+    expect(repairBudgetExhausted(1, 0)).toBe(true);
+    // the live sequence from #331: 3 failed repairs of 5, so the stage runs on
+    expect(repairBudgetExhausted(3, 5)).toBe(false);
   });
 
   it('ends a stuck silkscreen-only loop too, rather than running out the turn budget', () => {

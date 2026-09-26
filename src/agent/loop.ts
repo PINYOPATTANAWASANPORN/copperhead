@@ -203,6 +203,15 @@ async function appendChangelog(
   await writeFile(p, lines.join('\n'), 'utf8');
 }
 
+/**
+ * True once `max` repairs have failed. A cycle is counted only for a failed repair
+ * (`countRepairCycle`), so the limit is reached on the `max`-th failure, not one
+ * after it; a limit of 0 allows no failed repair at all.
+ */
+export function repairBudgetExhausted(used: number, max: number): boolean {
+  return used >= Math.max(max, 1);
+}
+
 export async function runAgentLoop(opts: RunOptions): Promise<RunResult> {
   const providers = new Set<Provider>();
   try {
@@ -624,7 +633,7 @@ async function runWithProviders(opts: RunOptions, providers: Set<Provider>): Pro
       messages.push({ role: 'tool', toolCallId: call.id, content: result });
     }
 
-    if (ctx.repairCycles > config.maxRepairCycles) {
+    if (repairBudgetExhausted(ctx.repairCycles, config.maxRepairCycles)) {
       return fail(`repair cycles exhausted (${config.maxRepairCycles}); violations persist`, 'repair-cycles-exhausted');
     }
 
