@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { emitSchematic } from '../emit.js';
 import { parseSexp, child, isList } from '../sexp.js';
-import { childSpans } from '../spans.js';
+import { childSpans, listEnd } from '../spans.js';
 import { SymbolSource } from './symsource.js';
 import type { FootprintResolver } from '../footprints.js';
 import { parseIntent, validateIntent, formatIrFindings, INTENT_FILENAME, type IrFinding } from './ir.js';
@@ -169,12 +169,16 @@ export async function draftSchematic(opts: SchematicDraftOptions): Promise<Schem
 
 /**
  * Each top-level `(lib …)` row of a `sym-lib-table`, with its nickname and its
- * exact source text (a row may span lines). Throws on a file that is not a
- * balanced `(sym_lib_table …)` list.
+ * exact source text (a row may span lines). Throws on a file that is not
+ * exactly one balanced `(sym_lib_table …)` list: anything else before or
+ * after it is content the rewrite would drop, so the file is refused instead.
  */
 export function symLibTableRows(text: string): { name: string; text: string }[] {
   const open = text.indexOf('(sym_lib_table');
   if (open < 0) throw new Error('no (sym_lib_table …) list');
+  if (text.slice(0, open).trim()) throw new Error('content before the (sym_lib_table …) list');
+  const tail = text.slice(listEnd(text, open)).trim();
+  if (tail) throw new Error(`content after the (sym_lib_table …) list: ${tail.slice(0, 40)}`);
   const rows: { name: string; text: string }[] = [];
   for (const span of childSpans(text, open)) {
     if (span.tag !== 'lib') continue;

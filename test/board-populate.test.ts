@@ -216,6 +216,25 @@ describe('the running KiCad version picks the config (AC-15.30)', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("searches only the running KiCad's versioned footprint dir when several are exported", async () => {
+    const nine = await mkdtemp(path.join(tmpdir(), 'copperhead-fp9-'));
+    const ten = await mkdtemp(path.join(tmpdir(), 'copperhead-fp10-'));
+    const generic = await mkdtemp(path.join(tmpdir(), 'copperhead-fpgen-'));
+    try {
+      const env = { KICAD9_FOOTPRINT_DIR: nine, KICAD10_FOOTPRINT_DIR: ten };
+      expect(await footprintSearchDirs(env, undefined, 9)).toEqual([nine]);
+      expect(await footprintSearchDirs(env, undefined, 10)).toEqual([ten]);
+      // the generic override always applies, ahead of the versioned dir
+      expect(await footprintSearchDirs({ ...env, KICAD_FOOTPRINT_DIR: generic }, undefined, 9)).toEqual([generic, nine]);
+      // unknown version: every exported dir, newest first, as before
+      expect(await footprintSearchDirs(env)).toEqual([ten, nine]);
+      // a version whose dir is not exported gets no other version's dir
+      expect(await footprintSearchDirs({ KICAD10_FOOTPRINT_DIR: ten }, undefined, 9)).not.toContain(ten);
+    } finally {
+      for (const d of [nine, ten, generic]) await rm(d, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('exact footprint resolution (AC-15.29, AC-15.30, AC-15.33)', () => {
@@ -241,6 +260,20 @@ describe('exact footprint resolution (AC-15.29, AC-15.30, AC-15.33)', () => {
     expect(noName).toMatchObject({ ok: false, why: 'no-footprint' });
     expect(noName.ok ? [] : noName.near.length).toBeGreaterThan(0);
     expect(await r.resolve('R_0603')).toMatchObject({ ok: false, why: 'bad-id' });
+  });
+
+  it('a typo in both the library and the name still shows the installed id, flagged as a guess', async () => {
+    const r = await FootprintResolver.create({ projectDir: emptyConfig, env: hermetic(), global: false });
+    const both = await r.resolve('Resistors:R_0603_1608Metrc');
+    expect(both).toMatchObject({ ok: false, why: 'no-library', fuzzy: true });
+    expect(both.ok ? [] : both.near).toContain('Resistor_SMD:R_0603_1608Metric');
+    // an exact name found under another nickname is not a guess
+    const exact = await r.resolve('Resistors:R_0603_1608Metric');
+    expect(exact).toMatchObject({ ok: false, why: 'no-library' });
+    expect(exact.ok || exact.fuzzy).toBeFalsy();
+    // the stop message says which kind it is showing
+    const missing = await missingFootprints([{ ref: 'R1', footprint: 'Resistors:R_0603_1608Metrc' }], r);
+    expect(formatMissingFootprints(missing, r.searched, 'x')).toContain('closest installed: Resistor_SMD:R_0603_1608Metric');
   });
 
   it('the stop message names every part, the fix, and no absolute path', async () => {
@@ -586,6 +619,33 @@ describe('project symbol libraries (AC-15.31)', () => {
       expect(res.ok).toBe(false);
       expect(res.ok ? '' : res.message).toMatch(/sym-lib-table is not a readable library table/);
       expect(await readFile(table, 'utf8')).toBe(broken);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('refuses a sym-lib-table with content outside the list, rather than dropping it on rewrite', async () => {
+    const row = '\t(lib (name "UserLib")(type "KiCad")(uri "x.kicad_sym")(options "")(descr ""))\n';
+    const good = `(sym_lib_table\n\t(version 7)\n${row})\n`;
+    expect(symLibTableRows(good).map((r) => r.name)).toEqual(['UserLib']);
+    expect(() => symLibTableRows(`(lib (name "Stray"))\n${good}`)).toThrow(/before the \(sym_lib_table/);
+    expect(() => symLibTableRows(`${good}(lib (name "Stray"))\n`)).toThrow(/after the \(sym_lib_table/);
+    expect(() => symLibTableRows(`${good}garbage`)).toThrow(/after the \(sym_lib_table/);
+    const { repo, cleanup } = await draftedProject();
+    try {
+      const table = path.join(repo, 'sym-lib-table');
+      const trailing = `${good}(lib (name "Stray")(type "KiCad")(uri "y.kicad_sym")(options "")(descr ""))\n`;
+      await writeFile(table, trailing, 'utf8');
+      const res = await draftSchematic({
+        repoRoot: repo,
+        schematic: SCH,
+        intentPath: 'schematic.intent.json',
+        docsDir: path.join(repo, 'docs'),
+        symbolDirs: [SYMLIB],
+      });
+      expect(res.ok).toBe(false);
+      expect(res.ok ? '' : res.message).toMatch(/sym-lib-table is not a readable library table/);
+      expect(await readFile(table, 'utf8')).toBe(trailing);
     } finally {
       await cleanup();
     }

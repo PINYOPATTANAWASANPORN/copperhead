@@ -27,9 +27,14 @@ export async function footprintSearchDirs(
   winRoot = 'C:/Program Files/KiCad',
   kicadMajor?: number | null,
 ): Promise<string[]> {
-  const fromEnv = [env.KICAD_FOOTPRINT_DIR, env.KICAD10_FOOTPRINT_DIR, env.KICAD9_FOOTPRINT_DIR, env.KICAD8_FOOTPRINT_DIR].filter(
-    (v): v is string => !!v,
-  );
+  // The generic override always applies. A versioned variable applies only
+  // for the KiCad that is running: with KICAD9_ and KICAD10_FOOTPRINT_DIR both
+  // exported, a KiCad 9 run must not copy KiCad 10 geometry onto a board its
+  // own DRC then checks. Without a known version, newest first as before.
+  const versioned = kicadMajor
+    ? [env[`KICAD${kicadMajor}_FOOTPRINT_DIR`]]
+    : [env.KICAD10_FOOTPRINT_DIR, env.KICAD9_FOOTPRINT_DIR, env.KICAD8_FOOTPRINT_DIR];
+  const fromEnv = [env.KICAD_FOOTPRINT_DIR, ...versioned].filter((v): v is string => !!v);
   const candidates = fromEnv.length
     ? fromEnv
     : [
@@ -100,7 +105,18 @@ export function closestFootprints(names: Iterable<string>, query: string, cap = 
 
 export type FootprintLookup =
   | { ok: true; file: string; library: string }
-  | { ok: false; why: FootprintMiss; near: string[] };
+  | {
+      ok: false;
+      why: FootprintMiss;
+      /** Installed ids to offer instead, best first. */
+      near: string[];
+      /**
+       * `near` holds ranked guesses, not an exact name found elsewhere. A
+       * guess is worth showing, but it is not evidence the id was a slip the
+       * model can fix: an uninstalled vendor library still stops the run.
+       */
+      fuzzy?: true;
+    };
 
 export interface FootprintResolverOptions {
   /** Directory holding the `.kicad_pro` (`${KIPRJMOD}`). */
@@ -175,7 +191,35 @@ export class FootprintResolver {
         }
         if (near.length >= 5) break;
       }
-      return { ok: false, why: 'no-library', near };
+      if (near.length) return { ok: false, why: 'no-library', near };
+      // No library carries that exact name, so the name may be mistyped too:
+      // rank every installed footprint by closeness, so a slip in both halves
+      // of the id still shows the installed id that was meant. Flagged fuzzy,
+      // because a near-miss across libraries is weak evidence (ESP32-C6 is one
+      // edit from ESP32-C3): the id is shown, the classification stays.
+      const owners = new Map<string, string[]>();
+      for (const [other, e] of this.libs) {
+        let files: string[] = [];
+        try {
+          files = await readdir(e.dir);
+        } catch {
+          // library dir listed in a table but missing on disk
+        }
+        for (const f of files) {
+          if (!f.endsWith('.kicad_mod')) continue;
+          const n = f.slice(0, -'.kicad_mod'.length);
+          const libs = owners.get(n);
+          if (libs) libs.push(other);
+          else owners.set(n, [other]);
+        }
+      }
+      for (const n of closestFootprints(owners.keys(), name, 5)) {
+        for (const other of owners.get(n) ?? []) {
+          if (near.length >= 5) break;
+          near.push(`${other}:${n}`);
+        }
+      }
+      return near.length ? { ok: false, why: 'no-library', near, fuzzy: true } : { ok: false, why: 'no-library', near };
     }
     const file = path.join(entry.dir, `${name}.kicad_mod`);
     try {
@@ -198,6 +242,8 @@ export interface MissingFootprint {
   footprint: string;
   why: FootprintMiss | 'none';
   near: string[];
+  /** `near` is ranked guesses, not an exact name found in another library. */
+  fuzzy?: true;
 }
 
 /** Resolve every (ref, footprint) pair; the misses, in ref order. */
@@ -212,7 +258,7 @@ export async function missingFootprints(
       continue;
     }
     const r = await resolver.resolve(p.footprint);
-    if (!r.ok) out.push({ ref: p.ref, footprint: p.footprint, why: r.why, near: r.near });
+    if (!r.ok) out.push({ ref: p.ref, footprint: p.footprint, why: r.why, near: r.near, ...(r.fuzzy ? { fuzzy: true } : {}) });
   }
   return out.sort((a, b) => a.ref.localeCompare(b.ref, undefined, { numeric: true }));
 }
@@ -235,7 +281,7 @@ export function formatMissingFootprints(missing: MissingFootprint[], searched: s
           : m.why === 'no-library'
             ? `no library named "${lib}"`
             : `library "${lib}" has no footprint "${m.footprint.slice(lib.length + 1)}"`;
-    const near = m.near.length ? `\n  ${' '.repeat(refW)}  installed: ${m.near.join(', ')}` : '';
+    const near = m.near.length ? `\n  ${' '.repeat(refW)}  ${m.fuzzy ? 'closest installed' : 'installed'}: ${m.near.join(', ')}` : '';
     return `  ${m.ref.padEnd(refW)}  ${(m.footprint || '(none)').padEnd(fpW)}  ${why}${near}`;
   });
   const libs = [...new Set(missing.filter((m) => m.why === 'no-library').map((m) => m.footprint.slice(0, m.footprint.indexOf(':'))))];

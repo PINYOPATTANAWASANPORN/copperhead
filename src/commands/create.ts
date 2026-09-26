@@ -406,10 +406,11 @@ async function bomFootprintMisses(
 /**
  * A miss the model can fix in BOM.md: a mistyped or invented name, a
  * non-id cell, an unassigned footprint, or a library nickname whose footprint
- * is installed under another library. A library that is simply not installed
- * (no near match anywhere) is the user's to install, and stops the run.
+ * is installed under another library by that exact name. A library that is
+ * simply not installed is the user's to install, and stops the run; the
+ * ranked guesses a miss may carry (`fuzzy`) are shown there, not acted on.
  */
-const modelFixable = (m: MissingFootprint): boolean => m.why !== 'no-library' || m.near.length > 0;
+const modelFixable = (m: MissingFootprint): boolean => m.why !== 'no-library' || (m.near.length > 0 && !m.fuzzy);
 
 async function bomFootprintStop(root: string, config: CopperheadConfig): Promise<string | null> {
   const r = await bomFootprintMisses(root, config.docs);

@@ -426,7 +426,7 @@ export const HANDLERS: HandlerDef[] = [
         const lib = id.includes(':') ? id.slice(0, id.indexOf(':')) : '';
         const why =
           r.why === 'bad-id' ? 'not a Lib:Name id' : r.why === 'no-library' ? `no library named "${lib}" is installed` : `library "${lib}" has no such footprint`;
-        lines.push(`MISS ${id}: ${why}${r.near.length ? `; installed: ${r.near.join(', ')}` : ''}`);
+        lines.push(`MISS ${id}: ${why}${r.near.length ? `; ${r.fuzzy ? 'closest installed' : 'installed'}: ${r.near.join(', ')}` : ''}`);
       }
       return `${lines.join('\n')}\n(searched: ${resolver.searched.join(', ') || 'no footprint libraries found'})`;
     },
