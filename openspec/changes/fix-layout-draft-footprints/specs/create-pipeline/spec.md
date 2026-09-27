@@ -58,7 +58,7 @@ The `check_footprints` tool SHALL resolve footprint ids exactly as the board pop
 
 Before each layout-draft attempt, the pipeline SHALL place every schematic part on the board: one footprint per netlist component (power symbols and parts excluded from the board omitted), with the schematic's refdes, value, and footprint id, pad geometry byte-identical to the library file, every pad's net equal to the schematic netlist's, and a schematic path link. It SHALL write the board only after KiCad loads the result, and a board it wrote SHALL pass DRC before the agent's first turn, or the run SHALL stop, naming the findings (and a missing global `fp-lib-table` when KiCad cannot find the libraries). An unresolved footprint, or a netlist pin with no matching pad in its footprint, SHALL stop the run and leave the board byte-identical. A KiCad 5 `(module …)` library file SHALL populate like a current one. A footprint's own zones, which a board stores in board coordinates, SHALL move to its position. Every object id inside a placed footprint SHALL be unique on the board, derived deterministically from the instance. When the parts do not fit a single-rectangle outline, that outline SHALL grow roughly square; with any other outline, every packed part SHALL lie inside its real shape (cutouts included), or the run SHALL stop. The scaffold project SHALL allow 0.2 mm holes, which stock QFN thermal vias use, and its custom rules SHALL hold board vias to a 0.3 mm drill. A board already holding exactly the schematic's footprints on the schematic's nets SHALL be left unchanged; a board holding different footprints, or pads on other nets, SHALL be refused, not rewritten. Populating the same schematic twice SHALL produce byte-identical boards, independent of the process locale.
 
-The populated board SHALL be the stage's own mutation: the stage's agent run SHALL count the board as touched, so finishing requires a passing `run_drc`; each retry SHALL start from the pre-stage board, re-populated; and a stage that does not complete (a stop, an abort, exhausted retries, or an error) SHALL leave the last verified board: the pre-stage board, or, when an attempt committed, that commit's board.
+The populated board SHALL be the stage's own mutation: the stage's agent run SHALL count the board as touched, so finishing requires a passing `run_drc`; each retry SHALL start from the last verified board (the board an attempt committed when it still matches the schematic, else the pre-stage board, re-populated); and a stage that does not complete (a stop, an abort, exhausted retries, or an error) SHALL leave the last verified board: the pre-stage board, or, when an attempt committed, that commit's board.
 
 #### Scenario: Populated board matches the schematic
 
@@ -99,6 +99,11 @@ The populated board SHALL be the stage's own mutation: the stage's agent run SHA
 
 - **WHEN** an attempt changed a footprint id and the diagnosis says retry
 - **THEN** the next attempt runs on a freshly populated board instead of stopping on the changed footprint
+
+#### Scenario: A retry keeps a committed attempt's board
+
+- **WHEN** an attempt committed a board that still matches the schematic, the stage contract failed on the layout document alone, and the diagnosis says retry
+- **THEN** the next attempt runs on that committed board, and populate writes nothing
 
 #### Scenario: A populated board that fails DRC stops
 
@@ -169,7 +174,12 @@ Layout SHALL place parts with a `move_footprint` tool (refdes, x, y, optional ab
 
 ### Requirement: Strict layout-draft completion
 
-The layout-draft stage SHALL complete only when the board's (refdes, footprint id) pairs equal the schematic netlist's exactly, every pad of those parts is on its schematic netlist net, the board passes DRC, and LAYOUT.md has its `## Draft quality` section. The stage prompt SHALL tell the agent the parts are already placed and that it moves footprints and routes, never adding, deleting, or rewriting a footprint, pad, or net.
+The layout-draft stage SHALL complete only when the board's (refdes, footprint id) pairs equal the schematic netlist's exactly, every pad of those parts is on its schematic netlist net, the board passes DRC, and LAYOUT.md has its `## Draft quality` section, numbered (`## 4. Draft quality`) or not. The stage prompt SHALL tell the agent the parts are already placed and that it moves footprints and routes, never adding, deleting, or rewriting a footprint, pad, or net.
+
+#### Scenario: A numbered Draft quality heading counts
+
+- **WHEN** LAYOUT.md numbers its headings and the section is `## 4. Draft quality`
+- **THEN** the document gate is satisfied, for the stage and for the fab documentation gate
 
 #### Scenario: Outline-only board does not complete
 

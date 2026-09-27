@@ -49,11 +49,21 @@ export function isCreateProducedRepo(config: unknown): boolean {
  * heading is absent. HTML comments and whitespace alone do not count as filled
  * (init scaffolds the empty heading + a placeholder comment).
  */
+/**
+ * The Draft quality heading, with or without the numbering a LAYOUT.md whose
+ * other headings are numbered carries (`## 4. Draft quality`, `## 4) Draft
+ * quality`) (#327). One matcher for the fab gate and the create stage gate.
+ */
+const DRAFT_QUALITY_HEADING_RE = /^##\s+(?:\d+[.)]\s+)?Draft quality\s*$/;
+export function isDraftQualityHeading(line: string): boolean {
+  return DRAFT_QUALITY_HEADING_RE.test(line.trim());
+}
+
 export function draftQualitySection(layoutMd: string): string | null {
   const lines = layoutMd.split(/\r?\n/);
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i]!.trim() === DRAFT_QUALITY_HEADING) {
+    if (isDraftQualityHeading(lines[i]!)) {
       start = i + 1;
       break;
     }

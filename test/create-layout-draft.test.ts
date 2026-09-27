@@ -59,7 +59,7 @@ vi.mock('../src/agent/recovery.js', async (importOriginal) => ({
 vi.mock('../src/openspec/cli.js', () => ({ openspecInit: async () => ({ ok: true, output: 'mocked' }) }));
 vi.mock('../src/commands/check.js', () => ({ runCheck: async () => ({ ok: true }) }));
 
-import { runCreate } from '../src/commands/create.js';
+import { runCreate, layoutDocGap } from '../src/commands/create.js';
 
 /**
  * A git repo whose first four stages are complete: filled SPEC/SUBSYSTEMS/BOM
@@ -174,6 +174,52 @@ describe('create layout-draft around board populate (#314)', () => {
       await run(repo, brief);
       expect(typeof layout.calls[0]?.stageGate).toBe('function');
       expect(gap).toContain('docs/LAYOUT.md has no "## Draft quality" section');
+    } finally {
+      await cleanup();
+    }
+  }, 180_000);
+
+  it('a numbered Draft quality heading satisfies the layout document gate (#327)', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'copperhead-layout-doc-'));
+    try {
+      await mkdir(path.join(root, 'docs'));
+      await writeFile(path.join(root, 'docs', 'LAYOUT.md'), '# Layout\n\n## 1. Placement\n\ntext\n\n## 4. Draft quality\n\nPower routed.\n', 'utf8');
+      expect(await layoutDocGap(root, 'docs/')).toBeNull();
+      await writeFile(path.join(root, 'docs', 'LAYOUT.md'), '# Layout\n\n## 4. Draft quality notes\n\ntext\n', 'utf8');
+      expect(await layoutDocGap(root, 'docs/')).toContain('has no "## Draft quality" section');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('a retry starts from the board an earlier attempt committed, not a fresh populate (#327)', async () => {
+    const { repo, brief, cleanup } = await projectAtLayoutDraft();
+    try {
+      verdict.value = 'retry';
+      const marker = '  (gr_text "kept" (at 0 0) (layer "Cmts.User") (effects (font (size 1 1) (thickness 0.15))))\n';
+      layout.attempts = [
+        // attempt 1: a DRC-clean layout is committed (a board edit that keeps every footprint),
+        // but the Draft quality section is missing, so the stage contract fails
+        async (opts) => {
+          const pcb = path.join(opts.repoRoot, PCB);
+          const text = await readFile(pcb, 'utf8');
+          await writeFile(pcb, text.slice(0, text.lastIndexOf(')')) + marker + text.slice(text.lastIndexOf(')')), 'utf8');
+          await execa('git', ['add', '-A'], { cwd: opts.repoRoot });
+          await execa('git', ['commit', '-q', '-m', 'layout attempt'], { cwd: opts.repoRoot });
+          return 'success';
+        },
+        async () => 'failure',
+      ];
+      const lines: string[] = [];
+      const res = await run(repo, brief, lines);
+      expect(res.ok).toBe(false);
+      // attempt 2 ran on the committed layout, with its parts, not on a re-populated board
+      expect(layout.boards.length).toBeGreaterThanOrEqual(2);
+      expect(layout.boards[1]).toContain('(gr_text "kept"');
+      expect(boardFootprints(layout.boards[1]!).length).toBe(5);
+      expect(lines.filter((l) => /placed \d+ footprint/.test(l))).toHaveLength(1);
+      // and the stage leaves that committed board in place
+      expect(await readFile(path.join(repo, PCB), 'utf8')).toContain('(gr_text "kept"');
     } finally {
       await cleanup();
     }

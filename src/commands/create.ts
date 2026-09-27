@@ -33,6 +33,7 @@ import { openspecInit } from '../openspec/cli.js';
 import { sweepStaleTempDirs, pruneHistoryDir } from '../util/tmp.js';
 import { bomSymbolDossier } from '../kicad/dossier.js';
 import { symbolSearchDirs } from '../kicad/symlib.js';
+import { isDraftQualityHeading } from '../kicad/fab.js';
 import { assertDiskSpace, DEFAULT_MIN_FREE_BYTES } from '../util/preflight.js';
 import { runCheck } from './check.js';
 import { emitCreateJlcpcbBom } from './export.js';
@@ -65,6 +66,13 @@ async function docHasContent(repoRoot: string, rel: string, marker: string): Pro
 // trailing decoration ("Budgets and constraints (...)"). Stage prompts don't
 // dictate exact heading text, so a literal `.includes('## Budgets')` produces
 // false negatives against valid docs titled e.g. "## 3. Budgets and constraints".
+/** The layout document has its Draft quality heading, numbered or not (#327). */
+async function docHasDraftQuality(repoRoot: string, rel: string): Promise<boolean> {
+  const p = path.join(repoRoot, rel);
+  if (!existsSync(p)) return false;
+  return (await readFile(p, 'utf8')).split(/\r?\n/).some(isDraftQualityHeading);
+}
+
 async function docHasHeading(repoRoot: string, rel: string, word: string): Promise<boolean> {
   const p = path.join(repoRoot, rel);
   if (!existsSync(p)) return false;
@@ -267,7 +275,7 @@ export const STAGES: Stage[] = [
       const config = await loadConfig(root);
       if (!config.board || !config.schematic) return false;
       if (!(await boardMatchesSchematic(root, config)).ok) return false;
-      if (!(await docHasContent(root, path.join(docs, 'LAYOUT.md'), '## Draft quality'))) return false;
+      if (await layoutDocGap(root, docs)) return false;
       // DRC-clean is part of "done", as ERC is for the schematic stage: a run
       // killed after Draft quality was written but before a clean run_drc must
       // not resume as complete and get its board committed unverified
@@ -477,8 +485,8 @@ async function populateStop(opts: CreateOptions): Promise<string | null> {
  */
 export async function layoutDocGap(root: string, docs: string): Promise<string | null> {
   const layoutDoc = path.posix.join(docs, 'LAYOUT.md');
-  if (await docHasContent(root, layoutDoc, '## Draft quality')) return null;
-  const stray = layoutDoc !== 'LAYOUT.md' && (await docHasContent(root, 'LAYOUT.md', '## Draft quality'));
+  if (await docHasDraftQuality(root, layoutDoc)) return null;
+  const stray = layoutDoc !== 'LAYOUT.md' && (await docHasDraftQuality(root, 'LAYOUT.md'));
   return (
     `${layoutDoc} has no "## Draft quality" section` +
     (stray ? `; the section was written to LAYOUT.md at the repository root, which this stage does not read: put it in ${layoutDoc}` : '')
@@ -1056,9 +1064,16 @@ export async function runCreate(opts: CreateOptions): Promise<{ ok: boolean; com
           }
         }
         if (stage.name === 'layout-draft') {
-          // a retry re-populates from the pre-stage board: the attempt it
-          // follows may have left footprints populate would refuse to touch
-          if (attempt > 1) await restoreBoard();
+          // A retry starts from the last verified board (#327): the board an
+          // earlier attempt committed when it still matches the schematic, so a
+          // DRC-clean placement is not redone over a documentation gap; else the
+          // pre-stage board, since the failed attempt may have left footprints
+          // populate would refuse to touch. Populate is idempotent on a
+          // populated board, so it only re-checks the committed one.
+          if (attempt > 1) {
+            await restoreVerifiedBoard();
+            if (!(await boardMatchesSchematic(opts.repoRoot, await loadConfig(opts.repoRoot))).ok) await restoreBoard();
+          }
           const populate = await populateStop(opts);
           if (populate) {
             opts.log(stageLine(stage.name, `create stopped: ${populate}`, 'err'));
