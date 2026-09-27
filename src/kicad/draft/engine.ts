@@ -614,6 +614,9 @@ function amplifierFlip(
   const mNet = netOf.get(`${ref}.${minus.number}`);
   const outNets = new Set(outs.map((o) => netOf.get(`${ref}.${o.number}`)).filter((n): n is string => !!n));
   if (!mNet || rail.has(mNet)) return undefined;
+  // a follower (output tied straight to the inverting input) is never a
+  // summing junction, whatever else loads its output
+  if (outNets.has(mNet)) return undefined;
   // the signal nets each other part touches
   const netsOfPart = new Map<string, Set<string>>();
   for (const net of intent.nets) {
@@ -2198,7 +2201,13 @@ function draftOnce(
           if (!net || (netClasses.get(net.name)?.cls ?? 'signal') !== 'signal') continue;
           // the wire pass draws this net only if it stays in the group with
           // few endpoints; a net that will be labelled anyway gives no hang
-          const eps = net.pins.map(epKey).filter((e): e is { key: string; pin: string } => e !== null);
+          // test points last: a series part on the pin takes the row first, and
+          // a probe listed before it in the net no longer pushed it onto a row
+          // of its own (the terminal lies on the row only when the row is free)
+          const eps = net.pins
+            .map(epKey)
+            .filter((e): e is { key: string; pin: string } => e !== null)
+            .sort((a, b) => Number(isTestPoint(a.key)) - Number(isTestPoint(b.key)));
           // A net that leaves the group or carries more endpoints than the
           // wire pass joins still hangs its local parts: the pull-up on a
           // fault line that also goes to the MCU, the RC on a button the
@@ -5331,8 +5340,10 @@ function draftOnce(
     const drawn: Bounds[] = [];
     const ownNet = (s: (typeof extraSymbols)[number]): string | undefined =>
       s.value === 'PWR_FLAG' ? wires.find((w) => (sameCoord(w.x1, s.at.x) && sameCoord(w.y1, s.at.y)) || (sameCoord(w.x2, s.at.x) && sameCoord(w.y2, s.at.y)))?.net : s.value;
+    const bodiesNow = [...placed.values()].map((pl) => pl.body);
     const clear = (s: (typeof extraSymbols)[number], b: Bounds): boolean => {
       if (drawn.some((d) => boundsOverlap(d, b))) return false;
+      if (bodiesNow.some((d) => boundsOverlap(d, b))) return false;
       const net = ownNet(s);
       // a glyph keeps clear of other nets' wires by a hair: one resting on a
       // neighbouring stub's row reads as touching it
@@ -5354,7 +5365,17 @@ function draftOnce(
       const o = s.value === 'PWR_FLAG' ? null : outwardOf(s);
       const up = kindOf(s) === 'ground' ? 180 : 0; // the rotation that points the glyph up (sheet -Y)
       const along = o && o.dy === 0 && o.dx !== 0 ? ((o.dx < 0 ? up + 90 : up + 270) % 360) : null;
-      const cands = [...new Set([0, ...(along !== null ? [along] : []), 180, 90, 270])];
+      // never back along the stub toward the part it serves (a ground symbol
+      // turned over on a downward stub pointed up across its own stub)
+      const stubDir = outwardOf(s);
+      const facesBack = (r: number): boolean => {
+        if (!stubDir || r === 0) return false;
+        const g = glyphAt(s, r);
+        const cx = (g.minX + g.maxX) / 2 - s.at.x;
+        const cy = (g.minY + g.maxY) / 2 - s.at.y;
+        return cx * stubDir.dx + cy * stubDir.dy < -0.01;
+      };
+      const cands = [...new Set([0, ...(along !== null ? [along] : []), 180, 90, 270])].filter((r) => !facesBack(r));
       const rot = cands.find((r) => clear(s, glyphAt(s, r)));
       if (rot !== undefined && rot !== 0) {
         trace(`${s.ref} (${s.value}) turned ${rot}° clear of a neighbouring glyph`);
@@ -5865,7 +5886,14 @@ function draftOnce(
       for (let i = 0; i < wires.length; i++) {
         const w = wires[i]!;
         for (const [fx, fy, ox, oy] of [[w.x1, w.y1, w.x2, w.y2], [w.x2, w.y2, w.x1, w.y1]] as const) {
-          const free = !anchored(fx, fy) && !wires.some((v, j) => j !== i && on(fx, fy, v));
+          // KiCad joins at wire ENDS: a free end resting inside a wire that runs
+          // the same way (collinear, overlapping) is still unconnected, so only
+          // a wire ending there, or crossing through it at a right angle, holds it
+          const colinear = (v: { x1: number; y1: number; x2: number; y2: number }): boolean =>
+            (sameCoord(v.y1, v.y2) && sameCoord(w.y1, w.y2)) || (sameCoord(v.x1, v.x2) && sameCoord(w.x1, w.x2));
+          const endsAt = (v: { x1: number; y1: number; x2: number; y2: number }): boolean =>
+            (sameCoord(v.x1, fx) && sameCoord(v.y1, fy)) || (sameCoord(v.x2, fx) && sameCoord(v.y2, fy));
+          const free = !anchored(fx, fy) && !wires.some((v, j) => j !== i && (endsAt(v) || (on(fx, fy, v) && !colinear(v))));
           const held = wires.some((v, j) => j !== i && v.net === w.net && on(ox, oy, v));
           if (free && held) {
             trace(`dangling tail of ${w.net} trimmed at (${fx}, ${fy})`);

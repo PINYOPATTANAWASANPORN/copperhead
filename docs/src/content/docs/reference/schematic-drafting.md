@@ -166,7 +166,7 @@ The third placement pass closes the gap between "most parts on their pins" and a
 
 **Group colours.** Every box is drawn dashed, in its group's colour over a faint tint of it, and the caption takes the same colour, so a subsystem reads as one block at a glance. Power groups are warm, connector and mechanical groups neutral grey, and every other group takes the next colour of a fixed cycle in sheet order, so neighbours differ and the same design is coloured the same way every time.
 
-**Boxes never intersect.** After the sheet is drawn, any two group boxes that intersect widen the right-hand group's tiling reserve (or, across the wrap, the gap between rows or columns) by the overlap, a box past the frame or grown into the title block's corner shrinks the usable frame by its overflow, and the sheet is drafted again, at most three times; placement is a pure function of the intent and these reserves. A sheet that still has a box wrong after that says so in its notes.
+**Boxes never intersect.** After the sheet is drawn, any two group boxes that intersect widen the right-hand group's tiling reserve (or, across the wrap, the gap between rows or columns) by the overlap, a box past the frame or grown into the title block's corner shrinks the usable frame by its overflow, and the sheet is drafted again, at most three times; placement is a pure function of the intent and these reserves. A box still across the frame or in the title block's corner after that moves the sheet up one paper size (at most twice, never when the intent pins the paper). A sheet that still has a box wrong after that says so in its notes. The title block is KiCad's default one, 110 mm wide and 34 mm tall at the bottom right, the same on every paper.
 
 ## Amplifiers, transistors and the placement search
 
@@ -174,7 +174,11 @@ These passes came from drafting analog boards: an audio preamp with op-amp buffe
 
 **Feedback drawn around the amplifier.** An op-amp output tied to its own inverting input is its feedback, and a reader looks for it drawn around the amplifier. That pair is routed first, before any clustering, as a loop: from the output's stub the wire drops (or rises) past everything between the two pins, crosses, and comes back into the input's stub. When the output's stub end already carries a hung part (a follower's output cap), the loop taps the stub a unit out from the pin, with a junction. Every variant that clears is kept, and the one crossing the fewest wires wins. The loop carries no name of its own when the net goes on: the output names it there. A net that is only the loop is named once. A part hung dead straight on such an output would sit where the loop has to go, so the output keeps its stub for the loop.
 
-**Feedback bridges.** A two-lead part between an amplifier's input and that unit's own output (a gain or hysteresis resistor, a compensation cap) lies across the amplifier: over the top from the upper input and under the bottom from the lower one, the way a drafter draws feedback. The amplifier's cell makes room for its bridges above and below. Laid along the input's row instead, its output end had to be wired back under the amplifier, through whatever hung from the other input (a comparator's hysteresis resistor crossed its own divider twice).
+**Inverting stages turned over.** An amplifier whose inverting input is a summing junction (fed back from its own output and fed a signal from elsewhere: inverting, summing, integrating and differential stages) is drawn mirrored, inverting input on top, so its feedback lies over it the way every handbook draws it. A non-inverting stage or follower keeps the symbol's own orientation, non-inverting input on top: a gain leg that ends on a rail, or a bootstrap back to the non-inverting input, is not a signal.
+
+**Fan-in.** A second or third independent input into a pin that already carries a series run (a summer's inputs) lies on a row of its own, the rows stacked five apart away from the amplifier's other input, first reference on top, and joined by one bus. Hung from the pin instead, each read as a shunt to its own input terminal.
+
+**Feedback bridges.** A two-lead part between an amplifier's input and that unit's own output (a gain or hysteresis resistor, a compensation cap) lies across the amplifier: over the top from the upper input and under the bottom from the lower one, the way a drafter draws feedback. The amplifier's cell makes room for its bridges above and below, and a bridge on the side of a supply pin passes beyond that pin's power symbol and name, so no supply arrow lands on a feedback part. Laid along the input's row instead, its output end had to be wired back under the amplifier, through whatever hung from the other input (a comparator's hysteresis resistor crossed its own divider twice).
 
 **One series run per row.** A row carries one series run. A second one laid past the first would end at the first's far net, not the pin's, and have to be wired back around it, so it drops from the pin in a lane of its own instead.
 
@@ -201,13 +205,13 @@ The target the engine draws toward, collected from practitioner guides, a hand-d
 | Convention | Whose | How |
 | --- | --- | --- |
 | Signals flow left to right; the IC leads its group; connectors on the left | engine | IC-first layering, connector column |
-| A part sits on the pin it serves: shunts hang in lanes, one junction per pin, series parts lie on the row, test points rise beside their net; connectors and switches anchor their parts too | engine | pin-anchored hangs, lanes with level bases, inline runs, node hangs |
+| A part sits on the pin it serves: shunts hang in lanes, one junction per pin, series parts lie on the row, test points are terminals at the end of their run (on a busy row they rise beside it; on a rail they stand in a grid at the group's right end); connectors and switches anchor their parts too | engine | pin-anchored hangs, lanes with level bases, inline runs, node hangs |
 | A transistor sits at the end of the run that drives it, base to the driver, collector up; its base parts hang from the base | engine | mirrored inline runs, transistor anchors |
 | Feedback drawn around the amplifier; a gain or hysteresis part bridges across it | engine | feedback loops, feedback bridges |
 | A connector's pins face the parts they serve; no avoidable crossing | engine | placement search, crossing nets labelled |
 | No two-pin part is left as a labelled island | engine | hangs, runs, node hangs, chain pass; gated on the reference boards |
 | Wire what is local, label what is not; one label per wired run | engine | cluster-first routing |
-| Rails and grounds are symbols, rails up and grounds down, one per bank of caps | engine | power pass, bank trunks |
+| Rails and grounds are symbols, rails up and grounds down, one per bank of caps; a glyph that would sit on a neighbour turns along its stub instead | engine | power pass, bank trunks |
 | Decoupling in banks with shared symbols; a PWR_FLAG at each undriven rail's first endpoint | engine | bank idiom, flag synthesis |
 | Every part carries a reference and a value that collide with nothing, 0.8 mm of air between texts; all text horizontal, on turned parts too | engine | field slot ladder, text padding, KiCad field angle |
 | Related nets coloured together: rails, grounds, and every family of signals sharing a prefix; lone signals in the theme default | engine | wire and label colour |
