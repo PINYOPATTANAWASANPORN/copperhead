@@ -293,7 +293,8 @@ describe('create layout-draft around board populate (#314)', () => {
       const lines: string[] = [];
       await run(repo, brief, lines);
       expect(lines.join('\n')).not.toMatch(/already has footprints that do not match/);
-      expect(layout.calls.length).toBeGreaterThanOrEqual(2);
+      // the pipeline's own log is the only trace of why a retry did not run
+      expect(layout.calls.length, lines.join('\n')).toBeGreaterThanOrEqual(2);
       // attempt 2 started from a freshly populated board, not attempt 1's edit
       expect(layout.boards[1]).toBe(layout.boards[0]);
     } finally {
