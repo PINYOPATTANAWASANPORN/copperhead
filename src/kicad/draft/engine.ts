@@ -963,7 +963,9 @@ export function draftSchematicPlacement(validated: ValidatedIntent, projectName:
   // box past the frame is not held to a cleaner sheet than it is
   const gates = (d: { report: SchematicDraftReport }): number =>
     (d.report.mergedNets.length ? 4 : 0) + (d.report.labelOverlapBudgetExceeded ? 2 : 0) + (d.report.notes.some((n) => /still wrong/.test(n)) ? 1 : 0);
-  if (gates(final) > gates(fitted) || paperIdx(final) > paperIdx(fitted) || !better(fs, fb)) {
+  // and no more refused placements than the unturned draft: the trials were
+  // held to it on one pass each, the full fit is held to it too
+  if (gates(final) > gates(fitted) || paperIdx(final) > paperIdx(fitted) || refusals(final) > refusals(fitted) || !better(fs, fb)) {
     trace(`placement search: the full fit of ${flips.size} orientation(s) is no better (${fs.overlaps}/${fs.crossings}/${fs.length.toFixed(0)} against ${fb.overlaps}/${fb.crossings}/${fb.length.toFixed(0)}); kept as drafted`);
     return fitted;
   }
