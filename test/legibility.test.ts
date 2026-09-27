@@ -134,6 +134,23 @@ describe('legibility checker: fixtures', () => {
 });
 
 describe('legibility checker: edge semantics', () => {
+  it("reserves KiCad's full 110 x 34 mm title block on a small sheet (AC-16.50)", async () => {
+    // A5 is 210 x 148 mm: the block spans x 90..200, y 104..138. The resistor's
+    // body (y 102..107) reaches into it; the old reservation, narrowed to 95 x
+    // 30 mm on small sheets (x from 105, y from 108), let it pass.
+    const inBlock = await inTemp(sch(symR('R1', 100, 104.5), '(paper "A5")'));
+    const clear = await inTemp(sch(symR('R1', 100, 90), '(paper "A5")'));
+    try {
+      const hit = await checkLegibility(inBlock.file, { docsDir: DOCS });
+      expect(hit.findings.some((f) => f.kind === 'out-of-frame' && f.refs.includes('R1'))).toBe(true);
+      const ok = await checkLegibility(clear.file, { docsDir: DOCS });
+      expect(ok.findings.some((f) => f.kind === 'out-of-frame')).toBe(false);
+    } finally {
+      await inBlock.cleanup();
+      await clear.cleanup();
+    }
+  });
+
   it('unknown paper size skips page checks loudly instead of passing', async () => {
     const { file, cleanup } = await inTemp(sch(symR('R1', 300, 300), '(paper "Weird")'));
     try {

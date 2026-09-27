@@ -225,7 +225,11 @@ const PAPERS: { name: string; w: number; h: number }[] = [
   { name: 'A0', w: 1189, h: 841 },
 ];
 const FRAME = 10;
-const TITLE_STRIP = 30;
+/** KiCad's default title block: a rectangle from (110, 34) to (2, 2) mm off the
+ * frame's bottom-right corner, the same size on every paper. Taken as 30 mm
+ * high and narrowed to half the page on small sheets, it let group boxes end
+ * inside the block on A5 and A4. */
+const TITLE_STRIP = 34;
 /** The title block's width along the bottom edge, as the checker measures it. */
 const TITLE_BLOCK_W = 110;
 /** Max pin-to-pin gap, grid units, for chaining a passive bank on one trunk
@@ -573,6 +577,122 @@ const flipped = (sym: ResolvedSymbol, axis: 'x' | 'y'): ResolvedSymbol => {
   const body = b ? (axis === 'x' ? { minX: b.minX, maxX: b.maxX, minY: -b.maxY, maxY: -b.minY } : { minX: -b.maxX, maxX: -b.minX, minY: b.minY, maxY: b.maxY }) : null;
   return { ...sym, pins, body };
 };
+
+/**
+ * Whether an amplifier (or one unit of it) is drawn turned over, inverting
+ * input on top. A drafter draws an inverting, summing, integrating or
+ * differential stage that way: its inverting input is a summing junction,
+ * fed by the unit's own output AND by a signal from elsewhere, and with it on
+ * top the feedback element lies over the amplifier straight from the output
+ * back to it. A non-inverting stage or a follower, whose inverting input sees
+ * only feedback and a return to a rail, keeps the symbol's own orientation:
+ * non-inverting input on top, its feedback divider below. `pins` are the
+ * instance's own pins in symbol space (Y up).
+ */
+function amplifierFlip(
+  intent: SchematicIntent,
+  symbols: ReadonlyMap<string, ResolvedSymbol>,
+  ref: string,
+  pins: readonly DraftPin[],
+): 'x' | undefined {
+  const minus = pins.find((p) => /^(-|−|IN-|IN−)$/i.test(p.name));
+  const plus = pins.find((p) => /^(\+|IN\+)$/i.test(p.name));
+  const outs = pins.filter((p) => p.etype === 'output' || p.etype === 'open_collector');
+  if (!minus || !plus || !outs.length) return undefined;
+  // already on top, or the inputs are not stacked on one side
+  if (minus.y >= plus.y || Math.abs(minus.x - plus.x) > 0.01) return undefined;
+  const pinLookup = (ep: string): DraftPin | null => {
+    const m = /^([^.]+)\.(.+)$/.exec(ep);
+    return m ? (symbols.get(m[1]!)?.pins.find((p) => p.number === m[2]) ?? null) : null;
+  };
+  const netOf = new Map<string, string>();
+  const rail = new Set<string>();
+  for (const net of intent.nets) {
+    for (const ep of net.pins) netOf.set(ep, net.name);
+    if (classifyNet(net, pinLookup).cls !== 'signal') rail.add(net.name);
+  }
+  const mNet = netOf.get(`${ref}.${minus.number}`);
+  const outNets = new Set(outs.map((o) => netOf.get(`${ref}.${o.number}`)).filter((n): n is string => !!n));
+  if (!mNet || rail.has(mNet)) return undefined;
+  // a follower (output tied straight to the inverting input) is never a
+  // summing junction, whatever else loads its output
+  if (outNets.has(mNet)) return undefined;
+  // the signal nets each other part touches
+  const netsOfPart = new Map<string, Set<string>>();
+  for (const net of intent.nets) {
+    if (rail.has(net.name)) continue;
+    for (const ep of net.pins) {
+      const r = ep.slice(0, ep.lastIndexOf('.'));
+      if (r === ref) continue;
+      if (!netsOfPart.has(r)) netsOfPart.set(r, new Set());
+      netsOfPart.get(r)!.add(net.name);
+    }
+  }
+  // Feedback runs through passive elements only: a part of at most three
+  // pins, every one passive (a resistor, capacitor, pot, diode, or a log
+  // amp's transistor). An analog switch or an optocoupler across the loop
+  // has logic or supply pins and is neither feedback nor an input; a
+  // connector carries a signal, however passive its pins.
+  const libOf = (r: string): string => intent.parts.find((p) => p.ref === r)?.libId ?? '';
+  const isTerminal = (r: string): boolean => /^Connector/.test(libOf(r));
+  const passive = (r: string): boolean => {
+    const s = symbols.get(r);
+    if (!s || s.multiUnit === true || isTerminal(r)) return false;
+    return s.pins.length <= 3 && s.pins.every((p) => p.etype === 'passive');
+  };
+  // nets one part away from the output (a T network's centre)
+  const nearOut = new Set(outNets);
+  for (const [r, ns] of netsOfPart) if (passive(r) && !ns.has(mNet) && [...ns].some((n) => outNets.has(n))) for (const n of ns) nearOut.add(n);
+  // A bootstrap is not an input: a part whose far net reaches this unit's
+  // own non-inverting input within one more part (an AC preamp's inverting
+  // return through C1 to BOOT, which R2 ties back to IN+) closes a loop
+  // around the amplifier; counted as a signal it drew a non-inverting stage
+  // upside down.
+  const pNet = netOf.get(`${ref}.${plus.number}`);
+  const reachesPlus = (part: string, net: string): boolean => {
+    if (net === pNet) return true;
+    for (const [r, ns] of netsOfPart) if (r !== part && passive(r) && ns.has(net) && pNet && ns.has(pNet)) return true;
+    return false;
+  };
+  // A return is not an input either: a series chain that ends on a rail
+  // (a non-inverting stage's gain leg, R1 then C1 to ground).
+  const netPins = new Map(intent.nets.map((n) => [n.name, n.pins]));
+  const endsAtRail = (part: string, net: string): boolean => {
+    let cur = part;
+    let n = net;
+    for (let i = 0; i < 4; i++) {
+      const rest = (netPins.get(n) ?? []).filter((ep) => ep.slice(0, ep.lastIndexOf('.')) !== cur);
+      if (rest.length !== 1) return false;
+      const next = rest[0]!.slice(0, rest[0]!.lastIndexOf('.'));
+      if (!passive(next)) return false;
+      const all = intent.nets.filter((x) => x.name !== n && x.pins.some((ep) => ep.slice(0, ep.lastIndexOf('.')) === next));
+      if (all.length !== 1) return false;
+      if (rail.has(all[0]!.name)) return true;
+      cur = next;
+      n = all[0]!.name;
+    }
+    return false;
+  };
+  // an active part is an input only when it drives the junction itself (a
+  // DAC's current output, another stage's output)
+  const drives = (r: string): boolean =>
+    (netPins.get(mNet) ?? []).some((ep) => ep.slice(0, ep.lastIndexOf('.')) === r && /^(output|tri_state|open_collector|open_emitter)$/.test(pinLookup(ep)?.etype ?? ''));
+  let fedBack = outNets.has(mNet);
+  let signalIn = false;
+  for (const [r, ns] of netsOfPart) {
+    if (!ns.has(mNet)) continue;
+    if (!passive(r)) {
+      if (isTerminal(r) || drives(r)) signalIn = true;
+      continue;
+    }
+    const others = [...ns].filter((n) => n !== mNet);
+    // a gain pot is both: its wiper on the input, one end on the output, the
+    // other end on the signal it scales
+    if (others.some((n) => nearOut.has(n))) fedBack = true;
+    if (others.some((n) => !nearOut.has(n) && !reachesPlus(r, n) && !endsAtRail(r, n))) signalIn = true;
+  }
+  return fedBack && signalIn ? 'x' : undefined;
+}
 
 const bodyBoundsOf = (sym: ResolvedSymbol): Bounds => {
   if (sym.body) return sym.body;
@@ -1176,6 +1296,7 @@ function draftFitted(validated: ValidatedIntent, projectName: string, today: str
   let areaBefore = 0;
   const boxArea = (rects: { x1: number; y1: number; x2: number; y2: number }[]): number => rects.reduce((a, r) => a + (r.x2 - r.x1) * (r.y2 - r.y1), 0);
   let retries = 0;
+  let paperFloor = 0;
   // The look. Before any wrap is fitted the engine can only estimate how far
   // a group's labels reach past its cells, and it estimates generously: a
   // label's width beside every pin that might carry one. Those reserves
@@ -1187,7 +1308,7 @@ function draftFitted(validated: ValidatedIntent, projectName: string, today: str
   let look: 'not-yet' | 'drafting' | 'done' = 'not-yet';
   let lookVerdict: { kept: boolean; paperBefore: string; paperAfter: string } | undefined;
   for (let round = 0; round < 16; round++) {
-    const { model, report, rects, measured: nextMeasured, reach, wrapped } = draftOnce(validated, projectName, today, reserves, frameSlack, measured, wrapGap, reachMeasured, flips, labelled);
+    const { model, report, rects, measured: nextMeasured, reach, wrapped } = draftOnce(validated, projectName, today, reserves, frameSlack, measured, wrapGap, reachMeasured, flips, labelled, paperFloor);
     let widened = false;
     const stillWrong: string[] = [];
     // A row or column wrapped to the full usable width leaves no room for the
@@ -1207,8 +1328,8 @@ function draftFitted(validated: ValidatedIntent, projectName: string, today: str
       // before the boxes grew to their text; a box that grew into the title
       // block's own corner (as the checker reserves it, narrowed on small
       // pages) overflows the usable height by how far it reaches in.
-      const cornerX = paper.w - FRAME - Math.min(TITLE_BLOCK_W, (paper.w - 2 * FRAME) / 2);
-      const cornerY = paper.h - FRAME - Math.min(TITLE_STRIP, (paper.h - 2 * FRAME) / 4);
+      const cornerX = paper.w - FRAME - TITLE_BLOCK_W;
+      const cornerY = paper.h - FRAME - TITLE_STRIP;
       const into = Math.max(0, ...rects.map((r) => (r.x2 > cornerX + 0.01 && r.y2 > cornerY + 0.01 ? r.y2 - cornerY : 0)));
       if (over <= 0.01 && into > 0.01) {
         frameSlack += into + U;
@@ -1247,6 +1368,21 @@ function draftFitted(validated: ValidatedIntent, projectName: string, today: str
     const area = boxArea(rects);
     const refusals = report.notes.filter((n) => /refused/.test(n)).length;
     const paperIdx = PAPERS.findIndex((p) => p.name === report.paper);
+    // A box still across the frame or into the title block after the
+    // re-tilings is not drawn as it stands while a larger sheet exists: a
+    // single group is centred on its sheet whatever the frame slack says, so
+    // re-tiling redrew the same overlap three times (a long caption widened
+    // the box into the block's corner on A5). The next sheet up is tried.
+    const frameWrong = stillWrong.some((s) => /frame|title block/.test(s));
+    if (widened && frameWrong && !validated.intent.hints?.paper && paperIdx >= 0 && paperIdx + 1 < PAPERS.length) {
+      paperFloor = paperIdx + 1;
+      trace(`group boxes still cross the frame or title block on ${report.paper} after ${retries} re-tilings; drafting on ${PAPERS[paperFloor]!.name}`);
+      retries = 0;
+      reserves.clear();
+      frameSlack = 0;
+      wrapGap = 0;
+      continue;
+    }
     // a round whose boxes still overlap or cross the frame after three
     // re-tilings is not a sheet to keep; nor one that lost a hung part, or
     // needs a larger sheet, or shrank by less than three percent
@@ -1313,6 +1449,8 @@ function draftOnce(
   reachMeasured?: Map<string, Reach>,
   flips: ReadonlyMap<string, Orient> = new Map(),
   labelNets: ReadonlySet<string> = new Set(),
+  /** Index into PAPERS of the smallest sheet this draft may take. */
+  paperFloor = 0,
 ): {
   model: PlacementModel;
   report: SchematicDraftReport;
@@ -1349,7 +1487,7 @@ function draftOnce(
     const sym = symbols.get(p.ref);
     if (!sym) return [];
     if (!sym.multiUnit || !sym.units?.length) {
-      const axis = flips.get(p.ref);
+      const axis = flips.get(p.ref) ?? amplifierFlip(intent, symbols, p.ref, sym.pins);
       if (axis === 90 || axis === 180 || axis === 270) return [{ key: p.ref, ref: p.ref, unit: null, part: p, sym: rotatedSym(sym, axis), turn: axis }];
       return [axis ? { key: p.ref, ref: p.ref, unit: null, part: p, sym: flipped(sym, axis), flip: axis } : { key: p.ref, ref: p.ref, unit: null, part: p, sym }];
     }
@@ -1358,13 +1496,18 @@ function draftOnce(
     const referenced = sym.units.filter((u) =>
       u.pins.some((pin) => !common.has(pin.number) && usedEps.has(`${p.ref}.${pin.number}`)),
     );
-    return (referenced.length ? referenced : sym.units).map((u) => ({
-      key: `${p.ref}#${u.unit}`,
-      ref: p.ref,
-      unit: u.unit,
-      part: p,
-      sym: { ...sym, pins: u.pins, body: u.body },
-    }));
+    return (referenced.length ? referenced : sym.units).map((u) => {
+      const unitSym = { ...sym, pins: u.pins, body: u.body };
+      const axis = amplifierFlip(intent, symbols, p.ref, u.pins);
+      return {
+        key: `${p.ref}#${u.unit}`,
+        ref: p.ref,
+        unit: u.unit,
+        part: p,
+        sym: axis ? flipped(unitSym, axis) : unitSym,
+        ...(axis ? { flip: axis } : {}),
+      };
+    });
   });
   const instByKey = new Map(instances.map((i) => [i.key, i]));
   /** The pin that controls a transistor (base or gate), or null for anything else. */
@@ -1448,7 +1591,13 @@ function draftOnce(
       .sort((a, b) => b.sameGroup - a.sameGroup || b.shared - a.shared || a.ref.localeCompare(b.ref, undefined, { numeric: true }));
     if (candidates.length) decapOwner.set(p.ref, candidates[0]!.ref);
   }
-  const isConnector = (p: IntentPart): boolean => p.libId.startsWith('Connector');
+  // A one-pin test point probes the net it sits on; it is not a connector a
+  // harness plugs into. Taken for one, every test point was laid in the
+  // leftmost column in refdes order and reached its net by a label, so a
+  // circuit's input and output terminals sat stacked far from the parts they
+  // feed; as a probe it hangs beside its net like any one-lead part.
+  const isOnePinProbe = (p: IntentPart): boolean => /TestPoint/i.test(p.libId) && symbols.get(p.ref)?.pins.length === 1;
+  const isConnector = (p: IntentPart): boolean => p.libId.startsWith('Connector') && !isOnePinProbe(p);
 
   // ---------- facing-label extents ----------
   // A labelled stub extends horizontal TEXT into the channel beside its pin:
@@ -1688,6 +1837,32 @@ function draftOnce(
 
       // cells: sized from body plus margins, positions snapped to the grid
       const cellDims = new Map<string, { w: number; h: number; body: Bounds; shelfL: number; shelfR: number; topPad: number; usedL?: number; usedR?: number; reachL?: number; reachR?: number }>();
+      /** The label reach of a column's cells past each cell's own shelf: a
+       * label at an IC pin lands inside the shelf its inline runs already
+       * fill, and counted again past the cell it put a summer's input
+       * terminals 18 mm from the connector column beside them. */
+      /** Whether any signal net has endpoints in both columns. */
+      const joinedCols = (a: string[], b: string[]): boolean => {
+        const refsA = new Set(a.map((k) => instByKey.get(k)!.ref));
+        const refsB = new Set(b.map((k) => instByKey.get(k)!.ref));
+        return signalNets.some((n) => n.pins.some((ep) => refsA.has(ep.slice(0, ep.lastIndexOf('.')))) && n.pins.some((ep) => refsB.has(ep.slice(0, ep.lastIndexOf('.')))));
+      };
+      /** Facing label reach between two columns: past the cells' own shelves
+       * when no signal net joins them; the full pin reach when one does (a
+       * label of the joining net may still stand in the channel). */
+      const facing = (a: string[], b: string[]): { right: number; left: number } =>
+        joinedCols(a, b) ? { right: labelExtents(a).right, left: labelExtents(b).left } : { right: colReach(a).right, left: colReach(b).left };
+      const colReach = (keys: string[]): { left: number; right: number } => {
+        let left = 0;
+        let right = 0;
+        for (const k of keys) {
+          const e = labelExtents([k]);
+          const d = cellDims.get(k);
+          left = Math.max(left, e.left - (d?.shelfL ?? 0) * U);
+          right = Math.max(right, e.right - (d?.shelfR ?? 0) * U);
+        }
+        return { left: Math.max(0, left), right: Math.max(0, right) };
+      };
       for (const m of members) {
         const b = bodyBoundsOf(m.sym);
         const mo = measured?.get(m.key);
@@ -1741,7 +1916,7 @@ function draftOnce(
       // column at the group's right edge.
       type Hang = { ic: string; pin: DraftPin; dx: -1 | 1; dir: -1 | 1; chain: string[]; slot: number; straight: boolean; w: number; h: number; ends: 'power' | 'open' };
       /** A run of two-lead parts laid ALONG the pin's row, away from the IC. */
-      type Inline = { ic: string; pin: DraftPin; dx: -1 | 1; chain: { key: string; nearPin: string; gap: number }[]; len: number; farNet: string | null; offset: number };
+      type Inline = { ic: string; pin: DraftPin; dx: -1 | 1; chain: { key: string; nearPin: string; gap: number }[]; len: number; farNet: string | null; offset: number; lift: number };
       const hangs: Hang[] = [];
       const inlines: Inline[] = [];
       const hungKeys = new Set<string>();
@@ -1813,6 +1988,8 @@ function draftOnce(
         return Math.hypot(l.a.x - l.b.x, l.a.y - l.b.y);
       };
       const INLINE_GAP = 4 * U;
+      /** Rows between the stacked runs of a fan-in (a summer's inputs). */
+      const FANIN_PITCH = 5;
       /**
        * Claim a hang from IC pin `pin` starting at `first` (an endpoint of the
        * pin's net). `dir` 1 hangs down from the row, -1 rises above it; the
@@ -1910,9 +2087,11 @@ function draftOnce(
         }
         let len = 0;
         for (const c of chain) len += c.gap + spanOf(c.key);
-        // room for the label the far end may carry
-        if (farNet) len += STUB * U + Math.max(1, farNet.length) * TEXT_RESERVE * LABEL_HEIGHT;
-        inlines.push({ ic: icKey, pin, dx, chain, len, farNet, offset: 0 });
+        // room for the label the far end may carry; a run that ends at a
+        // terminal carries none (the reserve pushed every input chain a
+        // label's width away from the part beside it)
+        if (farNet && !isTestPoint(chain[chain.length - 1]!.key)) len += STUB * U + Math.max(1, farNet.length) * TEXT_RESERVE * LABEL_HEIGHT;
+        inlines.push({ ic: icKey, pin, dx, chain, len, farNet, offset: 0, lift: 0 });
       };
       const epKey = (ep: string): { key: string; pin: string } | null => {
         const m = /^([^.]+)\.(.+)$/.exec(ep);
@@ -2008,7 +2187,18 @@ function draftOnce(
         if (!d) continue;
         const up = bridges.filter((b) => b.ic === icKey && b.side < 0).length;
         const down = bridges.filter((b) => b.ic === icKey && b.side > 0).length;
-        cellDims.set(icKey, { ...d, topPad: d.topPad + up * BRIDGE_ROWS, h: d.h + (up + down) * BRIDGE_ROWS });
+        // a bridge passes beyond a supply pin's power symbol on its side
+        const sym = instByKey.get(icKey)!.sym;
+        const sb = bodyBoundsOf(sym);
+        // rows a supply pin reaches past the body on that side, 0 for none
+        const supplyReach = (above: boolean): number =>
+          Math.max(0, ...sym.pins.filter((p) => (p.etype === 'power_in' || p.etype === 'power_out') && (above ? p.y > sb.maxY : p.y < sb.minY)).map((p) => Math.ceil(Math.abs(above ? p.y - sb.maxY : sb.minY - p.y) / U)));
+        // the stacked loops need: past the supply's symbol and name, a row
+        // pitch between loops, and the outermost part's own height and text
+        const need = (n: number, reach: number): number => (n && reach ? Math.max(n * BRIDGE_ROWS, reach + POWER_CLEAR_ROWS + 1 + 3 * (n - 1) + 3) : n * BRIDGE_ROWS);
+        const upRows = need(up, supplyReach(true));
+        const downRows = need(down, supplyReach(false));
+        cellDims.set(icKey, { ...d, topPad: d.topPad + upRows, h: d.h + upRows + downRows });
       }
       const claimAnchors = [
         ...anchors,
@@ -2027,7 +2217,13 @@ function draftOnce(
           if (!net || (netClasses.get(net.name)?.cls ?? 'signal') !== 'signal') continue;
           // the wire pass draws this net only if it stays in the group with
           // few endpoints; a net that will be labelled anyway gives no hang
-          const eps = net.pins.map(epKey).filter((e): e is { key: string; pin: string } => e !== null);
+          // test points last: a series part on the pin takes the row first, and
+          // a probe listed before it in the net no longer pushed it onto a row
+          // of its own (the terminal lies on the row only when the row is free)
+          const eps = net.pins
+            .map(epKey)
+            .filter((e): e is { key: string; pin: string } => e !== null)
+            .sort((a, b) => Number(isTestPoint(a.key)) - Number(isTestPoint(b.key)));
           // A net that leaves the group or carries more endpoints than the
           // wire pass joins still hangs its local parts: the pull-up on a
           // fault line that also goes to the MCU, the RC on a button the
@@ -2067,7 +2263,15 @@ function draftOnce(
             }
             // a test point rises above the row of the pin it probes
             if (isTestPoint(first.key)) {
-              claimHang(icKey, pin, dx, first, -1);
+              // A terminal straight out from its pin, on the pin's row, the way
+              // an amplifier's output terminal is drawn; hung above the row it
+              // stood where the feedback loop comes down to the output, and the
+              // loop jogged around it. It still rises when the row carries a
+              // series part already.
+              if (!inlines.some((il) => il.ic === icKey && il.pin.number === pin.number)) {
+                trace(`${ic.ref}.${pin.number} ${net.name}: ${instByKey.get(first.key)!.ref} lies on the row (a terminal)`);
+                claimInline(icKey, pin, dx, first);
+              } else claimHang(icKey, pin, dx, first, -1);
               continue;
             }
             // Look to the END of the run this part starts, through two-endpoint
@@ -2127,8 +2331,27 @@ function draftOnce(
               // back around it (an op-amp's feedback and gain resistors both on
               // its inverting input drew FB2 under R13 and flagged the pin over
               // its wire). It drops from the pin in a lane of its own instead.
-              trace(`${ic.ref}.${pin.number} ${net.name}: ${instByKey.get(first.key)!.ref} hangs down (the row already carries a series part; far net ${farNet?.name ?? 'none'})`);
-              claimHang(icKey, pin, dx, first, 1);
+              // Another signal into the same pin (a summing junction's second
+              // and third inputs) lies on a row of its own beside the first, the
+              // rows stacked and joined by one bus, the way every summer is
+              // drawn: hung down from the pin it read as a shunt to its own
+              // input terminal, on a bus one unit off the pin's row.
+              // Only an independent input fans in: a run that ends at a
+              // terminal, or at a net some connector or IC drives. A run into
+              // an internal node (a bootstrap's BOOT, shared by a cap and a
+              // resistor) stays a hang: laid on a row of its own its far node
+              // was wired back across the parts hung below.
+              const source = isTestPoint(cur.key) || (!!farNet && farNet.pins.some((ep) => {
+                const e = epKey(ep);
+                return e !== null && e.key !== cur.key && !hangable(e.key) && !hungKeys.has(e.key);
+              })) && !farNet?.pins.some((ep) => ep.startsWith(`${ic.ref}.`)); // back to this IC: feedback, not an input
+              if (farCls === 'signal' && source) {
+                trace(`${ic.ref}.${pin.number} ${net.name}: ${instByKey.get(first.key)!.ref} lies on a row of its own (the pin's row already carries a series part; far net ${farNet?.name ?? 'none'})`);
+                claimInline(icKey, pin, dx, first);
+              } else {
+                trace(`${ic.ref}.${pin.number} ${net.name}: ${instByKey.get(first.key)!.ref} hangs down (the row already carries a series part; far net ${farNet?.name ?? 'none'})`);
+                claimHang(icKey, pin, dx, first, 1);
+              }
             } else {
               trace(`${ic.ref}.${pin.number} ${net.name}: ${instByKey.get(first.key)!.ref} lies on the row (far net ${farNet?.name ?? 'none'})`);
               claimInline(icKey, pin, dx, first);
@@ -2165,6 +2388,20 @@ function draftOnce(
         for (const dx of [-1, 1] as const) {
           const side = hangs.filter((hg) => hg.ic === icKey && hg.dx === dx);
           const inlineSide = inlines.filter((il) => il.ic === icKey && il.dx === dx);
+          // Fan-in: several runs into one pin stack on rows FANIN_PITCH apart,
+          // away from the rest of the IC (above an amplifier's upper input,
+          // below its lower one), first reference on top, the pin's own row
+          // taken by the run nearest it.
+          for (const num of new Set(inlineSide.map((il) => il.pin.number))) {
+            const onPin = inlineSide.filter((il) => il.pin.number === num);
+            if (onPin.length < 2) continue;
+            onPin.sort((a, b) => instByKey.get(a.chain[0]!.key)!.ref.localeCompare(instByKey.get(b.chain[0]!.key)!.ref, undefined, { numeric: true }));
+            const b = bodyBoundsOf(ic.sym);
+            const up = onPin[0]!.pin.y > (b.minY + b.maxY) / 2;
+            onPin.forEach((il, i) => {
+              il.lift = (up ? onPin.length - 1 - i : -i) * FANIN_PITCH * U;
+            });
+          }
           // Two horizontal parts on rows one pitch apart cannot share an x
           // range: a run on a row next to an earlier run starts past that
           // run's end (the reference sheet's output filter alternates the
@@ -2174,11 +2411,11 @@ function draftOnce(
           // three rows of each other stagger (two left C27's value under L3's
           // reference)
           const ROWS_NEAR = 3 * 2.54 + 0.01;
-          for (const il of [...inlineSide].sort((a, b) => b.pin.y - a.pin.y)) {
+          for (const il of [...inlineSide].sort((a, b) => b.pin.y + b.lift - (a.pin.y + a.lift))) {
             let offset = 0;
             for (;;) {
               const clash = inlineSide.find(
-                (o) => o !== il && o.offset !== undefined && placedOffset.has(o) && Math.abs(o.pin.y - il.pin.y) <= ROWS_NEAR && offset < o.offset + o.len && offset + il.len > o.offset,
+                (o) => o !== il && o.offset !== undefined && placedOffset.has(o) && !(o.pin.number === il.pin.number && o.lift !== il.lift) && Math.abs(o.pin.y + o.lift - (il.pin.y + il.lift)) <= ROWS_NEAR && offset < o.offset + o.len && offset + il.len > o.offset,
               );
               if (!clash) break;
               offset = clash.offset + clash.len + INLINE_GAP;
@@ -2252,7 +2489,15 @@ function draftOnce(
             // over the top through the other input's stub instead.
             const pinNet = netByEndpoint.get(`${ic.ref}.${g[0]!.pin.number}`);
             const feedsBack = g[0]!.pin.etype === 'output' && ic.sym.pins.some((p) => AMP_INVERTING.test(p.name) && !!pinNet?.pins.includes(`${ic.ref}.${p.number}`));
-            const straight = !feedsBack && !sidePinYs.some((y) => y !== rowY && y > top - 5 * U && y < bot + 5 * U);
+            // only the drop's own direction is checked past the pin row: a
+            // chain hanging down never reaches the pin above it
+            // (only when the pin's net is the pin and its chain: with more on
+            // the net, the other branch joined the chain's near stub a unit
+            // off the pin's row and ran beside the pin's stub)
+            const alone = (pinNet?.pins.length ?? 0) <= 2;
+            const lo = !alone || g.some((hg) => hg.dir === -1) ? top - 5 * U : rowY - U;
+            const hi = !alone || g.some((hg) => hg.dir === 1) ? bot + 5 * U : rowY + U;
+            const straight = !feedsBack && !sidePinYs.some((y) => y !== rowY && y > lo && y < hi);
             for (const hg of g) hg.straight = straight;
             if (straight) continue;
             anyShelved = true;
@@ -2287,10 +2532,10 @@ function draftOnce(
           // y-down relative to the IC origin: the body spans -maxY..-minY
           const lowRow = Math.max(...side.map((hg) => -hg.pin.y));
           const highRow = Math.min(...side.map((hg) => -hg.pin.y));
-          const deepest = Math.max(-dims.body.minY, ...side.map((hg) => (hg.dir === 1 ? (hg.straight ? -hg.pin.y : lowRow) + HANG_GAP + hg.h : -hg.pin.y)), ...inlineSide.map((il) => -il.pin.y + 3 * U));
+          const deepest = Math.max(-dims.body.minY, ...side.map((hg) => (hg.dir === 1 ? (hg.straight ? -hg.pin.y : lowRow) + HANG_GAP + hg.h : -hg.pin.y)), ...inlineSide.map((il) => -(il.pin.y + il.lift) + 3 * U));
           // what this side uses below the body's top, and how far its labels
           // reach: the shelf below that is free for the infill pass
-          const laneDepth = Math.max(-dims.body.maxY, ...side.map((hg) => (hg.dir === 1 ? (hg.straight ? -hg.pin.y : lowRow) + HANG_GAP + hg.h : -hg.pin.y)), ...inlineSide.map((il) => -il.pin.y + 3 * U));
+          const laneDepth = Math.max(-dims.body.maxY, ...side.map((hg) => (hg.dir === 1 ? (hg.straight ? -hg.pin.y : lowRow) + HANG_GAP + hg.h : -hg.pin.y)), ...inlineSide.map((il) => -(il.pin.y + il.lift) + 3 * U));
           const usedBelow = ceilU(laneDepth - -dims.body.maxY) + 2;
           if (dx === 1) {
             dims.usedR = usedBelow;
@@ -2299,7 +2544,7 @@ function draftOnce(
             dims.usedL = usedBelow;
             dims.reachL = ceilU(laneReach + 2 * U);
           }
-          const highest = Math.min(-dims.body.maxY, ...side.map((hg) => (hg.dir === -1 ? (hg.straight ? -hg.pin.y : highRow) - HANG_GAP - hg.h : -hg.pin.y)));
+          const highest = Math.min(-dims.body.maxY, ...side.map((hg) => (hg.dir === -1 ? (hg.straight ? -hg.pin.y : highRow) - HANG_GAP - hg.h : -hg.pin.y)), ...inlineSide.map((il) => -(il.pin.y + il.lift) - 3 * U));
           // an inline run lies on its row; a transistor at its end reaches two
           // rows above and below it (collector and emitter stubs)
           for (const il of inlineSide) {
@@ -2523,7 +2768,7 @@ function draftOnce(
           // the same channel and facing-label widening the placement below applies
           return cols.reduce((sum, c, i) => {
             const next = cols[i + 1];
-            return sum + Math.max(...c.map((r) => cellDims.get(r)!.w)) + (next ? CHANNEL + widenBy(labelExtents(c).right, labelExtents(next).left, 2 * MARGIN + CHANNEL) : 0);
+            return sum + Math.max(...c.map((r) => cellDims.get(r)!.w)) + (next ? CHANNEL + widenBy(facing(c, next).right, facing(c, next).left, 2 * MARGIN + CHANNEL) : 0);
           }, 0);
         };
         // against the band the columns actually get (the budget less the
@@ -2670,7 +2915,11 @@ function draftOnce(
         }
         groupMaxY = Math.max(groupMaxY, rowY - ROW_GAP);
         const next = columnsToPlace[ci + 1];
-        colX += colW + CHANNEL + (next ? widenBy(labelExtents(col).right, labelExtents(next).left, 2 * MARGIN + CHANNEL) : 0);
+        // two columns no signal net joins (a supply connector beside the
+        // circuit it feeds) route nothing across their channel: one cell
+        // margin of the two is enough there
+        const colTight = next && !joinedCols(col, next) && colReach(col).right === 0 && colReach(next).left === 0 ? MARGIN : 0;
+        colX += colW + CHANNEL - colTight + (next ? widenBy(facing(col, next).right, facing(col, next).left, 2 * MARGIN + CHANNEL) : 0);
       }
 
       // decoupling rows: caps in a uniform row under their owner (or the group)
@@ -2941,7 +3190,7 @@ function draftOnce(
        * power-end growth, then apply; marks the parts idiom-placed only when
        * everything held. */
       const finalizeMoves = (
-        segments: { axisX: number; ys: number[]; conn?: { y: number; net: string }[] }[],
+        segments: { axisX: number; ys: number[]; conn?: { y: number; net: string }[]; pad?: [number, number] }[],
         moves: Map<string, Placed>,
         clearBoxes: Bounds[] = [],
         ownOverride?: Set<string>,
@@ -2950,7 +3199,8 @@ function draftOnce(
         const movedRefs = new Set(moves.keys());
         for (const seg of segments) {
           // the pad covers the power stub and symbol a rail/ground end grows
-          if (!axisClear(seg.axisX, Math.min(...seg.ys) - 4 * U, Math.max(...seg.ys) + 4 * U, own, seg.conn ?? [], movedRefs)) return false;
+          const [padTop, padBot] = seg.pad ?? [4 * U, 4 * U];
+          if (!axisClear(seg.axisX, Math.min(...seg.ys) - padTop, Math.max(...seg.ys) + padBot, own, seg.conn ?? [], movedRefs)) return false;
         }
         // a power symbol is not a body, so the body check cannot see it: the
         // divider repro grew R2's GND bar and value text straight into the body
@@ -3065,7 +3315,7 @@ function draftOnce(
           continue;
         }
         const at = pinAt(icPl, il.pin);
-        const s = { x: at.x + il.dx * STUB * U, y: at.y };
+        const s = { x: at.x + il.dx * STUB * U, y: at.y - il.lift };
         const moves = new Map<string, Placed>();
         let cursor = s.x + il.dx * il.offset; // x of the last connection point on the row
         let ok = true;
@@ -3177,7 +3427,13 @@ function draftOnce(
           // placed map; hung parts have no column position, so they go in as
           // their candidates first and come out again if the check refuses
           for (const [key, cand] of moves) placed.set(key, cand);
-          if (finalizeMoves([{ axisX, ys, conn }], moves, clearBoxes, own)) placedOk = true;
+          // the pad covers the power end's growth past the chain's far end;
+          // the pin row is where the chain starts, and nothing grows back
+          // past it (a pull-down dropping from an op-amp's lower input was
+          // pushed into a lane, one jog, by the other input's pin above it)
+          const alone = (netByEndpoint.get(`${instByKey.get(hg.ic)!.ref}.${hg.pin.number}`)?.pins.length ?? 0) <= 2;
+          const pad: [number, number] = !alone ? [4 * U, 4 * U] : hg.dir === 1 ? [0, 4 * U] : [4 * U, 0];
+          if (finalizeMoves([{ axisX, ys, conn, pad }], moves, clearBoxes, own)) placedOk = true;
           else for (const key of moves.keys()) placed.delete(key);
         }
         if (placedOk) break;
@@ -3209,10 +3465,22 @@ function draftOnce(
         const near = rs.pins.find((p) => p.number === br.inLead)!;
         const far = rs.pins.find((p) => p.number !== br.inLead)!;
         const midX = grid(Math.round((inEnd.x + outEnd.x) / 2 / U));
+        // A supply pin on the bridge's side ends in a power symbol and its
+        // name: the bridge passes beyond them, or the supply's stem crossed
+        // the feedback part's lead and the arrow sat on its body (every
+        // inverting LM321 stage drew -15V onto its feedback resistor).
+        const edge = br.side < 0 ? Math.min(pl.body.minY, inAt.y, outAt.y) : Math.max(pl.body.maxY, inAt.y, outAt.y);
+        let base = edge + br.side * 3 * U;
+        for (const sp of pl.sym.pins) {
+          if (sp.etype !== 'power_in' && sp.etype !== 'power_out') continue;
+          const at = pinAt(pl, sp);
+          if (br.side < 0 ? at.y >= pl.body.minY : at.y <= pl.body.maxY) continue;
+          const clear = at.y + br.side * (POWER_CLEAR_ROWS + 1) * U;
+          base = br.side < 0 ? Math.min(base, clear) : Math.max(base, clear);
+        }
         let done = false;
         for (let tier = 0; tier < 4 && !done; tier++) {
-          const edge = br.side < 0 ? Math.min(pl.body.minY, inAt.y, outAt.y) : Math.max(pl.body.maxY, inAt.y, outAt.y);
-          const lineY = grid(Math.round(edge / U) + br.side * (3 + 3 * (br.level + tier)));
+          const lineY = grid(Math.round(base / U) + br.side * 3 * (br.level + tier));
           const cand = placeCell(br.key, grid(Math.round((midX - (near.x + far.x) / 2) / U)), lineY + near.y, rot);
           if (applyMoves(new Map([[br.key, cand]]))) {
             trace(`bridge ${instByKey.get(br.key)!.ref} ${br.side < 0 ? 'over' : 'under'} ${instByKey.get(br.ic)!.ref} at y ${lineY.toFixed(2)}`);
@@ -3225,6 +3493,60 @@ function draftOnce(
           const note = `bridge refused: ${instByKey.get(br.key)!.ref} could not lie across ${instByKey.get(br.ic)!.ref} in "${gname}"; drawn in a column instead`;
           trace(note);
           if (!notes.includes(note)) notes.push(note);
+        }
+      }
+      // Rail probes in a grid at the group's right end. A one-pin probe on a
+      // ground or rail net (a circuit's common terminal) joins nothing a wire
+      // has to reach, so it stands where a reader looks for terminals: past
+      // everything else, top-aligned, in columns no taller than the group, in
+      // reference order. Left to the columns they stood under the amplifier
+      // one below the other and doubled the group's height.
+      {
+        const clsOf = (key: string): NetClass | null => {
+          const inst = instByKey.get(key)!;
+          const n = netByEndpoint.get(`${inst.ref}.${inst.sym.pins[0]!.number}`);
+          return n ? (netClasses.get(n.name)?.cls ?? 'signal') : null;
+        };
+        const mine = [...placed.keys()].filter((k) => groupOf.get(k) === gname);
+        const railProbes = mine
+          .filter((k) => isTestPoint(k) && (clsOf(k) === 'ground' || clsOf(k) === 'rail'))
+          .sort((a, b) => instByKey.get(a)!.ref.localeCompare(instByKey.get(b)!.ref, undefined, { numeric: true }));
+        const others = mine.filter((k) => !railProbes.includes(k));
+        if (railProbes.length && others.length) {
+          // the others' reach: bodies and their pins' stubs
+          const reachOf = (k: string): Bounds => {
+            const pl = placed.get(k)!;
+            const ps = pl.sym.pins.map((pin) => { const q = pinAt(pl, pin); const o = outward(pin); return { x: q.x + o.dx * STUB * U, y: q.y + o.dy * STUB * U }; });
+            return { minX: Math.min(pl.body.minX, ...ps.map((q) => q.x)), maxX: Math.max(pl.body.maxX, ...ps.map((q) => q.x)), minY: Math.min(pl.body.minY, ...ps.map((q) => q.y)), maxY: Math.max(pl.body.maxY, ...ps.map((q) => q.y)) };
+          };
+          const ext = others.map(reachOf);
+          const right = Math.max(...ext.map((b) => b.maxX));
+          const top = Math.min(...ext.map((b) => b.minY));
+          const bottom = Math.max(...ext.map((b) => b.maxY));
+          // a cell holds the probe, its stub, power symbol and name beside it
+          const COL_W = 10;
+          // a cell holds the probe's two text lines, its body, stub and power
+          // symbol with its name: at nine units the next probe's name sat on
+          // the symbol above it
+          const ROW_H = 12;
+          const x0 = Math.ceil(right / U) + 6;
+          const perCol = Math.max(1, Math.floor((bottom - top) / U / ROW_H));
+          // the grid is centred on the group's height, not hung from its top
+          const rowsUsed = Math.min(perCol, railProbes.length);
+          const y0 = Math.round((top + bottom) / 2 / U - (rowsUsed * ROW_H) / 2) + 3;
+          let slot = 0;
+          for (const k of railProbes) {
+            for (let tries = 0; tries < 12; tries++, slot++) {
+              const col = Math.floor(slot / perCol);
+              const row = slot % perCol;
+              const cand = placeCell(k, grid(x0 + col * COL_W), grid(y0 + row * ROW_H));
+              if (applyMoves(new Map([[k, cand]]))) {
+                trace(`${instByKey.get(k)!.ref} (a rail probe) stands in the terminal grid at the group's right end`);
+                slot++;
+                break;
+              }
+            }
+          }
         }
       }
       if (leftovers.length) {
@@ -3487,7 +3809,7 @@ function draftOnce(
   }
   const hinted = paperHint ? PAPERS.find((p) => p.name === paperHint) : undefined;
   // A hint pins the width budget; otherwise try every sheet, smallest first.
-  const candidates = hinted ? [hinted] : PAPERS;
+  const candidates = hinted ? [hinted] : PAPERS.slice(Math.min(paperFloor, PAPERS.length - 1));
   const gap = GROUP_GAP * U + wrapGap;
   const usableW = (p: { w: number }): number => p.w - 2 * FRAME - frameSlack;
   const usableH = (p: { h: number }): number => p.h - 2 * FRAME - TITLE_STRIP - frameSlack;
@@ -3860,7 +4182,7 @@ function draftOnce(
         if (!best || over < Math.max(best.w - usableW(p), best.h - usableH(p))) best = { w: w.w, h: w.h };
       }
     }
-    if (best) budgetMisses.push(`${p.name} ${Math.round(best.w)}×${Math.round(best.h)} mm vs ${usableW(p)}×${usableH(p)} usable`);
+    if (best) budgetMisses.push(`${p.name} ${Math.round(best.w)}×${Math.round(best.h)} mm vs ${Math.round(usableW(p))}×${Math.round(usableH(p))} usable`);
     return null;
   };
 
@@ -4454,6 +4776,31 @@ function draftOnce(
     }
     return n;
   };
+  // Every pin's lead: from its connection point in to the body. A wire may
+  // meet a lead only at that connection point. Laid along a lead it read as
+  // a wire into the part (a feedback loop's trunk back-tracked over the
+  // op-amp's own output pin to reach the stub); across one, as a connection
+  // (an inverting-input run over a shunt resistor's top lead read as the
+  // shunt tied to both inputs). The body box alone never saw either.
+  const leads = [...placed.values()].flatMap((pl) =>
+    pl.sym.pins.map((pin) => {
+      const p = pinAt(pl, pin);
+      const o = outward(pin);
+      const end = o.dx > 0 ? { x: pl.body.maxX, y: p.y } : o.dx < 0 ? { x: pl.body.minX, y: p.y } : o.dy > 0 ? { x: p.x, y: pl.body.maxY } : { x: p.x, y: pl.body.minY };
+      return { p, end };
+    }),
+  ).filter((l) => Math.abs(l.p.x - l.end.x) + Math.abs(l.p.y - l.end.y) > 0.01);
+  const touchesLead = (c: { x1: number; y1: number; x2: number; y2: number }): boolean =>
+    leads.some((l) => {
+      const lx1 = Math.min(l.p.x, l.end.x), lx2 = Math.max(l.p.x, l.end.x), ly1 = Math.min(l.p.y, l.end.y), ly2 = Math.max(l.p.y, l.end.y);
+      const cx1 = Math.min(c.x1, c.x2), cx2 = Math.max(c.x1, c.x2), cy1 = Math.min(c.y1, c.y2), cy2 = Math.max(c.y1, c.y2);
+      // the boxes of two axis-aligned segments meet: a crossing, a touch or an overlap
+      if (cx2 < lx1 - 0.01 || cx1 > lx2 + 0.01 || cy2 < ly1 - 0.01 || cy1 > ly2 + 0.01) return false;
+      // allowed: the only shared point is the lead's connection point
+      const ix1 = Math.max(cx1, lx1), ix2 = Math.min(cx2, lx2), iy1 = Math.max(cy1, ly1), iy2 = Math.min(cy2, ly2);
+      const single = ix2 - ix1 < 0.01 && iy2 - iy1 < 0.01;
+      return !(single && Math.abs(ix1 - l.p.x) < 0.01 && Math.abs(iy1 - l.p.y) < 0.01);
+    });
   let wired = 0;
   let labelled = 0;
   for (const net of [...signalNets].sort((a, b) => a.name.localeCompare(b.name))) {
@@ -4479,6 +4826,7 @@ function draftOnce(
       const ys = subset.map((s) => s.end.y);
       const admit = (candidate: RouteSeg[]): boolean => {
         if (candidate.some((c) => bodies.some((b) => segCrossesBody(c.x1, c.y1, c.x2, c.y2, b)))) return false;
+        if (candidate.some(touchesLead)) return false;
         return !touchesForeign(candidate, net.name, new Set(net.pins));
       };
       const found: Route[] = [];
@@ -4603,8 +4951,13 @@ function draftOnce(
             const tHi = Math.min(a.end.y, b.end.y, ...spanned.map((bd) => bd.minY));
             for (const side of sides) {
               const loopY = side > 0 ? grid(Math.ceil(tLo / U - 1e-6) + 2) : grid(Math.floor(tHi / U + 1e-6) - 2);
+              // the stub past the tap is drawn only when something meets it at
+              // its end (the part hung there); alone it was a dangling wire
+              // stub ERC flagged (a loop tapped for clearance, not for a hang)
+              const endMet = eps.some((o) => o !== a.ep && Math.abs(o.at.x - a.end.x) < 1e-6 && Math.abs(o.at.y - a.end.y) < 1e-6) ||
+                stubs.some((o) => o.ep !== a.ep && Math.abs(o.end.x - a.end.x) < 1e-6 && Math.abs(o.end.y - a.end.y) < 1e-6);
               const candidate: RouteSeg[] = [
-                ...(tapA ? [{ x1: a.ep.at.x, y1: a.ep.at.y, x2: xa, y2: a.ep.at.y }, { x1: xa, y1: a.ep.at.y, x2: a.end.x, y2: a.end.y }] : [{ x1: a.ep.at.x, y1: a.ep.at.y, x2: a.end.x, y2: a.end.y }]),
+                ...(tapA ? [{ x1: a.ep.at.x, y1: a.ep.at.y, x2: xa, y2: a.ep.at.y }, ...(endMet ? [{ x1: xa, y1: a.ep.at.y, x2: a.end.x, y2: a.end.y }] : [])] : [{ x1: a.ep.at.x, y1: a.ep.at.y, x2: a.end.x, y2: a.end.y }]),
                 { x1: xa, y1: a.ep.at.y, x2: xa, y2: loopY },
                 { x1: xa, y1: loopY, x2: xb, y2: loopY },
                 { x1: xb, y1: loopY, x2: xb, y2: b.ep.at.y },
@@ -4974,6 +5327,82 @@ function draftOnce(
     Math.min(w.y1, w.y2) < b.maxY - 0.01 &&
     Math.max(w.y1, w.y2) > b.minY + 0.01;
 
+  // ---------- power glyphs reflected off each other ----------
+  // A rail's bar stands above its stub end, a ground's below, and a
+  // PWR_FLAG's diamond above: on a connector with supply pins one row apart
+  // (a ±15 V header) the +15V bar and its flag drew on one spot and the
+  // -15V bar rose into the GND symbol above it. Each symbol, power symbols
+  // before flags, keeps rotation 0 when its glyph is clear of every glyph
+  // already drawn and every other net's wire, and otherwise turns over (then
+  // sideways) to the first side that is. Only the glyph moves: the stub, the
+  // pin point and the connectivity do not.
+  {
+    const GLYPH: Record<'rail' | 'ground' | 'flag', Bounds> = {
+      // symbol space, Y up
+      rail: { minX: -1.27, maxX: 1.27, minY: 0.3, maxY: 2.54 },
+      ground: { minX: -1.27, maxX: 1.27, minY: -2.54, maxY: -0.3 },
+      flag: { minX: -1.016, maxX: 1.016, minY: 1.27, maxY: 2.54 },
+    };
+    const kindOf = (s: (typeof extraSymbols)[number]): 'rail' | 'ground' | 'flag' =>
+      s.value === 'PWR_FLAG' ? 'flag' : (netClasses.get(s.value)?.cls ?? 'rail') === 'ground' ? 'ground' : 'rail';
+    const glyphAt = (s: (typeof extraSymbols)[number], rot: number): Bounds => {
+      const g = GLYPH[kindOf(s)];
+      const corners = [[g.minX, g.minY], [g.maxX, g.maxY]].map(([x, y]) => {
+        const r = (rot * Math.PI) / 180;
+        return { x: s.at.x + x! * Math.cos(r) - y! * Math.sin(r), y: s.at.y - (x! * Math.sin(r) + y! * Math.cos(r)) };
+      });
+      return { minX: Math.min(...corners.map((c) => c.x)), maxX: Math.max(...corners.map((c) => c.x)), minY: Math.min(...corners.map((c) => c.y)), maxY: Math.max(...corners.map((c) => c.y)) };
+    };
+    const drawn: Bounds[] = [];
+    const ownNet = (s: (typeof extraSymbols)[number]): string | undefined =>
+      s.value === 'PWR_FLAG' ? wires.find((w) => (sameCoord(w.x1, s.at.x) && sameCoord(w.y1, s.at.y)) || (sameCoord(w.x2, s.at.x) && sameCoord(w.y2, s.at.y)))?.net : s.value;
+    const bodiesNow = [...placed.values()].map((pl) => pl.body);
+    const clear = (s: (typeof extraSymbols)[number], b: Bounds): boolean => {
+      if (drawn.some((d) => boundsOverlap(d, b))) return false;
+      if (bodiesNow.some((d) => boundsOverlap(d, b))) return false;
+      const net = ownNet(s);
+      // a glyph keeps clear of other nets' wires by a hair: one resting on a
+      // neighbouring stub's row reads as touching it
+      const pb = { minX: b.minX - 0.3, maxX: b.maxX + 0.3, minY: b.minY - 0.3, maxY: b.maxY + 0.3 };
+      return !wires.some((w) => w.net !== net && segHitsBoxEarly(w, pb));
+    };
+    // the direction the symbol's stub leaves its pin, read off the stub wire
+    const outwardOf = (s: (typeof extraSymbols)[number]): { dx: number; dy: number } | null => {
+      const w = wires.find((q) => (sameCoord(q.x1, s.at.x) && sameCoord(q.y1, s.at.y)) || (sameCoord(q.x2, s.at.x) && sameCoord(q.y2, s.at.y)));
+      if (!w) return null;
+      const far = sameCoord(w.x1, s.at.x) && sameCoord(w.y1, s.at.y) ? { x: w.x2, y: w.y2 } : { x: w.x1, y: w.y1 };
+      return { dx: Math.sign(s.at.x - far.x), dy: Math.sign(s.at.y - far.y) };
+    };
+    const order = [...extraSymbols.filter((s) => s.value !== 'PWR_FLAG'), ...extraSymbols.filter((s) => s.value === 'PWR_FLAG')];
+    for (const s of order) {
+      // After upright, the symbol pointing ALONG its stub, away from the part
+      // (a connector's stacked supply pins each keep their own row that way),
+      // then turned over, then the last side.
+      const o = s.value === 'PWR_FLAG' ? null : outwardOf(s);
+      const up = kindOf(s) === 'ground' ? 180 : 0; // the rotation that points the glyph up (sheet -Y)
+      const along = o && o.dy === 0 && o.dx !== 0 ? ((o.dx < 0 ? up + 90 : up + 270) % 360) : null;
+      // never back along the stub toward the part it serves (a ground symbol
+      // turned over on a downward stub pointed up across its own stub)
+      const stubDir = outwardOf(s);
+      const facesBack = (r: number): boolean => {
+        if (!stubDir || r === 0) return false;
+        const g = glyphAt(s, r);
+        const cx = (g.minX + g.maxX) / 2 - s.at.x;
+        const cy = (g.minY + g.maxY) / 2 - s.at.y;
+        return cx * stubDir.dx + cy * stubDir.dy < -0.01;
+      };
+      const cands = [...new Set([0, ...(along !== null ? [along] : []), 180, 90, 270])].filter((r) => !facesBack(r));
+      const rot = cands.find((r) => clear(s, glyphAt(s, r)));
+      if (rot !== undefined && rot !== 0) {
+        trace(`${s.ref} (${s.value}) turned ${rot}° clear of a neighbouring glyph`);
+        s.at.rot = rot;
+        // a glyph lying along the row pushes the name on past it
+        if (rot === along && o) s.valueAt = { x: s.valueAt.x + o.dx * 2 * U, y: s.valueAt.y };
+      }
+      drawn.push(glyphAt(s, s.at.rot));
+    }
+  }
+
   // ---------- symbol-field slot refinement (I23, #210) ----------
   // The heuristic slots above consult nothing: attempt-07 ended ERC-clean
   // with 8 error-severity findings that were exactly these ref/value fields
@@ -4994,6 +5423,29 @@ function draftOnce(
       const cx = (pl.body.minX + pl.body.maxX) / 2;
       const cy = (pl.body.minY + pl.body.maxY) / 2;
       const textW = Math.max(dref.length, sym.value.length) * 0.8 * 1.27;
+      // How many things a slot's two texts land on: 0 is clear. Where no
+      // slot is clear the least-cluttered one wins over the heuristic, which
+      // consulted nothing (a level shifter walled in by labels on both sides
+      // kept its name on three of them).
+      const pairCost = (r: { x: number; y: number }, v: { x: number; y: number }): number => {
+        let n = 0;
+        for (const b of [centeredTextBox(dref, r.x, r.y), centeredTextBox(sym.value, v.x, v.y)]) {
+          n += wires.filter((w) => segHitsBoxEarly(w, b)).length;
+          for (const op of placed.values()) if (op !== pl && boundsOverlap(b, op.body)) n++;
+          n += powerBodies.filter((pb) => boundsOverlap(b, pb)).length;
+          for (const pin of pl.sym.pins) {
+            const p = pinAt(pl, pin);
+            const o = outward(pin);
+            const band: Bounds = o.dx !== 0
+              ? { minX: Math.min(p.x, o.dx === 1 ? pl.body.maxX : pl.body.minX), maxX: Math.max(p.x, o.dx === 1 ? pl.body.maxX : pl.body.minX), minY: p.y - 1.5, maxY: p.y + 1.5 }
+              : { minX: p.x - 1.5, maxX: p.x + 1.5, minY: Math.min(p.y, o.dy === 1 ? pl.body.maxY : pl.body.minY), maxY: Math.max(p.y, o.dy === 1 ? pl.body.maxY : pl.body.minY) };
+            if (boundsOverlap(b, band)) n++;
+          }
+          n += fieldBoxes.filter((t) => boundsOverlap(t, padBox(b))).length;
+          n += labelBoxes.filter((t) => boundsOverlap(t, padBox(b))).length;
+        }
+        return n;
+      };
       const pairClear = (r: { x: number; y: number }, v: { x: number; y: number }): boolean => {
         for (const b of [centeredTextBox(dref, r.x, r.y), centeredTextBox(sym.value, v.x, v.y)]) {
           if (wires.some((w) => segHitsBoxEarly(w, b))) return false;
@@ -5048,7 +5500,7 @@ function draftOnce(
         // rungs reach past a rail symbol and its name on a top or bottom
         // stub (about 6 mm out), so a module pinned on all four sides still
         // finds a slot above or below itself instead of on its own labels
-        for (const extra of [0, 2.54, 5.08, 7.62, 10.16]) {
+        for (const extra of [0, 2.54, 5.08, 7.62, 10.16, 12.7, 15.24]) {
           ladder.push(
             [{ x: cx, y: pl.body.maxY + 2.54 + extra }, { x: cx, y: pl.body.maxY + 5.08 + extra }],
             [{ x: cx, y: pl.body.minY - 5.08 - extra }, { x: cx, y: pl.body.minY - 2.54 - extra }],
@@ -5075,7 +5527,18 @@ function draftOnce(
             break;
           }
         }
-        if (!slotted) trace(`fields of ${dref}: no clear slot in ${ladder.length} rungs; heuristic kept`);
+        if (!slotted) {
+          let bestCost = pairCost(sym.refAt, sym.valueAt);
+          for (const [r, v] of ladder) {
+            const c = pairCost(r, v);
+            if (c < bestCost) {
+              bestCost = c;
+              sym.refAt = r;
+              sym.valueAt = v;
+            }
+          }
+          trace(`fields of ${dref}: no clear slot in ${ladder.length} rungs; least-cluttered kept (${bestCost} overlaps)`);
+        }
       }
       fieldBoxes.push(centeredTextBox(dref, sym.refAt.x, sym.refAt.y), centeredTextBox(sym.value, sym.valueAt.x, sym.valueAt.y));
     }
@@ -5415,6 +5878,47 @@ function draftOnce(
       if (found) {
         s.valueAt = { x: found.x, y: found.y };
         liveBoxes.set(s, powerValueBox(s.value, found.x, found.y));
+      }
+    }
+  }
+
+  // Dangling tails. A stub drawn to its full length before a trunk met it
+  // part-way along leaves the rest of the stub ending on nothing (TEE_IN's
+  // trunk joined R2's stub a unit out; the last unit dangled, and ERC called
+  // it an unconnected wire end). A segment whose free end meets no wire, pin,
+  // label or symbol, while its other end rests on its own net's wiring, is
+  // trimmed, until none is left.
+  {
+    const on = (x: number, y: number, w: { x1: number; y1: number; x2: number; y2: number }): boolean =>
+      pointOnSeg(x, y, w) || (sameCoord(w.x1, x) && sameCoord(w.y1, y)) || (sameCoord(w.x2, x) && sameCoord(w.y2, y));
+    const anchors = new Set<string>([
+      ...[...placed.values()].flatMap((pl) => pl.sym.pins.map((pin) => { const q = pinAt(pl, pin); return pointKey(q.x, q.y); })),
+      ...labels.map((l) => pointKey(l.x, l.y)),
+      ...extraSymbols.map((s) => pointKey(s.at.x, s.at.y)),
+    ]);
+    const anchored = (x: number, y: number): boolean => anchors.has(pointKey(x, y));
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (let i = 0; i < wires.length; i++) {
+        const w = wires[i]!;
+        for (const [fx, fy, ox, oy] of [[w.x1, w.y1, w.x2, w.y2], [w.x2, w.y2, w.x1, w.y1]] as const) {
+          // KiCad joins at wire ENDS: a free end resting inside a wire that runs
+          // the same way (collinear, overlapping) is still unconnected, so only
+          // a wire ending there, or crossing through it at a right angle, holds it
+          const colinear = (v: { x1: number; y1: number; x2: number; y2: number }): boolean =>
+            (sameCoord(v.y1, v.y2) && sameCoord(w.y1, w.y2)) || (sameCoord(v.x1, v.x2) && sameCoord(w.x1, w.x2));
+          const endsAt = (v: { x1: number; y1: number; x2: number; y2: number }): boolean =>
+            (sameCoord(v.x1, fx) && sameCoord(v.y1, fy)) || (sameCoord(v.x2, fx) && sameCoord(v.y2, fy));
+          const free = !anchored(fx, fy) && !wires.some((v, j) => j !== i && (endsAt(v) || (on(fx, fy, v) && !colinear(v))));
+          const held = wires.some((v, j) => j !== i && v.net === w.net && on(ox, oy, v));
+          if (free && held) {
+            trace(`dangling tail of ${w.net} trimmed at (${fx}, ${fy})`);
+            wires.splice(i, 1);
+            changed = true;
+            break;
+          }
+        }
+        if (changed) break;
       }
     }
   }

@@ -36,7 +36,7 @@ Each finding carries a stable kind identifier. Error-severity families gate the 
 | `symbol-overlap` | error | Two symbol body boxes intersecting. |
 | `text-collision` | error | Reference, Value, label, or free text over a symbol body, a wire, or other text. |
 | `wire-through-symbol` | error | A wire crossing a symbol body without terminating on one of its pins. |
-| `out-of-frame` | error | Content outside the usable frame area or over the title block. |
+| `out-of-frame` | error | Content outside the usable frame area or over the title block (KiCad's default block: 110 × 34 mm at the frame's bottom right, the same on every paper). |
 | `ungrouped-symbol` | error | A non-power symbol inside no group rectangle. |
 | `unlabeled-group` | error | A group with no caption, a caption naming nothing in SUBSYSTEMS.md or BOM.md, or a caption whose drawn text runs past its group rectangle. |
 | `group-overlap` | error | Two group rectangles intersecting without one fully containing the other. |
