@@ -80,9 +80,11 @@ const TOL = 0.01;
 const TEXT_ADVANCE = 0.6;
 /** Drawing-frame inset from the paper edge. */
 const FRAME_BORDER = 10;
-/** Reserved title-block rectangle in the bottom-right of the frame, clamped on small pages. */
+/** Reserved title-block rectangle in the bottom-right of the frame: KiCad's
+ * default title block, (110, 34) to (2, 2) mm off the frame corner, the same
+ * size on every paper. */
 const TITLE_BLOCK_W = 110;
-const TITLE_BLOCK_H = 30;
+const TITLE_BLOCK_H = 34;
 
 /** Standard sizes as KiCad draws them for schematics: landscape, mm. */
 const PAPER_SIZES: Record<string, { w: number; h: number }> = {
@@ -641,8 +643,8 @@ function checkSheet(
     skipped.push({ family: 'page-checks', reason: `sheet "${S}": paper "${sheet.paper.name ?? '(none)'}" is not a recognized standard size; out-of-frame and low-utilization skipped` });
   } else {
     const usable: Bounds = { minX: FRAME_BORDER, minY: FRAME_BORDER, maxX: paper.w - FRAME_BORDER, maxY: paper.h - FRAME_BORDER };
-    const tbW = Math.min(TITLE_BLOCK_W, (usable.maxX - usable.minX) / 2);
-    const tbH = Math.min(TITLE_BLOCK_H, (usable.maxY - usable.minY) / 4);
+    const tbW = TITLE_BLOCK_W;
+    const tbH = TITLE_BLOCK_H;
     const titleRegion: Bounds = { minX: usable.maxX - tbW, minY: usable.maxY - tbH, maxX: usable.maxX, maxY: usable.maxY };
 
     const items: { name: string; box: Bounds }[] = [
