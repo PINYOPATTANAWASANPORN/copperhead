@@ -8,6 +8,8 @@ import { validateIntent, type SchematicIntent } from '../src/kicad/draft/ir.js';
 import { draftSchematicPlacement } from '../src/kicad/draft/engine.js';
 import { draftSchematic } from '../src/kicad/draft/draft.js';
 import { checkLegibility } from '../src/kicad/legibility.js';
+import { strokeTextExtent } from '../src/kicad/strokefont.js';
+import { CAPTION_SIZE } from '../src/kicad/emit.js';
 
 /**
  * Sheet-level layout passes: shelf-wrap, stacked-pin collapse, power-value
@@ -729,4 +731,162 @@ describe('label nudging keeps a stub label attached and clear', () => {
     expect(seen).toBeGreaterThan(0);
     expect(nudgedOnce, 'no seeded intent produced a nudge').toBe(true);
   }, 120000);
+});
+
+describe('a group box contains its caption (#307)', () => {
+  /** A one-resistor group under `caption` beside a one-resistor "IO" group. */
+  const captionIntent = (caption: string): SchematicIntent => ({
+    version: 1,
+    parts: [
+      { ref: 'R1', libId: 'Device:R', value: '10k', group: caption },
+      { ref: 'R2', libId: 'Device:R', value: '10k', group: 'IO' },
+    ],
+    nets: [{ name: 'SIG', pins: ['R1.1', 'R2.1'] }, { name: 'OUT', pins: ['R1.2', 'R2.2'] }],
+    noConnect: [],
+  });
+
+  /** Place `caption`'s group and draft the sheet; the legibility report checks the caption names too. */
+  async function draftCaption(caption: string) {
+    const intent = captionIntent(caption);
+    const { model } = await place(intent);
+    const rect = model.rectangles.find((r) => r.name === caption)!;
+    const cap = model.captions.find((c) => c.name === caption)!;
+    const repo = await mkdtemp(path.join(tmpdir(), 'copperhead-caption-'));
+    try {
+      await mkdir(path.join(repo, 'docs'), { recursive: true });
+      await writeFile(path.join(repo, 'docs', 'SUBSYSTEMS.md'), `# Subsystems\n\n## ${caption}\n\nConnector.\n\n## IO\n\nIO.\n`, 'utf8');
+      await writeFile(path.join(repo, 'schematic.intent.json'), JSON.stringify(intent, null, 2), 'utf8');
+      const res = await draftSchematic({ repoRoot: repo, schematic: 'board.kicad_sch', docsDir: 'docs', symbolDirs: [SYMLIB] });
+      expect(res.ok, res.ok ? '' : res.message).toBe(true);
+      const leg = res.ok ? await checkLegibility(res.schematicPath, { docsDir: path.join(repo, 'docs') }) : null;
+      const text = res.ok ? await readFile(res.schematicPath, 'utf8') : '';
+      return { model, rect, cap, leg: leg!, text };
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  }
+
+  it('wraps a long caption onto two lines over a narrow group, and the box holds both', async () => {
+    const LONG = 'Mechanical connector and mounting holes';
+    const { rect, cap, leg, text } = await draftCaption(LONG);
+    expect(cap.text).toBe('Mechanical connector\nand mounting holes');
+    // written as KiCad's escaped newline, never a raw line break inside the string
+    expect(text).toContain('(text "Mechanical connector\\nand mounting holes"');
+    const ink = strokeTextExtent(cap.text, CAPTION_SIZE, 'left');
+    expect(cap.x + ink.minX).toBeGreaterThanOrEqual(rect.x1);
+    expect(cap.x + ink.maxX).toBeLessThanOrEqual(rect.x2);
+    // narrower than the one-line caption would have needed (~114 mm of ink)
+    expect(rect.x2 - rect.x1).toBeLessThan(strokeTextExtent(LONG, CAPTION_SIZE, 'left').maxX);
+    // the wrapped caption still names its documented subsystem, its second
+    // line collides with nothing, and nothing leaves its box
+    expect(leg.findings.filter((f) => f.severity === 'error')).toEqual([]);
+  }, 60000);
+
+  it('widens instead when the caption has no space to wrap at', async () => {
+    const WORD = 'MechanicalConnectorAndMountingHoles';
+    const { rect, cap, leg } = await draftCaption(WORD);
+    expect(cap.text).toBe(WORD);
+    expect(cap.x + strokeTextExtent(WORD, CAPTION_SIZE, 'left').maxX).toBeLessThanOrEqual(rect.x2);
+    expect(leg.findings.filter((f) => f.severity === 'error')).toEqual([]);
+  }, 60000);
+
+  it('leaves a caption that fits on one line alone', async () => {
+    const { model } = await place(captionIntent('Power'));
+    expect(model.captions.map((c) => c.text).sort()).toEqual(['IO', 'Power']);
+  });
+});
+
+describe('group boxes: tight, padded, on a sheet grid', () => {
+  const onGrid = (v: number): boolean => Math.abs(v / U - Math.round(v / U)) < 1e-6;
+
+  /** A ribbon whose groups differ in width (every other one gains a
+   * connector column), so rows packed box by box would not line their
+   * columns up by accident. */
+  function unevenRibbon(n: number): SchematicIntent {
+    const intent = ribbon(n);
+    for (let i = 2; i <= n; i += 2) {
+      intent.parts.push({ ref: `J${i}`, libId: 'CopperConn:Conn_01x03', value: 'Conn_01x03', group: `G${String(i).padStart(2, '0')}` });
+      intent.nets.find((net) => net.name === `SIG${i}`)!.pins.push(`J${i}.1`);
+      intent.nets.find((net) => net.name === 'GND')!.pins.push(`J${i}.2`);
+      intent.noConnect!.push(`J${i}.3`);
+    }
+    return intent;
+  }
+
+  /** Wrapped rows: every edge on the unit grid, a row sharing its top, neighbours and rows a gutter apart. */
+  function expectRows(rects: { x1: number; y1: number; x2: number; y2: number; name?: string }[]) {
+    for (const r of rects) {
+      for (const v of [r.x1, r.y1, r.x2, r.y2]) expect(onGrid(v), `${r.name} edge ${v}`).toBe(true);
+    }
+    const rows = rowsOf(rects).map((names) => names.map((n) => rects.find((r) => r.name === n)!));
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    for (const row of rows) {
+      expect(new Set(row.map((r) => r.y1)).size).toBe(1);
+      for (let j = 1; j < row.length; j++) expect(row[j]!.x1 - row[j - 1]!.x2).toBeGreaterThanOrEqual(4 * U - 1e-6);
+    }
+    for (let i = 1; i < rows.length; i++) {
+      expect(Math.min(...rows[i]!.map((r) => r.y1)) - Math.max(...rows[i - 1]!.map((r) => r.y2))).toBeGreaterThanOrEqual(4 * U - 1e-6);
+    }
+    return rows;
+  }
+
+  it('packs each row on its own when a column would hold boxes far apart in width', async () => {
+    const { model } = await place(unevenRibbon(8));
+    // every other group carries a connector column, more than the latch wider
+    const widths = model.rectangles.map((r) => r.x2 - r.x1);
+    expect(Math.max(...widths) - Math.min(...widths)).toBeGreaterThan(8 * U);
+    const rows = expectRows(model.rectangles);
+    // a grid would have opened a gap beside every narrow box; the rows pack
+    // their own boxes instead, so some column's left edges differ
+    const cols = Math.max(...rows.map((r) => r.length));
+    const lefts = Array.from({ length: cols }, (_, j) => new Set(rows.filter((row) => row[j]).map((row) => row[j]!.x1)).size);
+    expect(Math.max(...lefts)).toBeGreaterThan(1);
+  });
+
+  it('lays wrapped rows out as a grid when every column is near its width: shared tops and lefts, even gutters', async () => {
+    const { model } = await place(ribbon(8));
+    const rects = model.rectangles;
+    const rows = expectRows(rects);
+    // a column shares its left edge down the sheet
+    const cols = Math.max(...rows.map((r) => r.length));
+    for (let j = 0; j < cols; j++) {
+      const lefts = rows.filter((row) => row[j]).map((row) => row[j]!.x1);
+      expect(new Set(lefts).size, `column ${j}`).toBe(1);
+    }
+  });
+
+  it('keeps every gutter four units wide on a crowded sheet, re-tiling instead of squeezing a row', async () => {
+    // three to seven groups fill a row of A5 or A4 exactly; the rows used to
+    // close their gutters to two units to stay inside the frame
+    const dims: Record<string, { w: number; h: number }> = { A5: { w: 210, h: 148 }, A4: { w: 297, h: 210 }, A3: { w: 420, h: 297 }, A2: { w: 594, h: 420 } };
+    for (let n = 3; n <= 7; n++) {
+      const { model } = await place(ribbon(n));
+      const rects = model.rectangles;
+      for (const row of rowsOf(rects).map((names) => names.map((m) => rects.find((r) => r.name === m)!))) {
+        for (let j = 1; j < row.length; j++) expect(row[j]!.x1 - row[j - 1]!.x2, `${n} groups: ${row[j - 1]!.name} to ${row[j]!.name}`).toBeGreaterThanOrEqual(4 * U - 1e-6);
+      }
+      const paper = dims[model.paper]!;
+      for (const r of rects) {
+        expect(r.x1, `${n} groups: ${r.name}`).toBeGreaterThanOrEqual(10);
+        expect(r.x2, `${n} groups: ${r.name}`).toBeLessThanOrEqual(paper.w - 10);
+      }
+    }
+  }, 60000);
+
+  it('pads a box evenly: the same room left and right, two units past the widest drawn item', async () => {
+    const { model } = await place(ribbon(4));
+    for (const r of model.rectangles) {
+      const pts = [
+        ...model.wires.flatMap((w) => [[w.x1, w.y1], [w.x2, w.y2]]),
+        ...model.noConnects.map((n) => [n.x, n.y]),
+        ...model.labels.map((l) => [l.x, l.y]),
+        ...model.symbols.map((sym) => [sym.at.x, sym.at.y]),
+      ].filter(([x, y]) => x! >= r.x1 && x! <= r.x2 && y! >= r.y1 && y! <= r.y2);
+      const left = Math.min(...pts.map(([x]) => x! - r.x1));
+      const right = Math.min(...pts.map(([x]) => r.x2 - x!));
+      expect(left, r.name).toBeCloseTo(right, 6);
+      // the MCU8's side labels reach 5.08 mm past these points; BOX_INSET adds 2.54
+      expect(left, r.name).toBeGreaterThanOrEqual(7.62 - 1e-6);
+    }
+  });
 });

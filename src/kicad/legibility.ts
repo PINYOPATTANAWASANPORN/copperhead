@@ -13,6 +13,7 @@ import {
   type WireSeg,
   type PlacedSymbolGeom,
 } from './sexp.js';
+import { strokeTextExtent, strokeTextHeight } from './strokefont.js';
 import type { LegibilityUserConfig } from '../config.js';
 
 /**
@@ -209,6 +210,27 @@ function textBounds(t: {
 }
 
 /**
+ * A group caption's box, measured to CONTAIN its ink (strokefont.ts) where
+ * `textBounds` is short on purpose (design C3): the caption-overflow check
+ * asks whether the caption stays inside its group, and a short box let a
+ * caption drawn 22 mm past its group's edge pass as clean (#307). A wrapped
+ * caption is as wide as its widest line and one line pitch taller per extra
+ * line; a rotated caption keeps its centred box at the contained width.
+ */
+function captionBounds(t: TextItem): Bounds {
+  const e = strokeTextExtent(t.text, t.height, t.justifyH ?? 'center');
+  if (Math.abs(t.rot % 180) === 90) {
+    const box = textBounds(t);
+    const w = e.maxX - e.minX;
+    const cy = (box.minY + box.maxY) / 2;
+    return { minX: box.minX, maxX: box.maxX, minY: cy - w / 2, maxY: cy + w / 2 };
+  }
+  const bh = strokeTextHeight(t.text, t.height);
+  const minY = t.justifyV === 'top' ? t.y : t.justifyV === 'bottom' ? t.y - bh : t.y - bh / 2;
+  return { minX: t.x + e.minX, maxX: t.x + e.maxX, minY, maxY: minY + bh };
+}
+
+/**
  * Label text extends AWAY from the anchor in the rotation's direction (this is
  * how eeschema renders net/global labels: 0 rightward, 180 leftward, 90 upward,
  * 270 downward in schematic Y-down coordinates). Centering the box instead
@@ -253,10 +275,18 @@ function labelBounds(l: { name: string; x: number; y: number; rot: number; heigh
   // and nothing below it. Measuring it centred put half the box below the
   // wire the label sits on and called every label on a horizontal wire "text
   // on a wire" — the ordinary way a person names a wire.
+  // eeschema lifts the text off the wire by its label offset before it
+  // stands: measured on a plotted sheet the ink of a 1.27 mm label runs from
+  // 0.46 to 1.93 mm above its line, so the box reaches LOCAL_LABEL_RISE
+  // heights up (one height let XTAL1 print into the ISP_SCK flag on the pin
+  // row above and report clean)
+  const up = h * LOCAL_LABEL_RISE;
   return justified === 'right'
-    ? { minX: l.x - w, minY: l.y - h, maxX: l.x, maxY: l.y }
-    : { minX: l.x, minY: l.y - h, maxX: l.x + w, maxY: l.y };
+    ? { minX: l.x - w, minY: l.y - up, maxX: l.x, maxY: l.y }
+    : { minX: l.x, minY: l.y - up, maxX: l.x + w, maxY: l.y };
 }
+/** How far above its wire a plain label's text reaches, in text heights. */
+const LOCAL_LABEL_RISE = 1.54;
 
 /** Does the wire lie behind a flag's tip, along the direction the flag's text does NOT extend? */
 function onPoleSide(w: WireSeg, l: { x: number; y: number; rot: number }): boolean {
@@ -327,6 +357,7 @@ interface Group {
   rect: RectItem;
   bounds: Bounds;
   caption: string | null;
+  capItem?: TextItem;
   label: string;
 }
 
@@ -427,25 +458,6 @@ function checkSheet(
   });
   const realSyms = syms.filter((s) => !s.sym.isPower);
 
-  const visibleTexts: { owner: string; ownerRef: string | null; t: TextItem; box: Bounds }[] = [];
-  for (const s of sheet.symbols) {
-    for (const p of s.props) {
-      if (!p.hidden && p.text) visibleTexts.push({ owner: `${s.ref} ${p.text === s.value ? 'Value' : 'Reference'}`, ownerRef: s.ref, t: p, box: textBounds(p) });
-    }
-  }
-  for (const t of sheet.texts) {
-    if (!t.hidden && t.text) visibleTexts.push({ owner: `text "${t.text}"`, ownerRef: null, t, box: textBounds(t) });
-  }
-  const labelBoxes = sheet.labels.map((l) => ({
-    l,
-    box: labelBounds(l),
-    // a plain label stands above its wire, so every wire through the anchor
-    // is its attachment; a flag is drawn centred on the anchor line, so a
-    // wire continuing under the text runs through the flag — only the wire
-    // behind the tip (the pole side) attaches it
-    attached: sheet.wires.filter((w) => pointOnSeg(l.x, l.y, w) && (l.kind === 'label' || onPoleSide(w, l))),
-  }));
-
   // --- groups (design C1): sheet rectangles with a caption in the top band ---
   const groups: Group[] = sheet.rectangles.map((rect, i) => {
     const bounds: Bounds = {
@@ -458,9 +470,31 @@ function checkSheet(
     const cap = sheet.texts.find(
       (t) => !t.hidden && t.text && pointIn(t.x, t.y, bounds) && t.y <= bounds.minY + band,
     );
-    const caption = cap?.text ?? null;
-    return { rect, bounds, caption, label: caption ?? `group#${i + 1}` };
+    // a wrapped caption names its group across its lines
+    const caption = cap ? cap.text.replace(/\s+/g, ' ').trim() : null;
+    return { rect, bounds, caption, capItem: cap, label: caption ?? `group#${i + 1}` };
   });
+
+  const captionTexts = new Set(groups.map((g) => g.capItem).filter(Boolean));
+
+  const visibleTexts: { owner: string; ownerRef: string | null; t: TextItem; box: Bounds }[] = [];
+  for (const s of sheet.symbols) {
+    for (const p of s.props) {
+      if (!p.hidden && p.text) visibleTexts.push({ owner: `${s.ref} ${p.text === s.value ? 'Value' : 'Reference'}`, ownerRef: s.ref, t: p, box: textBounds(p) });
+    }
+  }
+  for (const t of sheet.texts) {
+    if (!t.hidden && t.text) visibleTexts.push({ owner: `text "${t.text}"`, ownerRef: null, t, box: captionTexts.has(t) ? captionBounds(t) : textBounds(t) });
+  }
+  const labelBoxes = sheet.labels.map((l) => ({
+    l,
+    box: labelBounds(l),
+    // a plain label stands above its wire, so every wire through the anchor
+    // is its attachment; a flag is drawn centred on the anchor line, so a
+    // wire continuing under the text runs through the flag — only the wire
+    // behind the tip (the pole side) attaches it
+    attached: sheet.wires.filter((w) => pointOnSeg(l.x, l.y, w) && (l.kind === 'label' || onPoleSide(w, l))),
+  }));
 
   // --- off-grid (reported first, design C9) ---
   for (const { sym } of syms) {
@@ -550,6 +584,19 @@ function checkSheet(
     } else if (captionNames && !captionMatches(g.caption, captionNames)) {
       const nearest = captionNames[0]!;
       add('unlabeled-group', S, center(g.bounds), [g.caption], `group caption "${g.caption}" names nothing in SUBSYSTEMS.md or BOM.md; use a documented name (e.g. "${nearest}")`);
+    }
+    if (g.capItem) {
+      const cBox = captionBounds(g.capItem);
+      if (!boundsContain(g.bounds, cBox)) {
+        const over: [string, number][] = [
+          ['right', cBox.maxX - g.bounds.maxX],
+          ['left', g.bounds.minX - cBox.minX],
+          ['top', g.bounds.minY - cBox.minY],
+          ['bottom', cBox.maxY - g.bounds.maxY],
+        ];
+        const [edge, by] = over.reduce((a, b) => (b[1] > a[1] ? b : a));
+        add('unlabeled-group', S, center(cBox), [g.label], `group caption "${g.caption}" runs ${fmt(by)}mm past its group rectangle's ${edge} edge; widen the group rectangle or shorten the caption`);
+      }
     }
   }
   for (let i = 0; i < groups.length; i++) {
