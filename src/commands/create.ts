@@ -242,11 +242,15 @@ export const STAGES: Stage[] = [
       // active until a re-draft.
       const intentRel = defaultIntentPath(config.schematic);
       if (existsSync(path.join(root, intentRel))) {
+        // With a footprint resolver, so the pin/pad checks (#314, #325) run at
+        // completion too: a sheet drafted against a mismatched footprint is sent
+        // back to this stage instead of populating a board with floating pads.
         const dry = await draftSchematicToText({
           repoRoot: root,
           schematic: config.schematic,
           intentPath: intentRel,
           docsDir: config.docs,
+          footprints: await FootprintResolver.create({ projectDir: path.dirname(p) }),
         });
         if (!dry.ok) return false;
         if (dry.text !== (await readFile(p, 'utf8'))) return false;

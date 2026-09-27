@@ -59,7 +59,7 @@ vi.mock('../src/agent/recovery.js', async (importOriginal) => ({
 vi.mock('../src/openspec/cli.js', () => ({ openspecInit: async () => ({ ok: true, output: 'mocked' }) }));
 vi.mock('../src/commands/check.js', () => ({ runCheck: async () => ({ ok: true }) }));
 
-import { runCreate } from '../src/commands/create.js';
+import { runCreate, STAGES } from '../src/commands/create.js';
 
 /**
  * A git repo whose first four stages are complete: filled SPEC/SUBSYSTEMS/BOM
@@ -174,6 +174,25 @@ describe('create layout-draft around board populate (#314)', () => {
       await run(repo, brief);
       expect(typeof layout.calls[0]?.stageGate).toBe('function');
       expect(gap).toContain('docs/LAYOUT.md has no "## Draft quality" section');
+    } finally {
+      await cleanup();
+    }
+  }, 180_000);
+
+  it("the schematic stage's completion runs the pin/pad checks, so a mismatched footprint sends the run back to stage 4 (#325)", async () => {
+    const { repo, brief, cleanup } = await projectAtLayoutDraft();
+    try {
+      const schematic = STAGES.find((s) => s.name === 'schematic')!;
+      expect(await schematic.isComplete(repo, 'docs/')).toBe(true);
+      // BOM and intent agree on a three-pad SOT-23 for a two-pin capacitor, and the sheet is re-drafted from it
+      for (const rel of ['docs/BOM.md', 'schematic.intent.json']) {
+        const f = path.join(repo, rel);
+        await writeFile(f, (await readFile(f, 'utf8')).split('Capacitor_SMD:C_0402_1005Metric').join('Package_TO_SOT_SMD:SOT-23'), 'utf8');
+      }
+      const res = await draftSchematic({ repoRoot: repo, schematic: SCH, intentPath: 'schematic.intent.json', docsDir: path.join(repo, 'docs'), symbolDirs: [SYMLIB] });
+      expect(res.ok).toBe(true);
+      expect(await schematic.isComplete(repo, 'docs/')).toBe(false);
+      void brief;
     } finally {
       await cleanup();
     }
