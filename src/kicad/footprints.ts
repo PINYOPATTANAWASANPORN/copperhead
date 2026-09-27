@@ -323,11 +323,31 @@ export async function footprintPadNumbers(file: string): Promise<Set<string>> {
 export interface PadMismatch {
   ref: string;
   footprint: string;
+  /** Symbol pins with no pad of that number: their nets vanish from the board. */
   pins: string[];
   pads: string[];
+  /** Electrical pads with no symbol pin of that number: they float unconnected (#325). */
+  unpinned?: string[];
+}
+
+/**
+ * A pad that is routinely left unconnected by design: unnumbered (a mounting
+ * hole, an np_thru_hole), or a mechanical, shield or thermal pad by KiCad's
+ * naming (MP, SH, S1, EP, NC). Every other pad carries a signal and needs a
+ * symbol pin, or it floats (#325).
+ */
+export function isMechanicalPad(number: string): boolean {
+  return number === '' || /^(?:MP|SH|S|EP|NC)\d*$/i.test(number);
 }
 
 export function formatPadMismatch(m: PadMismatch): string {
   const pads = m.pads.length > 12 ? `${m.pads.slice(0, 12).join(', ')}, …` : m.pads.join(', ');
-  return `${m.ref}: pin(s) ${m.pins.join(', ')} have no pad in footprint ${m.footprint} (its pads: ${pads || 'none'})`;
+  const parts: string[] = [];
+  if (m.pins.length) parts.push(`${m.ref}: pin(s) ${m.pins.join(', ')} have no pad in footprint ${m.footprint} (its pads: ${pads || 'none'})`);
+  if (m.unpinned?.length) {
+    parts.push(
+      `${m.ref}: pad(s) ${m.unpinned.join(', ')} of footprint ${m.footprint} have no symbol pin, so they would float unconnected on the board (its pads: ${pads || 'none'})`,
+    );
+  }
+  return parts.join('; ');
 }

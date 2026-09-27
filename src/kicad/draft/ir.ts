@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { SymbolSource, SymbolResolutionError, powerNetToken, type ResolvedSymbol } from './symsource.js';
 import { parseBomTable, normalizeValue, normalizeFootprint, bomFootprintRows } from '../../memory/bom-table.js';
-import { footprintPadNumbers, formatPadMismatch, type FootprintResolver } from '../footprints.js';
+import { footprintPadNumbers, isMechanicalPad, formatPadMismatch, type FootprintResolver } from '../footprints.js';
 
 /**
  * The netlist-intent IR (`schematic.intent.json`): the compact declarative
@@ -259,11 +259,21 @@ export async function validateIntent(
       const hit = await footprints.resolve(p.footprint);
       if (!hit.ok) continue;
       const pads = await footprintPadNumbers(hit.file);
-      const pins = [...new Set(sym.pins.map((pin) => pin.number))].filter((n) => !pads.has(n)).sort(byNum);
-      if (pins.length) {
+      const symPins = new Set(sym.pins.map((pin) => pin.number));
+      const pins = [...symPins].filter((n) => !pads.has(n)).sort(byNum);
+      // and the reverse (#325): an electrical pad no symbol pin names gets no net
+      // and floats (a 16-contact USB-C receptacle under a 6-pin power-only
+      // symbol leaves half its VBUS and GND contacts unconnected). Mechanical,
+      // shield and thermal pads are exempt: they are unconnected by design.
+      const unpinned = [...pads].filter((n) => !isMechanicalPad(n) && !symPins.has(n)).sort(byNum);
+      if (pins.length || unpinned.length) {
+        const advice = [
+          pins.length ? `use a symbol whose pin numbers match the footprint's pads` : '',
+          unpinned.length ? `use a footprint whose electrical pads are all pins of the symbol (KiCad often ships a variant with the matching contact count)` : '',
+        ].filter(Boolean);
         add(
-          `${formatPadMismatch({ ref: p.ref, footprint: p.footprint, pins, pads: [...pads].sort(byNum) })}; ` +
-            `use a symbol whose pin numbers match the footprint's pads (or change the footprint in BOM.md and the intent together)`,
+          `${formatPadMismatch({ ref: p.ref, footprint: p.footprint, pins, pads: [...pads].sort(byNum), ...(unpinned.length ? { unpinned } : {}) })}; ` +
+            `${advice.join(', or ')} (change the footprint in BOM.md and the intent together)`,
         );
       }
     }

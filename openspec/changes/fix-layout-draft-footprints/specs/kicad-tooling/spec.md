@@ -6,10 +6,27 @@
 
 Schematic IR validation SHALL refuse a part whose `footprint` differs from its BOM.md row's Footprint cell, naming both ids and instructing the agent to copy the BOM footprint rather than substitute another package. Cells SHALL be compared after dropping markdown backticks and spacing, never after case-folding.
 
+With a footprint resolver, validation SHALL also refuse a symbol pin its footprint has no pad for, and a footprint pad no symbol pin names (unnumbered, mechanical, shield and thermal pads excepted: MP, SH, S1, EP, NC), naming the pins or pads and the footprint's pads. The schematic stage's completion check SHALL validate with a resolver, so both checks run on resume as well as at draft time.
+
 #### Scenario: Substituted package is refused
 
 - **WHEN** the IR gives C1 `Capacitor_SMD:C_0402_1005Metric` and BOM.md gives `Capacitor_SMD:C_0603_1608Metric`
 - **THEN** validation fails with a finding naming both ids
+
+#### Scenario: Footprint pads without symbol pins are refused
+
+- **WHEN** the draft tool validates a 6-pin power-only USB-C symbol paired with a 16-contact receptacle footprint
+- **THEN** validation fails naming the pads no symbol pin covers (A1, A4, B1, B4, …), since they would float unconnected, and points at a footprint whose pads match the symbol
+
+#### Scenario: Mechanical pads are unconnected by design
+
+- **WHEN** the footprint's only pads without a symbol pin are unnumbered, MP, SH, S1, EP or NC
+- **THEN** validation passes
+
+#### Scenario: The schematic stage's completion runs the pad checks
+
+- **WHEN** `create` resumes on a schematic drafted against a footprint with pads no symbol pin covers
+- **THEN** the schematic stage is not complete, and the run returns to it instead of populating a board
 
 #### Scenario: Symbol pins without pads are refused
 
