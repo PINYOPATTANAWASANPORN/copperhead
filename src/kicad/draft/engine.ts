@@ -628,8 +628,18 @@ function amplifierFlip(
       netsOfPart.get(r)!.add(net.name);
     }
   }
-  // connectors and other amplifiers carry signals, not feedback
-  const passive = (r: string): boolean => !/^Connector/.test(intent.parts.find((p) => p.ref === r)?.libId ?? '') && symbols.get(r)?.multiUnit !== true && !/^Amplifier/.test(intent.parts.find((p) => p.ref === r)?.libId ?? '');
+  // Feedback runs through passive elements only: a part of at most three
+  // pins, every one passive (a resistor, capacitor, pot, diode, or a log
+  // amp's transistor). An analog switch or an optocoupler across the loop
+  // has logic or supply pins and is neither feedback nor an input; a
+  // connector carries a signal, however passive its pins.
+  const libOf = (r: string): string => intent.parts.find((p) => p.ref === r)?.libId ?? '';
+  const isTerminal = (r: string): boolean => /^Connector/.test(libOf(r));
+  const passive = (r: string): boolean => {
+    const s = symbols.get(r);
+    if (!s || s.multiUnit === true || isTerminal(r)) return false;
+    return s.pins.length <= 3 && s.pins.every((p) => p.etype === 'passive');
+  };
   // nets one part away from the output (a T network's centre)
   const nearOut = new Set(outNets);
   for (const [r, ns] of netsOfPart) if (passive(r) && !ns.has(mNet) && [...ns].some((n) => outNets.has(n))) for (const n of ns) nearOut.add(n);
@@ -663,15 +673,23 @@ function amplifierFlip(
     }
     return false;
   };
+  // an active part is an input only when it drives the junction itself (a
+  // DAC's current output, another stage's output)
+  const drives = (r: string): boolean =>
+    (netPins.get(mNet) ?? []).some((ep) => ep.slice(0, ep.lastIndexOf('.')) === r && /^(output|tri_state|open_collector|open_emitter)$/.test(pinLookup(ep)?.etype ?? ''));
   let fedBack = outNets.has(mNet);
   let signalIn = false;
   for (const [r, ns] of netsOfPart) {
     if (!ns.has(mNet)) continue;
+    if (!passive(r)) {
+      if (isTerminal(r) || drives(r)) signalIn = true;
+      continue;
+    }
     const others = [...ns].filter((n) => n !== mNet);
     // a gain pot is both: its wiper on the input, one end on the output, the
     // other end on the signal it scales
-    if (passive(r) && others.some((n) => nearOut.has(n))) fedBack = true;
-    if (!passive(r) || others.some((n) => !nearOut.has(n) && !reachesPlus(r, n) && !endsAtRail(r, n))) signalIn = true;
+    if (others.some((n) => nearOut.has(n))) fedBack = true;
+    if (others.some((n) => !nearOut.has(n) && !reachesPlus(r, n) && !endsAtRail(r, n))) signalIn = true;
   }
   return fedBack && signalIn ? 'x' : undefined;
 }
@@ -1279,7 +1297,6 @@ function draftFitted(validated: ValidatedIntent, projectName: string, today: str
   const boxArea = (rects: { x1: number; y1: number; x2: number; y2: number }[]): number => rects.reduce((a, r) => a + (r.x2 - r.x1) * (r.y2 - r.y1), 0);
   let retries = 0;
   let paperFloor = 0;
-  let escalations = 0;
   // The look. Before any wrap is fitted the engine can only estimate how far
   // a group's labels reach past its cells, and it estimates generously: a
   // label's width beside every pin that might carry one. Those reserves
@@ -1357,8 +1374,7 @@ function draftFitted(validated: ValidatedIntent, projectName: string, today: str
     // re-tiling redrew the same overlap three times (a long caption widened
     // the box into the block's corner on A5). The next sheet up is tried.
     const frameWrong = stillWrong.some((s) => /frame|title block/.test(s));
-    if (widened && frameWrong && !validated.intent.hints?.paper && paperIdx >= 0 && paperIdx + 1 < PAPERS.length && escalations < 2) {
-      escalations++;
+    if (widened && frameWrong && !validated.intent.hints?.paper && paperIdx >= 0 && paperIdx + 1 < PAPERS.length) {
       paperFloor = paperIdx + 1;
       trace(`group boxes still cross the frame or title block on ${report.paper} after ${retries} re-tilings; drafting on ${PAPERS[paperFloor]!.name}`);
       retries = 0;

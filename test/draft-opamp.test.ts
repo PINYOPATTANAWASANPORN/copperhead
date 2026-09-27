@@ -33,6 +33,9 @@ describe('op-amp stages (AC-16.73 to AC-16.80)', () => {
     ['p56-simple-integrator', true],
     ['p15-voltage-follower', false],
     ['p53-non-inverting-amplifier', false],
+    // an analog switch across the feedback resistor is neither feedback nor
+    // an input: the switched-gain stage stays non-inverting side up
+    ['p53-switched-gain', false],
   ];
   for (const [name, mirrored] of cases) {
     it(`${name}: ${mirrored ? 'inverting input on top' : 'library orientation kept'}, ERC and legibility clean`, async () => {
