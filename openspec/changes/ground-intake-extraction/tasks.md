@@ -14,11 +14,11 @@
 
 ## 3. Source text (design D2; source-text)
 
-- [ ] 3.1 `core/text/` page reader: pdf.js legacy build on the server, `getTextContent` per selected page, items to lines by baseline, ` | ` at cell gaps, line boxes normalised to 0..1
-- [ ] 3.2 Usable-layer test (at least 200 characters, under 2 percent replacement, private-use or control characters) and the OCR fallback through the existing Sarvam provider, with HTML tables converted to pipe rows and region boxes kept
-- [ ] 3.3 Page marking (`pdf-text` or `ocr`) with reader versions; the `forceOcr` option
-- [ ] 3.4 Segmenter extended to mint a unit for every line, with header and footnote context, ids `ev-<sha8>-p<page>-l<line>`, section, page and box
-- [ ] 3.5 Tests: the four demo PDFs read from their text layers, rows and columns of an electrical characteristics table, a synthesised image-only PDF sent to OCR, a garbled text layer sent to OCR, deterministic ids across two reads, footnote attachment, `forceOcr` marking
+- [x] 3.1 `core/text/` page reader: pdf.js legacy build on the server, `getTextContent` per selected page, items to lines by baseline, ` | ` at cell gaps, line boxes normalised to 0..1
+- [x] 3.2 Usable-layer test (at least 200 characters, under 2 percent replacement, private-use or control characters) and the OCR fallback through the existing Sarvam provider, with HTML tables converted to pipe rows and region boxes kept
+- [x] 3.3 Page marking (`pdf-text` or `ocr`) with reader versions; the `forceOcr` option
+- [x] 3.4 Segmenter extended to mint a unit for every line, with header and footnote context, ids `ev-<sha8>-p<page>-l<line>`, section, page and box
+- [x] 3.5 Tests: the four demo PDFs read from their text layers, rows and columns of an electrical characteristics table, a synthesised image-only PDF sent to OCR, a garbled text layer sent to OCR, deterministic ids across two reads, footnote attachment, `forceOcr` marking
 
 ## 4. Extraction contract (design D3)
 
