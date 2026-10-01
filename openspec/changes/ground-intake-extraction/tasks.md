@@ -1,9 +1,9 @@
 ## 1. Vendor the knowledge core (design D1)
 
-- [ ] 1.1 Copy cortex `origin/main` b4a45e8 `packages/{core-types,decimal,parsers,validators,ladder,verdict-engine,conformance-kit,eval-harness}/src` and `packages/ingestion/src/segmenter.ts` into `intake/core/knowledge/{types,decimal,parsers,validators,ladder,verdict,conformance,eval,segment}/`; rewrite `@copperhead/*` imports as relative imports; write the ladder's NUL key separator as `\u0000`
-- [ ] 1.2 Move the packages' tests to `intake/test/knowledge/` and add `fast-check` as a dev dependency; the copied suites pass unchanged apart from imports (verdict engine and validators: 27 tests)
-- [ ] 1.3 `intake/core/knowledge/PROVENANCE.md`: source commit, each copied path with its line count, and a running list of every change made in the copy; the cortex attribution added to the repository NOTICE
-- [ ] 1.4 Boundary test: nothing under `intake/core/` imports a vendor SDK, `node:fs` or Next.js; `core/knowledge/verdict/` imports only `types` and `decimal`
+- [x] 1.1 Copy cortex `origin/main` b4a45e8 `packages/{core-types,decimal,parsers,validators,ladder,verdict-engine,conformance-kit,eval-harness}/src` and `packages/ingestion/src/segmenter.ts` into `intake/core/knowledge/{types,decimal,parsers,validators,ladder,verdict,conformance,eval,segment}/`; rewrite `@copperhead/*` imports as relative imports; write the ladder's NUL key separator as `\u0000`
+- [x] 1.2 Move the packages' tests to `intake/test/knowledge/` and add `fast-check` as a dev dependency; the copied suites pass unchanged apart from imports (verdict engine and validators: 27 tests)
+- [x] 1.3 `intake/core/knowledge/PROVENANCE.md`: source commit, each copied path with its line count, and a running list of every change made in the copy; the cortex attribution added to the repository NOTICE
+- [x] 1.4 Boundary test: nothing under `intake/core/` imports a vendor SDK, `node:fs` or Next.js; `core/knowledge/verdict/` imports only `types` and `decimal`
 
 ## 2. Close the engine's gaps and extend it (design D7)
 
