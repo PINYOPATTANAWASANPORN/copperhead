@@ -87,3 +87,6 @@ Every change after the copy is listed here, newest last.
    - `Constraint.stressFrom`: a `max` check that bounds one applied value by the part's ABS_MAX reading and the
      rule's limit, citing the lower; the only use of an ABS_MAX reading
    Tests: `test/knowledge/verdict/intake-extensions.test.ts`.
+7. Reason codes: an `intake` category added for the intake's validators (`FIELD_UNKNOWN`, `VALUE_NOT_IN_UNIT`,
+   `UNIT_NOT_CONTAINED`, `QUALIFIER_COLUMN_MISMATCH`, `QUALIFIER_COLUMN_AMBIGUOUS`, `BOUND_WORDING_MISMATCH`,
+   `FOOTNOTE_QUALIFIED`, `LOW_CONFIDENCE`); the catalog test expects the ninth category.

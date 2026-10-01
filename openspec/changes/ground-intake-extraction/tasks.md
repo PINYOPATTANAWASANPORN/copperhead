@@ -22,47 +22,47 @@
 
 ## 4. Extraction contract (design D3)
 
-- [ ] 4.1 Prompt and output schema in `adapters/extractor-common.ts`: units listed with ids; per field the evidence id, value and unit as printed, qualifier, raw conditions, footnote flag and confidence; no snippet or coordinates; the template hash computed from its text
-- [ ] 4.2 Both extractors (API and Claude Code) on the new schema, with defensive re-validation of their output and their model id reported in the ingest result
-- [ ] 4.3 The vendored `ExtractionProvider` takes a list of units; the intake's extractors implement it
-- [ ] 4.4 Tests: schema rejection of extra fields, an unknown evidence id, a refusal, both extractors from fixtures
+- [x] 4.1 Prompt and output schema in `adapters/extractor-common.ts`: units listed with ids; per field the evidence id, value and unit as printed, qualifier, raw conditions, footnote flag and confidence; no snippet or coordinates; the template hash computed from its text
+- [x] 4.2 Both extractors (API and Claude Code) on the new schema, with defensive re-validation of their output and their model id reported in the ingest result
+- [x] 4.3 The vendored `ExtractionProvider` takes a list of units; the intake's extractors implement it
+- [x] 4.4 Tests: schema rejection of extra fields, an unknown evidence id, a refusal, both extractors from fixtures
 
 ## 5. Validation (design D4; extraction-validation)
 
-- [ ] 5.1 Pipeline running the vendored validators plus qualifier column, unit present, number words and worded bounds, and footnote hold, in the order of the spec, with outcomes ADMITTED, REVIEW_REQUIRED or REJECTED and reason codes
-- [ ] 5.2 Parsers extended with number words zero to twenty and worded bounds; containment accepting a word form; bound direction checked against the citation's wording
-- [ ] 5.3 Confidence below 0.75 routes an admitted extraction to review and is used nowhere else
-- [ ] 5.4 `AdmittedReading` type requiring an evidence unit with text and box
-- [ ] 5.5 Tests: each validator's pass and failure, a typical value reported as maximum, an invented unit, "nine" grounding 9, "within" refusing a minimum, low confidence routed to review, high confidence not overriding a rejection, range invariants and duplicates
+- [x] 5.1 Pipeline running the vendored validators plus qualifier column, unit present, number words and worded bounds, and footnote hold, in the order of the spec, with outcomes ADMITTED, REVIEW_REQUIRED or REJECTED and reason codes
+- [x] 5.2 Parsers extended with number words zero to twenty and worded bounds; containment accepting a word form; bound direction checked against the citation's wording
+- [x] 5.3 Confidence below 0.75 routes an admitted extraction to review and is used nowhere else
+- [x] 5.4 `AdmittedReading` type requiring an evidence unit with text and box
+- [x] 5.5 Tests: each validator's pass and failure, a typical value reported as maximum, an invented unit, "nine" grounding 9, "within" refusing a minimum, low confidence routed to review, high confidence not overriding a rejection, range invariants and duplicates
 
 ## 6. Readings, registry and cache (design D5, D6, D9)
 
-- [ ] 6.1 `core/model.ts` on the vendored types: parameters, readings, parts, documents; `core/fields.ts` as field requests with parameter specs; `supply_voltage_range_V` split into `supply_voltage_V` MIN and MAX; `core/units.ts` removed for the vendored units
-- [ ] 6.2 Registry `data/registry.json`: parts with their documents and parameters, constraints with decimal limits, policies and `stressFrom`; strict validation failing closed; atomic writes; new seed
-- [ ] 6.3 Corrections appended as human readings; the ladder computing canonical values and statuses; extracted readings kept
-- [ ] 6.4 Cache keys with full key material per stage; entries served only on an exact match; `refresh: true` removed; explicit re-extraction recording a new pass and the readings that differ
-- [ ] 6.5 Tests: no reading crosses parts, a correction verifying a value, a model change missing the cache, a page change missing the cache, an explicit re-extraction keeping the old pass, a malformed registry failing closed
+- [x] 6.1 `core/model.ts` on the vendored types: parameters, readings, parts, documents; `core/fields.ts` as field requests with parameter specs; `supply_voltage_range_V` split into `supply_voltage_V` MIN and MAX; `core/units.ts` removed for the vendored units
+- [x] 6.2 Registry `data/registry.json`: parts with their documents and parameters, constraints with decimal limits, policies and `stressFrom`; strict validation failing closed; atomic writes; new seed
+- [x] 6.3 Corrections appended as human readings; the ladder computing canonical values and statuses; extracted readings kept
+- [x] 6.4 Cache keys with full key material per stage; entries served only on an exact match; `refresh: true` removed; explicit re-extraction recording a new pass and the readings that differ
+- [x] 6.5 Tests: no reading crosses parts, a correction verifying a value, a model change missing the cache, a page change missing the cache, an explicit re-extraction keeping the old pass, a malformed registry failing closed
 
 ## 7. Verdicts and manifest (design D7, D8)
 
-- [ ] 7.1 `core/engine.ts` replaced by the vendored engine; `ChangeDescriptor` mapped to `CheckRequest` with parameter and applied terms; `proposeFix` moved beside it; snapshots built from the evaluated part only
-- [ ] 7.2 `/api/evaluate` without the cross-part merge; `/api/ingest` returning readings, outcomes, page text sources and the models that ran; `/api/registry` corrections as human readings
-- [ ] 7.3 Manifest with document sha256, page text sources, models as run, prompt hash, validator versions, fact versions, reason codes, rule version and decision run id; `reproduces()` on canonical JSON
-- [ ] 7.4 Tests: the engine scenarios of the spec through the API layer, manifest reproduction with keys reordered
+- [x] 7.1 `core/engine.ts` replaced by the vendored engine; `ChangeDescriptor` mapped to `CheckRequest` with parameter and applied terms; `proposeFix` moved beside it; snapshots built from the evaluated part only
+- [x] 7.2 `/api/evaluate` without the cross-part merge; `/api/ingest` returning readings, outcomes, page text sources and the models that ran; `/api/registry` corrections as human readings
+- [x] 7.3 Manifest with document sha256, page text sources, models as run, prompt hash, validator versions, fact versions, reason codes, rule version and decision run id; `reproduces()` on canonical JSON
+- [x] 7.4 Tests: the engine scenarios of the spec through the API layer, manifest reproduction with keys reordered
 
 ## 8. UI (design D10)
 
-- [ ] 8.1 Fact table showing per parameter its readings, qualifiers, values, conditions, statuses, reason codes, text sources and verified marks; review and rejected styling
-- [ ] 8.2 Click-to-source from the evidence unit's box; text matching removed from `components/PdfViewer.tsx`
-- [ ] 8.3 Correction form appending a human reading with the person's name
+- [x] 8.1 Fact table showing per parameter its readings, qualifiers, values, conditions, statuses, reason codes, text sources and verified marks; review and rejected styling
+- [x] 8.2 Click-to-source from the evidence unit's box; text matching removed from `components/PdfViewer.tsx`
+- [x] 8.3 Correction form appending a human reading with the person's name
 - [ ] 8.4 Browser check of the three demo parts: click-to-source, a review item, a correction, a refusal with both citations visible
 
 ## 9. Fixtures and golden tests (design D11)
 
-- [ ] 9.1 Extract the four demo datasheets once, live, with the Claude Code extractor; commit the outputs under full keys; delete the old snippet-based entries
-- [ ] 9.2 GT-1 to GT-5 rewritten to the new shapes with unchanged outcomes; GT-6 replaying its Sarvam output under `forceOcr` with unchanged outcomes
-- [ ] 9.3 `scripts/demo-acceptance.mjs` reading the new response fields, its three flows and outcomes unchanged; run it twice from cold
-- [ ] 9.4 `scripts/generate-fixtures.ts` on the new model and keys
+- [x] 9.1 Extract the four demo datasheets once, live, with the Claude Code extractor; commit the outputs under full keys; delete the old snippet-based entries
+- [x] 9.2 GT-1 to GT-5 rewritten to the new shapes with unchanged outcomes; GT-6 replaying its Sarvam output under `forceOcr` with unchanged outcomes
+- [x] 9.3 `scripts/demo-acceptance.mjs` reading the new response fields, its three flows and outcomes unchanged; run it twice from cold
+- [x] 9.4 `scripts/generate-fixtures.ts` on the new model and keys
 
 ## 10. Evaluation (design D12; extraction-evaluation)
 

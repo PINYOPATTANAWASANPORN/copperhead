@@ -298,3 +298,17 @@ cortex's README gains a notice: frozen on 2026-10-02, superseded by the intake f
 - Whether a guidance-heavy page (layout guidance) needs paragraph-level units in addition to lines. To be settled when `add-layout-guidance-intake` rebases.
 - Whether to keep cortex's corroboration ladder status names (`extracted`, `corroborated`, `verified`, `disputed`) in the UI, or show only verified and not-yet-verified.
 - Who labels the first corpus, and whether the second labeller required by the corpus audit is available.
+
+## Implementation Notes
+
+Where the implementation departs from the decisions above, and why:
+
+- **Harness location (D1, D12).** The evaluation harness lives in `intake/eval/`, not `intake/core/knowledge/eval/`, because it reads its corpus from disk and `intake/core/` holds no I/O. The boundary test enforces that.
+- **pdf.js placement (D2).** The pdf.js reader is an adapter (`adapters/pdf-text.ts`). The line builder, the usable-layer test, the OCR row conversion and unit minting are pure modules in `core/text/`. The cell gap is 0.8 em, measured on the demo datasheets: ESP32's narrowest column gap is 1.1 em, and justified prose reaches about 0.6 em.
+- **Unit minting (D3).** Units are minted by `core/text/units.ts` rather than by extending cortex's segmenter, which stays as copied for the harness's text corpora.
+  - A table row's context holds its header and its own table's footnotes. Footnote numbering restarts per table, so a reference resolves to the next definition after it.
+  - The rows around it are kept apart as `neighbors`. Only the unit-present check reads them, never containment.
+- **Number words (D4).** Cortex's containment check reads the unit text with number words as numerals; the intake's own value-in-unit check reads the printed text.
+- **GT-6 (D11).** GT-6's July capture is a labelled test fixture (`fixtures/gt6/`), translated from snippet to pointer, and not a cache entry, because the current prompt did not produce it.
+- **Corrections (D6).** A correction of a value held for review becomes a human reading citing the reviewed line (`confirmReading`). A correction that names a line corrects that line's reading, never another reading with the same qualifier.
+- **Symbolic conditions.** Conditions such as TI's "VCC = MAX" do not parse as values, so those readings go to review (`CONDITION_MISMATCH`), as cortex's conditions validator requires. All of SN74LS00's demo readings are held for this reason.

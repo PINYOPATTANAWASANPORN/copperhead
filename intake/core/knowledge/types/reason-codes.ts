@@ -49,6 +49,17 @@ export const REASON_CODES = {
     "INDEX_STALE",
     "INTERNAL_SAFETY_HOLD",
   ],
+  // The intake's validators (ground-intake-extraction D4).
+  intake: [
+    "FIELD_UNKNOWN",
+    "VALUE_NOT_IN_UNIT",
+    "UNIT_NOT_CONTAINED",
+    "QUALIFIER_COLUMN_MISMATCH",
+    "QUALIFIER_COLUMN_AMBIGUOUS",
+    "BOUND_WORDING_MISMATCH",
+    "FOOTNOTE_QUALIFIED",
+    "LOW_CONFIDENCE",
+  ],
 } as const;
 
 export type ReasonCodeCategory = keyof typeof REASON_CODES;

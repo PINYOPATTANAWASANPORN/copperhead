@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import { ALL_REASON_CODES, isReasonCode, REASON_CODES } from "../../../core/knowledge/types/reason-codes";
 
 describe("reason-code catalog (Appendix A)", () => {
-  it("contains all eight categories", () => {
+  it("contains cortex's eight categories and the intake's own", () => {
     expect(Object.keys(REASON_CODES).sort()).toEqual(
       [
         "conditions",
         "data",
         "decision",
         "evidence",
+        "intake",
         "operations",
         "provider",
         "query",

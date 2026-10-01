@@ -2,7 +2,7 @@
 // tables become pipe rows whose cells keep their index (OCR keeps empty cells); every line
 // takes the box of the region it came from. Pure.
 
-import type { DigitisedPage } from "../pipeline";
+import type { DigitisedPage } from "../digitised";
 import type { Cell, Line } from "./types";
 
 export const OCR_ROWS_VERSION = "ocr-rows-1";

@@ -11,6 +11,11 @@ function load(): Promise<PdfJs> {
   return pdfjs;
 }
 
+/** The pdf.js version, which keys the text cache through the reader version. */
+export async function pdfjsVersion(): Promise<string> {
+  return (await load()).version;
+}
+
 export interface PdfText {
   numPages: number;
   /** The pdf.js version, part of the reader version recorded on every page. */

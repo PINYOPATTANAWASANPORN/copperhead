@@ -1,7 +1,7 @@
 // Source text (ground-intake-extraction D2): the text layer first, OCR only for pages without a
 // usable one, every page marked with the text it used and the reader that produced it.
 
-import type { DigitisedPage } from "../core/pipeline";
+import type { DigitisedPage } from "../core/digitised";
 import { buildLines, ROW_BUILDER_VERSION, usableTextLayer } from "../core/text/lines";
 import { ocrLines, OCR_ROWS_VERSION } from "../core/text/ocr";
 import type { SourcePage } from "../core/text/types";

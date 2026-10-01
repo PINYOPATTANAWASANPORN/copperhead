@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { readSourceText } from "../../adapters/source-text";
-import type { DigitisedPage } from "../../core/pipeline";
+import type { DigitisedPage } from "../../core/digitised";
 import { usableTextLayer } from "../../core/text/lines";
 import type { IntakeUnit, PageItems } from "../../core/text/types";
 import { headerCellFor, mintUnits } from "../../core/text/units";
