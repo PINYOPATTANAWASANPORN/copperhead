@@ -119,6 +119,12 @@ export interface Constraint {
   conditions?: ConditionSet;
   policy: { bound: "WORST_CASE" | "TYPICAL_OK"; missingCondition: "HOLD" };
   provenance?: { document?: DocumentRef; line?: string };
+  /**
+   * Intake extension (ground-intake-extraction D7): a `max` constraint whose applied value
+   * is also bounded by the part's ABS_MAX reading of this parameter. The only use of an
+   * absolute maximum; never a design target or a guarantee qualifier.
+   */
+  stressFrom?: { key: string };
 }
 
 export type Decision = "APPROVE" | "REFUSE" | "HOLD";

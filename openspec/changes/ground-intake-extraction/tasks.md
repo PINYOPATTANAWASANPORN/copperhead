@@ -7,10 +7,10 @@
 
 ## 2. Close the engine's gaps and extend it (design D7)
 
-- [ ] 2.1 `evaluate` catches unit errors and holds with `DIMENSION_MISMATCH`; honours `policy.missingCondition`; holds with `UNSUPPORTED_OPERATOR` on an unknown kind
-- [ ] 2.2 Applied terms `{label, value}` in `CheckRequest`, summed exactly in `budget_sum` and compared in stress checks
-- [ ] 2.3 `stressFrom` on `max` constraints: the applied value against the ABS_MAX reading and the rule's limit, citing the lower one exceeded; ABS_MAX used nowhere else
-- [ ] 2.4 Tests: each closed gap, applied terms in a budget, a stress refusal on the absolute maximum and on the rule, ABS_MAX never used as a guarantee qualifier, the 100-run determinism test still passing; PROVENANCE updated
+- [x] 2.1 `evaluate` catches unit errors and holds with `DIMENSION_MISMATCH`; honours `policy.missingCondition`; holds with `UNSUPPORTED_OPERATOR` on an unknown kind
+- [x] 2.2 Applied terms `{label, value}` in `CheckRequest`, summed exactly in `budget_sum` and compared in stress checks
+- [x] 2.3 `stressFrom` on `max` constraints: the applied value against the ABS_MAX reading and the rule's limit, citing the lower one exceeded; ABS_MAX used nowhere else
+- [x] 2.4 Tests: each closed gap, applied terms in a budget, a stress refusal on the absolute maximum and on the rule, ABS_MAX never used as a guarantee qualifier, the 100-run determinism test still passing; PROVENANCE updated
 
 ## 3. Source text (design D2; source-text)
 

@@ -44,6 +44,12 @@ export interface CheckRequest {
   terms: { part: string; key: string }[];
   /** §11.4 strict-status policy: extracted-only deciding fact → HOLD. */
   strictStatus?: boolean;
+  /**
+   * Intake extension (ground-intake-extraction D7): values the change itself applies,
+   * such as a pull-up's draw or a rail's voltage. Summed in a budget, compared in a
+   * `max`, `min` or `equality`, and the compared value of a `stressFrom` check.
+   */
+  applied?: { label: string; value: import("../types").Decimal }[];
 }
 
 export interface EngineContext {

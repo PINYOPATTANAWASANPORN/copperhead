@@ -77,3 +77,13 @@ Every change after the copy is listed here, newest last.
 4. The evaluation harness placed under `intake/eval/` rather than `intake/core/knowledge/eval/`, because it reads the
    corpus from disk and `intake/core/` holds no I/O.
 5. The test suites' path to the demo corpus updated to `intake/eval/corpus-demo/`.
+6. Verdict engine 1.0.0 → 1.1.0 (ground-intake-extraction D7):
+   - an unknown constraint kind, a missing-condition policy other than `HOLD`, and `stressFrom` on a non-`max`
+     constraint hold with `UNSUPPORTED_OPERATOR`
+   - a `UnitError` raised while summing or comparing holds with its code (`DIMENSION_MISMATCH` or `UNIT_UNKNOWN`)
+     instead of escaping `evaluate`
+   - `CheckRequest.applied`: values a change applies, summed in a `budget_sum` and compared in a `max`, `min` or
+     `equality`; a non-budget check compares exactly one value
+   - `Constraint.stressFrom`: a `max` check that bounds one applied value by the part's ABS_MAX reading and the
+     rule's limit, citing the lower; the only use of an ABS_MAX reading
+   Tests: `test/knowledge/verdict/intake-extensions.test.ts`.
