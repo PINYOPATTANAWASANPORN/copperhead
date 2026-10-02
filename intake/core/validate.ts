@@ -13,6 +13,7 @@ import {
   normalizeText,
   normalizeUnit,
   normalizeValue,
+  splitFusedUnit,
   unitOccurs,
   valueOccurrences,
   wordsToNumerals,
@@ -66,6 +67,7 @@ function columnQualifiers(unit: IntakeUnit, value: string): (Qualifier | null)[]
 function intakeValidators(extraction: IntakeExtraction, unit: IntakeUnit, value: string): ValidatorResult[] {
   const out: ValidatorResult[] = [];
   const ownText = normalizeText(unit.text);
+  const claimed = extraction.qualifier;
 
   // The value lies within the unit's own text, never only in its context or a neighbour.
   const positions = valueOccurrences(ownText, value);
@@ -75,9 +77,31 @@ function intakeValidators(extraction: IntakeExtraction, unit: IntakeUnit, value:
       : result("value-in-unit", "REJECTED", ["VALUE_NOT_IN_UNIT"], `value '${extraction.value}' is not in the cited unit's own text`),
   );
 
+  // A value at one end of a range printed in one cell ("-0.3V to VCC + 1.0V", "4.5 to 16") is
+  // that end: the lower end is a minimum, the upper end a maximum.
+  const ends = new Set<"lower" | "upper">();
+  for (const cell of unit.layout.cells) {
+    const text = normalizeText(cell.text);
+    for (const p of valueOccurrences(text, value)) {
+      const after = text.slice(p + value.length);
+      const before = text.slice(0, p);
+      if (/^[A-Za-zµμΩ°%]*\s*(to|~)\s*\S/i.test(after) || /^[A-Za-zµμΩ°%]*\.\.\s*[-\d]/.test(after) || /^[A-Za-zµμΩ°%]*(-|–)\S/.test(after)) ends.add("lower");
+      if (/\d[A-Za-zµμΩ°%]*\s*(to|~|\.\.)\s*$/i.test(before) || /\d[A-Za-zµμΩ°%]*(-|–)$/.test(before)) ends.add("upper");
+    }
+  }
+  if (claimed && ends.size === 1) {
+    const end = [...ends][0];
+    const fits = end === "lower" ? claimed === "MIN" : claimed === "MAX" || claimed === "ABS_MAX";
+    out.push(
+      fits
+        ? result("range-position", "PASS")
+        : result("range-position", "REJECTED", ["RANGE_POSITION_MISMATCH"],
+            `the value is the ${end} end of a printed range; the extraction claims ${claimed}`),
+    );
+  }
+
   // The qualifier matches the header column the value sits in.
   const columns = columnQualifiers(unit, value);
-  const claimed = extraction.qualifier;
   if (columns && claimed && columns.some((q) => q !== null)) {
     const implied = [...new Set(columns.filter((q): q is Qualifier => q !== null))];
     if (implied.length === 1 && implied[0] !== claimed) {
@@ -135,7 +159,11 @@ function worst(results: ValidatorResult[]): Outcome {
   return "ADMITTED";
 }
 
-export function validateExtraction(extraction: IntakeExtraction, units: ReadonlyMap<string, IntakeUnit>, ctx: ValidationContext): ExtractionRecord {
+export function validateExtraction(reported: IntakeExtraction, units: ReadonlyMap<string, IntakeUnit>, ctx: ValidationContext): ExtractionRecord {
+  // A value printed fused with its unit ("7.0V") is read as its number and unit.
+  const split = splitFusedUnit(reported.value, reported.unit);
+  const extraction: IntakeExtraction =
+    split.value === reported.value ? reported : { ...reported, value: split.value, ...(split.unit !== undefined ? { unit: split.unit } : {}) };
   const unit = units.get(extraction.evidenceId);
   if (!unit) {
     const r = result("lineage", "REJECTED", ["EVIDENCE_ID_INVALID"], `'${extraction.evidenceId}' is not among the units given`);

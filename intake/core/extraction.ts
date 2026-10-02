@@ -41,6 +41,18 @@ export function normalizeText(text: string): string {
     .trim();
 }
 
+/**
+ * A value printed fused with its unit ("7.0V", "1.5uA") as the number and the unit. A unit the
+ * extractor also gave must be the same one; otherwise the value is left as printed.
+ */
+export function splitFusedUnit(value: string, unit: string | undefined): { value: string; unit: string | undefined } {
+  const m = /^([-+–−]?\s?\d[\d.,]*)\s*([A-Za-zµμΩΩ°%]+)$/.exec(value.trim());
+  if (!m) return { value, unit };
+  const [, number, suffix] = m as unknown as [string, string, string];
+  if (unit !== undefined && normalizeUnit(unit) !== normalizeUnit(suffix)) return { value, unit };
+  return { value: number.trim(), unit: unit ?? suffix };
+}
+
 export function normalizeValue(value: string): string {
   return normalizeText(value).replace(/^-\s+/, "-");
 }
@@ -86,7 +98,9 @@ function escape(text: string): string {
 
 /** The positions at which a value occurs in text as a whole number, never inside a longer one. */
 export function valueOccurrences(text: string, value: string): number[] {
-  const re = new RegExp(`(?<![\\d.])${escape(value)}(?![\\d])(?!\\.\\d)`, "g");
+  // Not inside a longer number: no digit before, no decimal point after a digit before (dot
+  // leaders such as "VCC......6.5V" are not decimal points), no digit or decimal part after.
+  const re = new RegExp(`(?<!\\d)(?<!\\d\\.)${escape(value)}(?![\\d])(?!\\.\\d)`, "g");
   const out: number[] = [];
   for (let m = re.exec(text); m; m = re.exec(text)) out.push(m.index);
   const word = numberWord(value);

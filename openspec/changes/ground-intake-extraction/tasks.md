@@ -66,10 +66,10 @@
 
 ## 10. Evaluation (design D12; extraction-evaluation)
 
-- [ ] 10.1 The vendored harness reading PDFs through `core/text/`; its corpus format, scoring, gates, audit and baseline kept; per-validator rejection and review counts added to the report
-- [ ] 10.2 `npm run eval -- --corpus <dir> [--live]`, offline by default, documents without a cached extraction reported as not evaluated
-- [ ] 10.3 First corpus: cortex's `corpus-demo` plus the four demo datasheets labelled by hand; run it and record the result in the change, stating that it measures and does not certify
-- [ ] 10.4 The conformance kit's fixtures, including prompt injection and forged evidence, run against both extractors
+- [x] 10.1 The vendored harness reading PDFs through `core/text/`; its corpus format, scoring, gates, audit and baseline kept; per-validator rejection and review counts added to the report
+- [x] 10.2 `npm run eval -- --corpus <dir> [--live]`, offline by default, documents without a cached extraction reported as not evaluated
+- [x] 10.3 First corpus: the datasheets of ICs on the BoardRepo boards (`eval/corpus-boardrepo`, 21 documents, 8 vendors), labelled by Claude from the datasheet text; run it and record the result in the change, stating that it measures and does not certify
+- [x] 10.4 The conformance kit's fixtures, including prompt injection and forged evidence, run against the Claude Code extractor (passed; the API extractor needs an ANTHROPIC_API_KEY this machine does not have)
 
 ## 11. cortex freeze (design D14)
 

@@ -221,3 +221,53 @@ describe("footnotes, normalisation and groups", () => {
     expect(records[1]!.duplicateOf).toBe(0);
   });
 });
+
+describe("values printed fused with their unit", () => {
+  it("reads 7.0V as 7.0 and V", () => {
+    const u = unit({ text: "Maximum supply voltage VDD | 7.0V" });
+    const r = validateExtraction({ field: "abs_max_vin_V", evidenceId: u.evidenceId, value: "7.0V", qualifier: "ABS_MAX", confidence: 0.9 }, new Map([[u.evidenceId, u]]), CTX);
+    expect(r.outcome).toBe("ADMITTED");
+    expect(r.reading?.measurement).toMatchObject({ value_decimal: "7", unit: "V" });
+  });
+
+  it("leaves a fused value alone when the extractor named a different unit", () => {
+    const u = unit({ text: "Maximum supply voltage VDD | 7.0V" });
+    const r = validateExtraction({ field: "abs_max_vin_V", evidenceId: u.evidenceId, value: "7.0V", unit: "mV", qualifier: "ABS_MAX", confidence: 0.9 }, new Map([[u.evidenceId, u]]), CTX);
+    expect(r.outcome).toBe("REJECTED");
+  });
+});
+
+describe("the ends of a printed range", () => {
+  const check = (text: string, value: string, qualifier: NonNullable<IntakeExtraction["qualifier"]>, field = "abs_max_vin_V") => {
+    const u = unit({ text, section: "Absolute Maximum Ratings" });
+    return validateExtraction({ field, evidenceId: u.evidenceId, value, unit: "V", qualifier, confidence: 0.9 }, new Map([[u.evidenceId, u]]), CTX);
+  };
+
+  it("rejects the lower end of a range claimed as an absolute maximum", () => {
+    expect(check("All inputs and outputs w.r.t. VSS -0.3V to VCC + 1.0V", "-0.3", "ABS_MAX").reasonCodes).toContain("RANGE_POSITION_MISMATCH");
+    expect(check("Terminal Voltage with Respect to GND | –0.5 to Vdd + 0.5 | V", "–0.5", "ABS_MAX").reasonCodes).toContain("RANGE_POSITION_MISMATCH");
+  });
+
+  it("accepts each end of a range under its own qualifier", () => {
+    expect(check("Input voltage range | 4.5 to 16 | V", "4.5", "MIN", "supply_voltage_V").outcome).toBe("ADMITTED");
+    expect(check("Input voltage range | 4.5 to 16 | V", "16", "MAX", "supply_voltage_V").outcome).toBe("ADMITTED");
+    expect(check("Input voltage range | 4.5 to 16 | V", "16", "MIN", "supply_voltage_V").reasonCodes).toContain("RANGE_POSITION_MISMATCH");
+  });
+
+  it("does not read separate cells as a range", () => {
+    expect(check("VDD33 | Power supply voltage | -0.3 | 3.6 | V", "3.6", "ABS_MAX").outcome).toBe("ADMITTED");
+  });
+});
+
+describe("dot leaders", () => {
+  it("a value after dot leaders is in its line", () => {
+    expect(valueOccurrences("VCC.................6.5V", "6.5")).toHaveLength(1);
+    expect(valueOccurrences("Reset Voltage 1.5 V", "5")).toEqual([]);
+  });
+
+  it("dot leaders before a range are not a range separator", () => {
+    const u = unit({ text: "All inputs and outputs w.r.t. VSS ............. -0.3V to VCC +1.0V", section: "Absolute Maximum Ratings" });
+    const r = validateExtraction({ field: "abs_max_vin_V", evidenceId: u.evidenceId, value: "-0.3", unit: "V", qualifier: "ABS_MAX", confidence: 0.9 }, new Map([[u.evidenceId, u]]), CTX);
+    expect(r.reasonCodes).toContain("RANGE_POSITION_MISMATCH");
+  });
+});

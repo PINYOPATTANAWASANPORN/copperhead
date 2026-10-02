@@ -94,6 +94,11 @@ export interface DocumentResult {
   rejected: number;
   /** Expected readings the provider did not produce admissibly. */
   missed: number;
+  /**
+   * Intake addition: how often each validator rejected an extraction or sent it to review,
+   * keyed "validator:STATUS" (RFC 17 §13.3, model error per verifier).
+   */
+  reasonCounts?: Record<string, number>;
 }
 
 export interface FixtureResult {
@@ -118,7 +123,12 @@ export interface EvalReport {
   gates: GateResult[];
   passed: boolean;
   calibrationRecord?: CalibrationRecord;
+  /** Intake addition: documents that could not be evaluated (offline with no cached extraction). */
+  notEvaluated?: { documentId: string; reason: string }[];
 }
+
+/** Intake addition: ingest one corpus document, or say why it cannot be evaluated. */
+export type DocumentIngester = (doc: CorpusDocument) => Promise<IngestedDocument | { notEvaluated: string }>;
 
 export interface AdmittedReading {
   document: CorpusDocument;
@@ -186,19 +196,37 @@ export async function runEvaluation(
   provider: ExtractionProvider,
   options: EvalOptions,
 ): Promise<EvalReport> {
+  return runEvaluationWith(corpus, (doc) => ingestCorpusDocument(doc, provider, options), provider.descriptor.id, options);
+}
+
+/**
+ * Intake addition: the same benchmark over any ingester, so the intake's own pipeline (text
+ * layer, evidence units, its extractor and validators) is what gets scored.
+ */
+export async function runEvaluationWith(
+  corpus: Corpus,
+  ingest: DocumentIngester,
+  providerId: string,
+  options: EvalOptions,
+): Promise<EvalReport> {
   const audit = auditCorpus(corpus);
   const setIds = corpus.releaseSets[options.releaseSet];
   if (setIds === undefined) {
     throw new Error(`unknown release set '${options.releaseSet}'`);
   }
   const inSet = new Set(setIds);
-  const documents = corpus.documents.filter((d) => inSet.has(d.documentId));
-
   const admitted: AdmittedReading[] = [];
   const documentResults: DocumentResult[] = [];
+  const notEvaluated: { documentId: string; reason: string }[] = [];
+  const documents: CorpusDocument[] = [];
 
-  for (const doc of documents) {
-    const ingested = await ingestCorpusDocument(doc, provider, options);
+  for (const doc of corpus.documents.filter((d) => inSet.has(d.documentId))) {
+    const ingested = await ingest(doc);
+    if ("notEvaluated" in ingested) {
+      notEvaluated.push({ documentId: doc.documentId, reason: ingested.notEvaluated });
+      continue;
+    }
+    documents.push(doc);
     admitted.push(...ingested.admitted);
     documentResults.push(ingested.result);
   }
@@ -316,7 +344,7 @@ export async function runEvaluation(
       {
         decisionRunId: `eval-${fixture.id}`,
         timestampISO: options.now(),
-        providers: [{ kind: "extraction", id: provider.descriptor.id }],
+        providers: [{ kind: "extraction", id: providerId }],
         ruleVersion: RULE_VERSION,
       },
     );
@@ -376,7 +404,7 @@ export async function runEvaluation(
   const passed = gates.every((g) => g.passed);
 
   const report: EvalReport = {
-    providerId: provider.descriptor.id,
+    providerId,
     datasetVersion: corpus.datasetVersion,
     releaseSet: options.releaseSet,
     golden: audit.golden,
@@ -388,12 +416,13 @@ export async function runEvaluation(
     gates,
     passed,
   };
+  if (notEvaluated.length > 0) report.notEvaluated = notEvaluated;
 
   if (audit.golden && passed) {
     report.calibrationRecord = {
-      providerId: provider.descriptor.id,
+      providerId,
       calibrationRunId:
-        options.runId ?? `v1-${corpus.datasetVersion}-${provider.descriptor.id}`,
+        options.runId ?? `v1-${corpus.datasetVersion}-${providerId}`,
       datasetVersion: corpus.datasetVersion,
       releaseSet: options.releaseSet,
       reviewRoutingThreshold,

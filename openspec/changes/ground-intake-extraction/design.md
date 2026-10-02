@@ -312,3 +312,49 @@ Where the implementation departs from the decisions above, and why:
 - **GT-6 (D11).** GT-6's July capture is a labelled test fixture (`fixtures/gt6/`), translated from snippet to pointer, and not a cache entry, because the current prompt did not produce it.
 - **Corrections (D6).** A correction of a value held for review becomes a human reading citing the reviewed line (`confirmReading`). A correction that names a line corrects that line's reading, never another reading with the same qualifier.
 - **Symbolic conditions.** Conditions such as TI's "VCC = MAX" do not parse as values, so those readings go to review (`CONDITION_MISMATCH`), as cortex's conditions validator requires. All of SN74LS00's demo readings are held for this reason.
+- **Values printed fused with their unit.** Microchip and others print "7.0V". The first evaluation showed the extractor reporting such a value exactly as printed, which then failed numeric parsing. Validation now reads a fused value as its number and unit, deterministically, before any check. The value-in-line check still finds "7.0" inside "7.0V", and a unit the extractor named differently leaves the value as printed.
+- **Evaluation through the intake (D12).** `eval/intake.ts` ingests each corpus PDF through the production ingest, using the text layer, evidence units, the extractor or its cache, and validation, and scores only admitted readings with cortex's harness. The runner is `scripts/eval.ts` (`npm run eval`). `scripts/eval-details.ts` writes every extraction with its outcome and label match. `scripts/fetch-corpus.ts` fetches the corpus's PDFs by URL and sha256.
+- **The first corpus (D12).** The first corpus is `eval/corpus-boardrepo`: datasheets of ICs that BoardRepo boards' KiCad symbols link to. It was labelled by Claude from the datasheet text alone, never from extractor output, and has one labeller only, so the corpus audit fails and the run measures rather than certifies. The demo corpus and the four demo datasheets were not used: the BoardRepo corpus replaced them as the first evaluation.
+
+## First Evaluation (task 10.3)
+
+**Setup:**
+- Corpus `eval/corpus-boardrepo`: 21 datasheets of ICs on 18 BoardRepo boards, 8 vendors.
+- 213 labelled readings over each document's absolute-maximum, operating-condition and electrical-characteristics pages.
+- Five decision fixtures whose expected verdicts come from the labels.
+- Extractor: Claude through the Claude Code saved login.
+- Every page was read from the PDF's text layer; none needed OCR.
+- Results are in `intake/eval/results/`.
+
+| Measure | Result |
+|---|---|
+| Extractions proposed | 216: 105 admitted (103 after merging duplicates), 59 held for review, 52 rejected |
+| Field precision | 0.981 (101 of 103) |
+| Field recall | 0.418 |
+| Wrong while confident | 0 |
+| False APPROVE | 0 |
+| Insufficient-evidence fixtures | all HOLD |
+| Citation accuracy | 0.871 |
+| Condition F1 | 0.490 |
+| Decision accuracy | 0.8 |
+| Conformance suite (Claude Code extractor) | passed, including prompt injection and forged evidence |
+
+**The two wrong admitted readings are definitional, not misreads:**
+- AP3211's feedback bias current, read as input leakage. The labels exclude analog bias currents.
+- APX811's electrical-characteristics V<sub>CC</sub> range of 1.0 V. The labels take the 1.1 V of Recommended Operating Conditions.
+
+**Citation accuracy:** all 13 mismatches cite a different line that prints the same value. The labels cite one table per value, so this measure undercounts.
+
+**Condition F1** is low because the labels take only row-level conditions, while the extractor also reports table-wide defaults, or omits conditions.
+
+**Decision fixtures:** the one failure is MCP2515, which holds (`CONDITION_NOT_COVERED`) because its admitted operating current carries no conditions. That is conservative, not a false APPROVE.
+
+**Checks added because of this evaluation.** Two general checks were added after the first pass, each with unit tests:
+- `range-position`: a value at the lower end of a range printed in one cell ("-0.3 to 6.5") is a minimum, never a maximum or an absolute maximum.
+- Dot-leader handling, in value matching and range detection ("VCC......6.5V").
+
+Without them, the same extractions give 109 admitted readings, 100 correct and 9 wrong, a precision of 0.917. Seven lower range ends were admitted as absolute maximums, and a correct 6.5 V absolute maximum was rejected. The precision gate is met only with these checks, and they were found on this corpus. A second corpus is needed to confirm them.
+
+**Not certified.** The corpus has one labeller (Claude) and no second, one release set and no tagged hard cases, so the audit fails and no calibration record is written.
+
+**Known reader limit.** On the IS61WV25616 supply-current table, small raised values (21, 10, 6 mA) are read as footnote markers and leave the line. That costs recall there, and the reader's superscript rule needs a follow-up.

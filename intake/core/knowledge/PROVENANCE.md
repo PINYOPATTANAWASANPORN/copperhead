@@ -90,3 +90,7 @@ Every change after the copy is listed here, newest last.
 7. Reason codes: an `intake` category added for the intake's validators (`FIELD_UNKNOWN`, `VALUE_NOT_IN_UNIT`,
    `UNIT_NOT_CONTAINED`, `QUALIFIER_COLUMN_MISMATCH`, `QUALIFIER_COLUMN_AMBIGUOUS`, `BOUND_WORDING_MISMATCH`,
    `FOOTNOTE_QUALIFIED`, `LOW_CONFIDENCE`); the catalog test expects the ninth category.
+8. Evaluation harness (`intake/eval/run.ts`, `corpus.ts`): `runEvaluationWith` takes any document ingester (the
+   intake's own pipeline) and `runEvaluation` wraps it with cortex's text path; a document that cannot be ingested is
+   listed in `notEvaluated` rather than scored; `DocumentResult.reasonCounts` counts each validator's rejections and
+   reviews; a corpus document may name its `pages` and its reference `url`. cortex's harness tests pass unchanged.

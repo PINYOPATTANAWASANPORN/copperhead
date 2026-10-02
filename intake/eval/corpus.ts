@@ -75,7 +75,9 @@ export interface CorpusDocument {
   sourceType: SourceType;
   content:
     | { kind: "inline-text"; text: string }
-    | { kind: "reference"; sha256: string; note?: string };
+    | { kind: "reference"; sha256: string; note?: string; url?: string };
+  /** Intake addition: the 1-based pages to read; all pages when omitted. */
+  pages?: number[];
   caseTags: CaseTag[];
   /** Analyzer field schema — identical shape to the ingest request's. */
   fields: (FieldRequest & { parameter: ParameterSpec })[];
