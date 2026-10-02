@@ -1,0 +1,313 @@
+{
+  "datasetVersion": "boardrepo-2026.10.02",
+  "documents": 21,
+  "extractions": 216,
+  "groupChecksFired": [],
+  "configs": [
+    {
+      "name": "parse only",
+      "ignore": [
+        "conditions",
+        "unit-system",
+        "numeric",
+        "range-position",
+        "footnote-hold",
+        "confidence-routing",
+        "qualifier-column",
+        "unit-present",
+        "qualifier",
+        "field",
+        "value-in-unit",
+        "bound-wording",
+        "duplicates",
+        "range-invariants"
+      ],
+      "metrics": {
+        "admitted": 187,
+        "correct": 152,
+        "wrong": 35,
+        "wrongConfident": 6,
+        "precision": 0.8128342245989305,
+        "recall": 0.6009389671361502,
+        "citationAccuracy": 0.8421052631578947,
+        "review": 0,
+        "rejected": 0,
+        "unparseable": 25
+      }
+    },
+    {
+      "name": "cortex validators",
+      "ignore": [
+        "field",
+        "value-in-unit",
+        "range-position",
+        "qualifier-column",
+        "unit-present",
+        "bound-wording",
+        "footnote-hold",
+        "confidence-routing"
+      ],
+      "metrics": {
+        "admitted": 130,
+        "correct": 119,
+        "wrong": 11,
+        "wrongConfident": 0,
+        "precision": 0.9153846153846154,
+        "recall": 0.4694835680751174,
+        "citationAccuracy": 0.8403361344537815,
+        "review": 69,
+        "rejected": 14,
+        "unparseable": 0
+      }
+    },
+    {
+      "name": "cortex validators + confidence routing",
+      "ignore": [
+        "field",
+        "value-in-unit",
+        "range-position",
+        "qualifier-column",
+        "unit-present",
+        "bound-wording",
+        "footnote-hold"
+      ],
+      "metrics": {
+        "admitted": 105,
+        "correct": 98,
+        "wrong": 7,
+        "wrongConfident": 0,
+        "precision": 0.9333333333333333,
+        "recall": 0.4084507042253521,
+        "citationAccuracy": 0.8775510204081632,
+        "review": 95,
+        "rejected": 14,
+        "unparseable": 0
+      }
+    },
+    {
+      "name": "all validators",
+      "ignore": [],
+      "metrics": {
+        "admitted": 103,
+        "correct": 101,
+        "wrong": 2,
+        "wrongConfident": 0,
+        "precision": 0.9805825242718447,
+        "recall": 0.41784037558685444,
+        "citationAccuracy": 0.8712871287128713,
+        "review": 59,
+        "rejected": 52,
+        "unparseable": 0
+      }
+    },
+    {
+      "name": "all but range-position",
+      "ignore": [
+        "range-position"
+      ],
+      "metrics": {
+        "admitted": 100,
+        "correct": 97,
+        "wrong": 3,
+        "wrongConfident": 0,
+        "precision": 0.97,
+        "recall": 0.39906103286384975,
+        "citationAccuracy": 0.865979381443299,
+        "review": 71,
+        "rejected": 43,
+        "unparseable": 0
+      }
+    },
+    {
+      "name": "all but qualifier-column",
+      "ignore": [
+        "qualifier-column"
+      ],
+      "metrics": {
+        "admitted": 97,
+        "correct": 93,
+        "wrong": 4,
+        "wrongConfident": 0,
+        "precision": 0.9587628865979382,
+        "recall": 0.38497652582159625,
+        "citationAccuracy": 0.8709677419354839,
+        "review": 84,
+        "rejected": 33,
+        "unparseable": 0
+      }
+    },
+    {
+      "name": "all but unit-present",
+      "ignore": [
+        "unit-present"
+      ],
+      "metrics": {
+        "admitted": 111,
+        "correct": 109,
+        "wrong": 2,
+        "wrongConfident": 0,
+        "precision": 0.9819819819819819,
+        "recall": 0.45539906103286387,
+        "citationAccuracy": 0.8807339449541285,
+        "review": 61,
+        "rejected": 42,
+        "unparseable": 0
+      }
+    },
+    {
+      "name": "all but footnote-hold",
+      "ignore": [
+        "footnote-hold"
+      ],
+      "metrics": {
+        "admitted": 109,
+        "correct": 105,
+        "wrong": 4,
+        "wrongConfident": 0,
+        "precision": 0.963302752293578,
+        "recall": 0.4272300469483568,
+        "citationAccuracy": 0.8571428571428571,
+        "review": 53,
+        "rejected": 52,
+        "unparseable": 0
+      }
+    },
+    {
+      "name": "all but confidence-routing",
+      "ignore": [
+        "confidence-routing"
+      ],
+      "metrics": {
+        "admitted": 131,
+        "correct": 127,
+        "wrong": 4,
+        "wrongConfident": 0,
+        "precision": 0.9694656488549618,
+        "recall": 0.49295774647887325,
+        "citationAccuracy": 0.8267716535433071,
+        "review": 30,
+        "rejected": 52,
+        "unparseable": 0
+      }
+    },
+    {
+      "name": "all but conditions",
+      "ignore": [
+        "conditions"
+      ],
+      "metrics": {
+        "admitted": 110,
+        "correct": 108,
+        "wrong": 2,
+        "wrongConfident": 0,
+        "precision": 0.9818181818181818,
+        "recall": 0.4507042253521127,
+        "citationAccuracy": 0.8796296296296297,
+        "review": 51,
+        "rejected": 52,
+        "unparseable": 0
+      }
+    },
+    {
+      "name": "all but unit-system",
+      "ignore": [
+        "unit-system"
+      ],
+      "metrics": {
+        "admitted": 103,
+        "correct": 101,
+        "wrong": 2,
+        "wrongConfident": 0,
+        "precision": 0.9805825242718447,
+        "recall": 0.41784037558685444,
+        "citationAccuracy": 0.8712871287128713,
+        "review": 60,
+        "rejected": 48,
+        "unparseable": 3
+      }
+    },
+    {
+      "name": "all but numeric",
+      "ignore": [
+        "numeric"
+      ],
+      "metrics": {
+        "admitted": 103,
+        "correct": 101,
+        "wrong": 2,
+        "wrongConfident": 0,
+        "precision": 0.9805825242718447,
+        "recall": 0.41784037558685444,
+        "citationAccuracy": 0.8712871287128713,
+        "review": 59,
+        "rejected": 46,
+        "unparseable": 6
+      }
+    },
+    {
+      "name": "all but qualifier",
+      "ignore": [
+        "qualifier"
+      ],
+      "metrics": {
+        "admitted": 103,
+        "correct": 101,
+        "wrong": 2,
+        "wrongConfident": 0,
+        "precision": 0.9805825242718447,
+        "recall": 0.41784037558685444,
+        "citationAccuracy": 0.8712871287128713,
+        "review": 59,
+        "rejected": 52,
+        "unparseable": 0
+      }
+    }
+  ],
+  "stopped": {
+    "correct": 53,
+    "wrong": 33,
+    "unparseable": 25
+  },
+  "soleStops": {
+    "conditions": {
+      "correct": 10,
+      "wrong": 0,
+      "unparseable": 0
+    },
+    "unit-system": {
+      "correct": 0,
+      "wrong": 0,
+      "unparseable": 3
+    },
+    "range-position": {
+      "correct": 0,
+      "wrong": 5,
+      "unparseable": 0
+    },
+    "numeric": {
+      "correct": 0,
+      "wrong": 0,
+      "unparseable": 6
+    },
+    "footnote-hold": {
+      "correct": 4,
+      "wrong": 2,
+      "unparseable": 0
+    },
+    "confidence-routing": {
+      "correct": 28,
+      "wrong": 3,
+      "unparseable": 0
+    },
+    "qualifier-column": {
+      "correct": 1,
+      "wrong": 11,
+      "unparseable": 0
+    },
+    "unit-present": {
+      "correct": 8,
+      "wrong": 0,
+      "unparseable": 0
+    }
+  }
+}

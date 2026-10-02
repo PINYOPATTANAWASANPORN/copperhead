@@ -7,6 +7,8 @@ import { describe, expect, it } from "vitest";
 import type { IntakeExtraction } from "../core/extraction";
 import { DEFAULT_FIELD_SPECS } from "../core/fields";
 import type { Corpus, CorpusDocument } from "../eval/corpus";
+import { ingest } from "../adapters/ingest";
+import { ablate, soleStops, stoppedScores } from "../eval/ablation";
 import { intakeIngester } from "../eval/intake";
 import { runEvaluationWith } from "../eval/run";
 import type { IntakeUnit } from "../core/text/types";
@@ -109,6 +111,22 @@ describe("the intake's evaluation", () => {
     const report = await runEvaluationWith(corpus, intakeIngester({ pdfDir, deps: cachedOnly, now: () => "x" }), "cached", { releaseSet: "all", now: () => "x" });
     expect(report.documents).toEqual([]);
     expect(report.notEvaluated?.[0]?.reason).toMatch(/no cached extraction/);
+  });
+
+  it("ablation with every validator reproduces the benchmark; without one, it shows what that one stopped", async () => {
+    const deps = tempDeps(new CannedExtractor("model-a", answer));
+    const result = await ingest({ fileName: "demo.pdf", bytes }, deps, { specs: DEFAULT_FIELD_SPECS, revision: "A" });
+    const docs = [{ document: doc, records: result.records }];
+    expect(ablate(docs, new Set())).toMatchObject({ admitted: 2, correct: 2, wrong: 0, review: 1, rejected: 1, precision: 1, recall: 2 / 5 });
+    // Without the qualifier column check the misread MIN is admitted, and it is wrong.
+    expect(ablate(docs, new Set(["qualifier-column"]))).toMatchObject({ admitted: 3, correct: 2, wrong: 1 });
+    // Without the footnote hold the footnoted quiescent current is admitted, and it is right.
+    expect(ablate(docs, new Set(["footnote-hold"]))).toMatchObject({ admitted: 3, correct: 3, wrong: 0, recall: 3 / 5 });
+    expect(soleStops(docs)).toEqual({
+      "qualifier-column": { correct: 0, wrong: 1, unparseable: 0 },
+      "footnote-hold": { correct: 1, wrong: 0, unparseable: 0 },
+    });
+    expect(stoppedScores(docs)).toEqual({ correct: 1, wrong: 1, unparseable: 0 });
   });
 
   it("refuses a PDF whose hash does not match the corpus", async () => {

@@ -349,11 +349,37 @@ Where the implementation departs from the decisions above, and why:
 
 **Decision fixtures:** the one failure is MCP2515, which holds (`CONDITION_NOT_COVERED`) because its admitted operating current carries no conditions. That is conservative, not a false APPROVE.
 
-**Checks added because of this evaluation.** Two general checks were added after the first pass, each with unit tests:
+**Checks added because of this evaluation.** Three general fixes were made after the first pass, each with unit tests:
+- A value printed fused with its unit ("7.0V") is read as its number and its unit.
 - `range-position`: a value at the lower end of a range printed in one cell ("-0.3 to 6.5") is a minimum, never a maximum or an absolute maximum.
-- Dot-leader handling, in value matching and range detection ("VCC......6.5V").
+- Dot leaders ("VCC......6.5V") are not read as decimal points or as range separators.
 
-Without them, the same extractions give 109 admitted readings, 100 correct and 9 wrong, a precision of 0.917. Seven lower range ends were admitted as absolute maximums, and a correct 6.5 V absolute maximum was rejected. The precision gate is met only with these checks, and they were found on this corpus. A second corpus is needed to confirm them.
+`scripts/ablate.ts` measures their effect exactly. It re-validates the same cached extractions with the validators of commit 9cfa724, from before this evaluation, and then adds the fixes one at a time.
+
+| Validators | Admitted | Correct | Wrong | Precision | Recall |
+|---|---|---|---|---|---|
+| None: every extraction that parses | 187 | 152 | 35 | 0.813 | 0.601 |
+| As before this evaluation (9cfa724) | 98 | 95 | 3 | 0.969 | 0.390 |
+| + fused value and unit | 100 | 96 | 4 | 0.960 | 0.394 |
+| + dot leaders | 100 | 97 | 3 | 0.970 | 0.399 |
+| + range position (final) | 103 | 101 | 2 | 0.981 | 0.418 |
+
+The fixes found on this corpus are what take the run over the precision gate, so a second corpus has to confirm them. A range's lower end that is claimed as an absolute maximum is also caught without `range-position`: it shares a duplicate key with the true maximum on the same line, so the duplicate check sends both to review. The new check keeps the true maximum admitted.
+
+**What each validator stops.** These are the extractions a validator alone kept out, each scored as if it had been admitted (`eval/results/boardrepo-ablation.json`):
+
+| Validator | Would have been correct | Would have been wrong | Unparseable |
+|---|---|---|---|
+| qualifier-column | 1 | 11 | 0 |
+| range-position | 0 | 5 | 0 |
+| footnote-hold | 4 | 2 | 0 |
+| confidence-routing | 28 | 3 | 0 |
+| conditions | 10 | 0 | 0 |
+| unit-present | 8 | 0 | 0 |
+| numeric | 0 | 0 | 6 |
+| unit-system | 0 | 0 | 3 |
+
+Confidence routing, the condition parser and the unit-present check cost recall and stop few errors. The condition parser rejects ranges such as "TA = -40°C to +85°C". Of the 111 extractions kept out, 53 would have been correct, 33 wrong and 25 do not parse.
 
 **Not certified.** The corpus has one labeller (Claude) and no second, one release set and no tagged hard cases, so the audit fails and no calibration record is written.
 
