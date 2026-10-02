@@ -46,6 +46,8 @@ export interface AblationMetrics {
   rejected: number;
   /** Would have been admitted, but its value, unit or qualifier does not parse into a reading. */
   unparseable: number;
+  /** Per field: admitted, correct and wrong readings, and labelled readings expected and matched. */
+  byField: Record<string, { admitted: number; correct: number; wrong: number; expected: number; matched: number }>;
 }
 
 export type Score = "correct" | "wrong" | "unparseable";
@@ -101,6 +103,8 @@ export function scoreOf(document: CorpusDocument, field: string, reading: Readin
 export function ablate(documents: DocumentRecords[], ignore: ReadonlySet<string>): AblationMetrics {
   let admitted = 0, correct = 0, wrong = 0, wrongConfident = 0, citationCorrect = 0, review = 0, rejected = 0, unparseable = 0;
   let expected = 0, matched = 0;
+  const byField: AblationMetrics["byField"] = {};
+  const tally = (field: string) => (byField[field] ??= { admitted: 0, correct: 0, wrong: 0, expected: 0, matched: 0 });
   for (const { document, records } of documents) {
     const admittedBy = new Map<string, Reading[]>();
     for (const record of records) {
@@ -140,13 +144,16 @@ export function ablate(documents: DocumentRecords[], ignore: ReadonlySet<string>
       const entry = document.labels.adjudicated.fields[field];
       for (const reading of kept) {
         admitted++;
+        tally(field).admitted++;
         const score = entry === undefined ? undefined : scoreReading(reading, entry);
         if (score?.valueCorrect) {
           correct++;
+          tally(field).correct++;
           if (score.citationCorrect) citationCorrect++;
           matchedBy.set(field, (matchedBy.get(field) ?? new Set()).add(score.matched!));
         } else {
           wrong++;
+          tally(field).wrong++;
           if (reading.confidence >= REFERENCE_CONFIDENCE) wrongConfident++;
         }
       }
@@ -154,6 +161,8 @@ export function ablate(documents: DocumentRecords[], ignore: ReadonlySet<string>
     for (const [field, entry] of Object.entries(document.labels.adjudicated.fields)) {
       expected += expectedReadings(entry).length;
       matched += matchedBy.get(field)?.size ?? 0;
+      tally(field).expected += expectedReadings(entry).length;
+      tally(field).matched += matchedBy.get(field)?.size ?? 0;
     }
   }
   return {
@@ -167,6 +176,7 @@ export function ablate(documents: DocumentRecords[], ignore: ReadonlySet<string>
     review,
     rejected,
     unparseable,
+    byField,
   };
 }
 
