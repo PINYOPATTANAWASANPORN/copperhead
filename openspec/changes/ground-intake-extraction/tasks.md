@@ -77,8 +77,8 @@
 
 ## 12. Verification
 
-- [ ] 12.1 `npm run typecheck` in `intake/`
-- [ ] 12.2 `npm test` in `intake/`, stating the test count and which tests needed a live provider
-- [ ] 12.3 `npm run build` in `intake/`
-- [ ] 12.4 `openspec validate ground-intake-extraction --strict`
+- [x] 12.1 `npm run typecheck` in `intake/` (clean)
+- [x] 12.2 `npm test` in `intake/`, stating the test count and which tests needed a live provider (197 tests in 21 files; none needs a live provider: the live extraction ran once into the cache, and the tests read the cache)
+- [x] 12.3 `npm run build` in `intake/`
+- [x] 12.4 `openspec validate ground-intake-extraction --strict`
 - [ ] 12.5 Note in `add-layout-guidance-intake` that it rebases onto this change (design D13)
