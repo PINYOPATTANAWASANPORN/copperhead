@@ -288,6 +288,22 @@ function toToolCall(raw: string | undefined, nextId: () => string, catalog: Set<
   // Only accept names the turn actually advertised. An empty catalog means the
   // turn offered no tools, so nothing parses as a call.
   if (!catalog.has(rec.tool)) return null;
-  const args = rec.args && typeof rec.args === 'object' ? (rec.args as Record<string, unknown>) : {};
-  return { id: nextId(), name: rec.tool, args };
+  return { id: nextId(), name: rec.tool, args: argsOf(rec) };
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * The call's arguments. The protocol asks for `args`, but a model sometimes names the object
+ * `arguments`, `parameters` or `input`, or writes the arguments flat beside `tool`. Reading only
+ * `args` turned those calls into empty ones, and the model, told an argument was missing from a
+ * call it believed complete, concluded the tool was broken. Each shape is taken as written.
+ */
+function argsOf(rec: Record<string, unknown>): Record<string, unknown> {
+  for (const key of ['args', 'arguments', 'parameters', 'input']) {
+    const v = rec[key];
+    if (isObject(v)) return v;
+  }
+  const { tool: _tool, args: _args, arguments: _arguments, parameters: _parameters, input: _input, ...flat } = rec;
+  return flat;
 }

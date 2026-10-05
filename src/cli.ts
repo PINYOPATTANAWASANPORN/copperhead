@@ -408,6 +408,77 @@ program
   });
 
 program
+  .command('review')
+  .description('EXPERIMENTAL: grounded design review: a deterministic sweep, model passes that propose, verifiers that decide (RFC 17)')
+  .argument('[design]', 'the design directory (default: --repo or cwd); never written')
+  .option('--out <dir>', 'a new directory, outside the design, for the review record')
+  .option('--source <path...>', 'retained sources a citation may name: datasheet text, documents, firmware (repeatable; directories are walked)')
+  .option('--fab <path...>', 'fabrication outputs to review with the design: Gerber and drill directories or zips, BOM and placement files')
+  .option('--fab-profile <path>', 'a manufacturer capability profile for fab-rules')
+  .option('--model <model>', 'claude-code | claude | codex | gpt-5 (or a provider-specific model id)')
+  .option('--domains <list>', 'comma-separated domains: P power, M MCU, S storage/IO, F firmware, L physical, R routing, G fabrication outputs, B BOM', 'P,M,S,F,L,R,G,B')
+  .option('--max-turns <n>', 'turn budget per domain pass', '40')
+  .option('--max-minutes <n>', 'wall-clock budget per domain pass', '45')
+  .option('--parallel <n>', 'domain passes run at once', '3')
+  .option('--label <text>', 'the design name shown in the report')
+  .option('--sweep <dir>', 'reuse a copperhead-tools review record instead of running the sweep')
+  .option('--tools <path>', 'copperhead-tools cli.js or executable (default: COPPERHEAD_TOOLS, then PATH)')
+  .option('--replay <dir>', 're-verify a recorded review with no model and compare its report byte for byte')
+  .option('--resume', 'continue the record in --out that a killed run left: keep its sweep, bundle and ended passes')
+  .action(
+    async (
+      designArg: string | undefined,
+      opts: { out?: string; source?: string[]; fab?: string[]; fabProfile?: string; model?: string; domains: string; maxTurns: string; maxMinutes: string; parallel: string; label?: string; sweep?: string; tools?: string; replay?: string; resume?: boolean },
+    ) => {
+      const json = Boolean(program.opts().json);
+      const log = (line: string) => console.error(line);
+      try {
+        const { runReview, replayReview } = await import('./review/run.js');
+        if (opts.replay) {
+          const r = await replayReview(opts.replay, opts.tools, log);
+          if (json) console.log(JSON.stringify(r, null, 2));
+          else console.log(r.identical ? `replay identical: ${r.replayReport}` : `replay DIFFERS: compare ${r.report} with ${r.replayReport}`);
+          process.exit(r.identical ? 0 : 1);
+        }
+        if (!opts.out) throw new Error('--out is required (a new directory for the review record)');
+        const design = designArg ?? repoOf(program.opts());
+        const config = await loadConfig(design);
+        const { model } = resolveModel(opts.model, config);
+        const { makeProvider } = await import('./agent/loop.js');
+        const res = await runReview({
+          design,
+          out: opts.out,
+          sources: opts.source ?? [],
+          model,
+          domains: opts.domains.split(',').map((d) => d.trim().toUpperCase()).filter(Boolean),
+          maxTurns: Number(opts.maxTurns),
+          maxMinutes: Number(opts.maxMinutes),
+          parallel: Number(opts.parallel),
+          ...(opts.label ? { label: opts.label } : {}),
+          ...(opts.sweep ? { sweep: opts.sweep } : {}),
+          ...(opts.fab ? { fab: opts.fab } : {}),
+          ...(opts.fabProfile ? { fabProfile: opts.fabProfile } : {}),
+          ...(opts.resume ? { resume: true } : {}),
+          ...(opts.tools ? { tools: opts.tools } : {}),
+          // A review pass resumes one provider session and sends only the new messages each turn.
+          makeProvider: (m) => makeProvider(m, true),
+          log,
+        });
+        if (json) console.log(JSON.stringify(res, null, 2));
+        else {
+          console.log(`report: ${res.report}`);
+          console.log(`verification: ${JSON.stringify(res.summary)}`);
+          for (const p of res.passes) console.log(`  ${p.domain}: ${p.outcome}, ${p.turns} turns, ${p.proposals} proposals, ${p.seconds} s${p.error ? ` (${p.error})` : ''}`);
+        }
+        process.exit(0);
+      } catch (err) {
+        console.error((err as Error).message);
+        process.exit(1);
+      }
+    },
+  );
+
+program
   .command('mcp')
   .description('EXPERIMENTAL: serve the gated pipeline to MCP hosts over stdio (unstable surface)')
   // `--repo` is also a global flag, but a host config reads as
