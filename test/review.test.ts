@@ -143,6 +143,23 @@ describe('review: one pass', () => {
     expect(failed).toMatchObject({ outcome: 'failed', turns: 2, error: expect.stringMatching(/turn exceeded/) });
   });
 
+  it('redacts API keys from the samples and proposals it writes', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'review-test-'));
+    const design = path.join(root, 'design');
+    await mkdir(design);
+    const out = path.join(root, 'record');
+    const key = 'sk-ant-abcdefghijklmnopqrstuvwxyz0123456789';
+    const leaky = () => scriptedProvider([
+      { text: `my key is ${key}`, toolCalls: [{ name: 'propose', args: { proposals: [{ id: 'Q1', kind: 'question', text: `is ${key} valid?` }] } }] },
+      { toolCalls: [{ name: 'submit', args: {} }] },
+    ]);
+    await runReview({ design, out, sources: [], model: 's', domains: ['P'], maxTurns: 5, maxMinutes: 5, parallel: 1, makeProvider: async () => leaky(), log: () => undefined, client: fakeTools() });
+    for (const f of [path.join(out, 'model', 'samples', 'P.json'), path.join(out, 'model', 'proposals.json')]) {
+      const text = await readFile(f, 'utf8');
+      expect(text).not.toContain(key);
+    }
+  }, 30_000);
+
   it('stops a pass that never calls a tool, and warns before the turns run out', async () => {
     const tools = fakeTools();
     const stalled = await runPass({ domain: 'M', model: 's', provider: scriptedProvider([{ text: 'thinking' }]), tools, bundlePath: 'b', system: 's', task: 't', maxTurns: 10, maxSeconds: 60, turnTimeoutMs: 10_000, log: () => undefined });

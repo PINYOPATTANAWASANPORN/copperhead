@@ -17,6 +17,7 @@ import type { Provider } from '../agent/types.js';
 import { DOMAINS, digest, domainTask, sha256, systemPrompt, TEMPLATE_VERSION, RULES } from './prompts.js';
 import { type PassRecord, PASS_TOOLS, runPass } from './pass.js';
 import { resolveTools, type ToolsClient } from './tools-client.js';
+import { redactSecrets } from '../util/redact.js';
 
 export interface ReviewOptions {
   design: string;
@@ -151,7 +152,8 @@ export async function runReview(o: ReviewOptions): Promise<ReviewOutcome> {
     } catch (e) {
       return { domain, model: o.model, turns: 0, outcome: 'failed', error: (e as Error).message, inputTokens: 0, outputTokens: 0, startedAt: new Date().toISOString(), seconds: 0, proposals: [], calls: [], transcript: [], summary: null } satisfies PassRecord;
     }
-    const save = (r: PassRecord) => writeFile(sample, `${JSON.stringify(r, null, 1)}\n`);
+    // Samples hold model text and tool results, so they are redacted at write time like transcripts (AC-4.1).
+    const save = (r: PassRecord) => writeFile(sample, redactSecrets(`${JSON.stringify(r, null, 1)}\n`));
     const rec = await runPass({ domain, model: o.model, provider, tools, bundlePath, system, task: domainTask(domain, o.maxTurns), maxTurns: o.maxTurns, maxSeconds: o.maxMinutes * 60, turnTimeoutMs: 10 * 60_000, log: o.log, onTurn: save });
     await save(rec);
     o.log(`[${domain}] pass ends: ${rec.outcome} after ${rec.turns} turns, ${rec.proposals.length} proposals, ${rec.seconds} s${rec.error ? ` (${rec.error})` : ''}`);
@@ -161,7 +163,7 @@ export async function runReview(o: ReviewOptions): Promise<ReviewOutcome> {
   // 4. verify
   const proposals = passes.flatMap((p) => p.proposals);
   const proposalsPath = path.join(out, 'model', 'proposals.json');
-  await writeFile(proposalsPath, `${JSON.stringify({ format: 'copperhead-review-proposals', version: 1, proposals }, null, 1)}\n`);
+  await writeFile(proposalsPath, redactSecrets(`${JSON.stringify({ format: 'copperhead-review-proposals', version: 1, proposals }, null, 1)}\n`));
   const summary = await verify(tools, bundlePath, proposalsPath, path.join(out, 'verify'));
   await copyFile(path.join(out, 'verify', 'report.md'), path.join(out, 'report.md'));
 
